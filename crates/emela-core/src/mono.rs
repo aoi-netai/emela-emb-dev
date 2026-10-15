@@ -46,24 +46,67 @@ pub fn monomorphize(m: &Module) -> Module {
     let roots: Vec<FnId> = m
         .functions
         .iter()
-        .filter(|(_, f)| f.exported)
+        .filter(|(_, f)| f.exported && f.type_params == 0)
         .map(|(id, _)| id)
         .collect();
     monomorphize_from(m, &roots).0
 }
 
-/// Monomorphizes the module from `roots` (test functions, every function for tests). Returns the
-/// new module and, per root, its function in it (`None` for a generic root, which is skipped).
+/// Monomorphizes the module from `roots` (the entry, test functions, every function for tests).
+/// Returns the new module and, per root, its function in it.
+///
+/// A generic root that takes no arguments (a test or `main` whose inferred type has type
+/// parameters, such as a test that joins a child fiber that only panics) is instantiated with
+/// `Never` for its ordinary type parameters and the empty set for its set type parameters (see
+/// `root_type_args`); the copy is not exported. A generic root that takes arguments has no sound
+/// default instantiation (a caller could pass any type) and gives `None`: the caller reports it.
 pub fn monomorphize_from(m: &Module, roots: &[FnId]) -> (Module, Vec<Option<FnId>>) {
     let mut mono = Mono::new(m);
     let out_roots = roots
         .iter()
-        .map(|&f| (m.functions[f].type_params == 0).then(|| mono.target(f, &[]).f))
+        .map(|&f| {
+            let args = root_type_args(&mut mono.out, m, f)?;
+            Some(mono.target(f, &args).f)
+        })
         .collect();
     while let Some(spec) = mono.worklist.pop_front() {
         mono.define(spec);
     }
     (mono.out, out_roots)
+}
+
+/// The type arguments the root `f` is instantiated with, in `out`'s table: `Never` for an ordinary
+/// type parameter and the empty set for a set type parameter. `None` for a generic function that
+/// takes arguments (other than the evidence table).
+///
+/// Sound for a root that takes no arguments and that nothing calls (the entry, a test), by
+/// parametricity. The body cannot make a value of an ordinary type parameter, and no argument
+/// brings one in, so no value of it exists at run time: it is the type of a result that never
+/// arrives (joining a child that only panics), which is what `Never` says, and `Never` may also
+/// stand for an error type (`fail` of a value that never arrives). A set type parameter stands for
+/// elements that only callers would add: what the body itself fails with or uses is already among
+/// the set's other elements, so the empty set (neither fails, suspends nor needs the evidence
+/// table) leaves the exact flags.
+fn root_type_args(out: &mut Module, m: &Module, f: FnId) -> Option<Vec<TypeId>> {
+    let def = &m.functions[f];
+    if def.type_params == 0 {
+        return Some(Vec::new());
+    }
+    let inputs = def.params.len() - usize::from(m.takes_ev(f));
+    if inputs > 0 {
+        return None;
+    }
+    let empty = out.intern(Type::Set(SetSummary::default()));
+    let args = (0..def.type_params)
+        .map(|i| {
+            if def.set_params.contains(&i) {
+                empty
+            } else {
+                TypeId::NEVER
+            }
+        })
+        .collect();
+    Some(args)
 }
 
 /// A copy of a function for one instantiation.
@@ -363,6 +406,7 @@ impl<'a> Mono<'a> {
             params,
             ret,
             type_params: 0,
+            set_params: Vec::new(),
             fails,
             body: Expr::Lit(Lit::Unit),
             external: old.external.clone(),
