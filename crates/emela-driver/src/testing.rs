@@ -59,6 +59,7 @@ pub fn default_test_out_dir_for(input: &Input, target: Target) -> PathBuf {
         Target::Js => input.base.join(JS_TEST_OUT_DIR),
         Target::C => input.base.join(C_TEST_OUT_DIR),
         Target::Wasm => input.base.join(WASM_TEST_OUT_DIR),
+        Target::CEmbedded => input.base.join("target/emela/test-c-embedded"),
     }
 }
 
@@ -338,6 +339,12 @@ pub fn test<F: Frontend, B: TestBackend<F::Program>>(
             let mut command = Command::new(&wasmtime);
             command.arg("run").arg(&entry);
             (wasmtime, command)
+        }
+        Runner::None => {
+            analysis.diagnostics.push(Diagnostic::error(
+                "the selected target emits source code and cannot run tests",
+            ));
+            return (analysis, None);
         }
     };
     match run_tests(&program, command, &selected, options.output, out) {

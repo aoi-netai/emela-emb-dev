@@ -34,7 +34,7 @@ pub trait Backend<P> {
 
 ## C のターゲット（`--target c`，仕様 16章）
 
-- （補）ターゲットは `Target`（`js`，`c`）．コマンドの `--target`，なければ `Pome.toml` の `[build].target`（4.7），なければ js．`Pome.toml` は今もほかの項目を読まず，`[build].target` だけを `toml` で読む．TOML として読めないファイルや文字列でない `target` は「指定なし」とみなし，知らない名前だけを E0232 にする．依存の仕組みがまだないので，「依存されたときは無視する」は今は何もしなくてよい
+- （補）ターゲットは `Target`（`js`，`c`，`wasm`，`c-embedded`）．コマンドの `--target`，なければ `Pome.toml` の `[build].target`（4.7），なければ js．`Pome.toml` は今もほかの項目を読まず，`[build].target` だけを `toml` で読む．TOML として読めないファイルや文字列でない `target` は「指定なし」とみなし，知らない名前だけを E0232 にする．依存の仕組みがまだないので，「依存されたときは無視する」は今は何もしなくてよい
 - （補）`Lower` と `LowerTests` は `with_target` で lowering の外部関数の検査（12.1，E0412）のターゲットを変える
 - （補）出力段の trait と出力は JS と C で共通なので，target に依らない名前（`Backend`，`BuildOutput`）にしてある（旧 `JsBackend`，`JsOutput`）．JS 固有のもの（`CoreJs`，`JS_ENTRY_FILE`，`NoJsBackend`）は JS の名前のまま
 - （補）`CoreC` は C の `Backend` と `TestBackend`．出力（`main.c`，ランタイムの `.c` と `.h`，ホストの `.c` 向けの公開のヘッダ `emela.h`（12.6），使う同梱の `.c` を `emela_core/` の下）を書いた後の `finish` で cc を呼び，実行ファイル `main` を作る．`runner` が `Runner::Native` なので，run と test は node でなくその実行ファイルを起動する．両方の trait の `finish` と `runner` は既定で JS のまま（エントリをそのまま node で動かす）
@@ -47,12 +47,19 @@ pub trait Backend<P> {
 ## WASM のターゲット（`--target wasm`，仕様 16章）
 
 - （補）ターゲットの名前は `js`，`c`，`wasm`．`emela run/build --target wasm` は `emela-codegen-wasm` で `main.wasm`（WASI のコマンド）を書き，`wasmtime`（`EMELA_WASMTIME`，なければ `wasmtime`）で動かす．`Program` は `emela_core::Module`
-- （補）`CoreWasm` は `JsBackend` の WASM 版．`emit` が `main.wasm` をバイト列で返し，`finish` は何もせず（WASM 自体が最終の出力），`runner` が `Runner::Wasmtime`．起動できなければ E0909
+- （補）`CoreWasm` は `Backend` の WASM 版．`emit` が `main.wasm` をバイト列で返し，`finish` は何もせず（WASM 自体が最終の出力），`runner` が `Runner::Wasmtime`．起動できなければ E0909
 - （補）出力をバイト列にできるよう，`OutputFile::contents` を `Vec<u8>` にした．テキストは `OutputFile::text()` で読む（JS と C は今までどおり）
 - （補）既定の出力先は build と run が `target/emela/wasm`，test が `target/emela/test-wasm`
 - （補）emela-codegen-wasm の「WASM ではまだ使えない」のエラーは診断にする（コールバックは E0427，それ以外は番号なし．C が suspend fn の外部関数を扱えるようになったので E0428 は欠番）
 - （補）`emela test --target wasm` は `Entry::Tests` でモジュールを出し，`_start` が各テストを順に呼んで結果の行（JS と同じ）を標準出力に書く．読み取りと表示は JS・C と共通
 - （補）`tests/wasm.rs` は build・run・test の WASM 経路を `wasmtime` で動かし，`tests/wasm_parity.rs` は純粋なプログラム（`dbg` だけ）を JS と WASM の両方で動かして終了コードと出力が一致することを見る．WASM がまだ扱えないものは診断のメッセージで見る．`wasmtime` がなければ飛ばす（JS と C の結果を比べる `parity.rs` と同じ形．16章）
+
+## 組み込みCの初期ターゲット（`--target c-embedded`）
+
+- `EmbeddedC` は `Backend` の出力先で、リンクはしない。`main.c` と `emela_gpio.h` を出力し、`Runner::None` を返す。
+- `Lower` は `Std.Embedded.Gpio.GPIO` だけを main に自動提供する。ほかの関数やテスト関数では通常の effect 宣言が必要。
+- 出力器は Core IR の GPIO 処理を扱う。生成した関数はボード側が実装する `emela_gpio_*` 境界を呼ぶ。ボード定義ファイルから物理ピンへの静的対応やISR安全性の検査はまだ行わない。
+- 既定の出力先は `target/emela/c-embedded`。実行とテストには使えない。詳細と初期対応範囲は `docs/design/c-embedded-codegen.md` に記載する。
 
 ## テスト（`emela test`，仕様 13章）
 

@@ -1,7 +1,7 @@
 # Emela
 
 Emela is a functional language with typed errors and typed effects, compiling to
-JavaScript and WebAssembly.
+JavaScript, WebAssembly, and C.
 
 ## Status
 
@@ -9,7 +9,7 @@ This branch is the 0.20 rebuild. The current release is **0.20.0**:
 the pure subset, typed errors and effects, suspending effects, handlers with
 state, fibers, files and an HTTP client compile to JavaScript and run on
 Node.js. The 0.11 compiler lives on the [`legacy`](https://github.com/emela-lang/emela/tree/legacy)
-branch.
+branch. An experimental embedded C target emits source for GPIO programs.
 
 | Release        | Adds                                                                                                                       |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -159,16 +159,17 @@ test result: ok. 1 passed; 0 failed; 0 filtered out
 Each command takes a project directory or an entry file, and defaults to `.`.
 `run`, `build` and `test` take `--target js` (the default), `--target c`, which
 compiles to C and builds a native executable with `cc`, or `--target wasm`, which
-writes a WASI `main.wasm` (`target/emela/wasm`) and runs it with `wasmtime`;
-`[build] target = "..."` in `Pome.toml` changes the default. The C target does
-not run suspending code, fibers or `String.length` yet; the WASM target does not
-run those, `Float` operations or host callbacks either.
+writes a WASI `main.wasm` (`target/emela/wasm`) and runs it with `wasmtime`.
+`emela build --target c-embedded` writes board-linkable C source and a GPIO
+interface header without compiling them. `[build] target = "..."` in `Pome.toml`
+changes the default. The embedded target currently supports a small GPIO-focused
+subset of Emela.
 
 | Command       | Does                                                    |
 | ------------- | ------------------------------------------------------- |
 | `emela check` | Reports diagnostics without compiling                   |
 | `emela run`   | Compiles and runs: JavaScript on Node.js, a native executable, or WASM with `wasmtime` |
-| `emela build` | Compiles under `target/emela/js` (JS), a native executable (C), or `main.wasm` (WASM) |
+| `emela build` | Compiles JS, a native executable (C), or `main.wasm` (WASM); `c-embedded` emits C source |
 | `emela test`  | Runs the functions marked `@test`                       |
 | `emela fmt`   | Formats the sources in place; `--check` only lists them |
 | `emela lsp`   | Starts the language server over stdio                   |

@@ -18,17 +18,20 @@ pub enum Target {
     C,
     /// WebAssembly (WASI) run with `wasmtime` (Tier 1).
     Wasm,
+    /// 静的リンクする組み込みターゲット向けのCソース出力。
+    CEmbedded,
 }
 
 impl Target {
     /// The names `--target` and `[build].target` accept.
-    pub const NAMES: [&'static str; 3] = ["js", "c", "wasm"];
+    pub const NAMES: [&'static str; 4] = ["js", "c", "wasm", "c-embedded"];
 
     pub fn parse(name: &str) -> Option<Target> {
         match name {
             "js" => Some(Target::Js),
             "c" => Some(Target::C),
             "wasm" => Some(Target::Wasm),
+            "c-embedded" => Some(Target::CEmbedded),
             _ => None,
         }
     }
@@ -39,6 +42,7 @@ impl Target {
             Target::Js => "js",
             Target::C => "c",
             Target::Wasm => "wasm",
+            Target::CEmbedded => "c-embedded",
         }
     }
 }

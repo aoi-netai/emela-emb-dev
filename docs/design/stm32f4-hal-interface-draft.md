@@ -22,9 +22,19 @@ pub effect GPIO {
   fn toggle(pin: GpioPin) -> ()
   fn enable_interrupt(pin: GpioPin, edge: Edge) -> ()
   fn disable_interrupt(pin: GpioPin) -> ()
-  fn poll_interrupt() -> Option[GpioEvent]
 }
 ```
+
+割り込み先の Emela 関数は通常処理からポーリングせず、静的なビルド時バインドで GPIO ピンと結び付ける。関数の指定方法は未決であり、次は形を示すだけの Emela 例である。
+
+```emel
+fn button_changed(event: GpioEvent) use { GPIO } {
+  gpio = use GPIO
+  gpio.write(GpioPin(13), event.level)
+}
+```
+
+この関数は HAL コールバックから ISR 内で呼ぶ。実行時の関数ポインター登録は行わず、生成 C の静的な中継関数を介する方針とする。
 
 ボード内の `GpioPin(id: 13)` がどの MCU ピンを指すかはボード定義で決める。初期例の NUCLEO-F401RE では ID `0`〜`13` を Arduino の D0〜D13 と対応させる。
 
@@ -70,7 +80,7 @@ pub effect SPI {
 
 - UART、I2C、SPI の転送は HAL のポーリング API に対応する同期操作としている。`_IT`、`_DMA`、HAL コールバックは Emela の API に出していない。
 - 操作はそれぞれ `HAL_GPIO_Init` / `HAL_GPIO_ReadPin` / `HAL_GPIO_WritePin` / `HAL_GPIO_TogglePin`、`HAL_UART_Init` / `HAL_UART_Transmit` / `HAL_UART_Receive`、`HAL_I2C_Master_*` / `HAL_I2C_Mem_*`、`HAL_SPI_Transmit` / `HAL_SPI_Receive` / `HAL_SPI_TransmitReceive` に対応する想定である。
-- GPIO 割り込みは HAL の EXTI 割り込みを C 側で受け、`poll_interrupt` で通常処理へ渡す形を想定している。キュー容量と満杯時の扱いは未決。
+- GPIO 割り込みは HAL の EXTI コールバックから、静的にバインドした Emela ハンドラーを ISR 内で直接呼ぶ方針に改めた。ISR 制約の検査とハンドラーのバインド記法は未実装。遅延処理が必要な場合に限り、固定容量キューを別 API として検討する。
 - GPIO の Emela API は論理ピン ID を受け取る。HAL のポート、ピン番号、UART などの代替機能番号はボード定義と HAL アダプターに置く。
 - `List[Int]` の要素範囲は UART が `data_bits` に応じて 0〜127 / 0〜255 / 0〜511、I2C が 0〜255、SPI が `data_size` に応じて 0〜255 / 0〜65535 とする。HAL が 9-bit UART 用に要求するバッファー形式への変換は C のボードバインディングで行う。`List` は通常処理で使う型であり、ISR からは使わない。
 - タイムアウトはミリ秒単位で、`Int64` の非負値を HAL の `uint32_t` 範囲へ検査して渡す。

@@ -1,0 +1,28 @@
+# GPIO effect と、割り込みから呼ばれる Emela 関数の例。
+# ピン番号は論理 ID。ボード定義で MCU の端子へ対応付ける。
+
+import Std.Embedded.Gpio.{GPIO, GpioPin, GpioEvent, GpioMode, Pull, PinState, Edge}
+
+fn prepare_led(pin: GpioPin) use { GPIO } {
+  gpio = use GPIO
+  gpio.configure(pin, GpioMode.OutputPushPull, Pull.NoPull)
+  gpio.write(pin, PinState.Low)
+}
+
+fn prepare_button(pin: GpioPin) use { GPIO } {
+  gpio = use GPIO
+  gpio.configure(pin, GpioMode.Input, Pull.Up)
+  gpio.enable_interrupt(pin, Edge.Both)
+}
+
+# ビルド時バインドで GpioPin(2) の割り込み先に指定する関数。
+# HAL コールバックから ISR 内で呼ばれるため、到達する処理には ISR 制約が適用される。
+fn button_changed(event: GpioEvent) use { GPIO } {
+  gpio = use GPIO
+  gpio.write(GpioPin(13), event.level)
+}
+
+fn main() {
+  prepare_led(GpioPin(13))
+  prepare_button(GpioPin(2))
+}

@@ -12,7 +12,7 @@ use emela_resolve::hir::{
     StrPart,
 };
 use la_arena::ArenaMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::body::{BodyInfer, HandlerFacts};
 use crate::diagnostic::{Diagnostic, EffectContext};
@@ -104,6 +104,17 @@ pub fn check_program(program: &Program) -> ProgramTypes {
 }
 
 pub fn check_program_with(program: &Program, options: &CheckOptions) -> ProgramTypes {
+    check_program_with_auto_main_effects(program, options, &[])
+}
+
+/// [`check_program_with`] と同様に型検査し、ターゲットが main に提供する effect を指定する。
+/// その他の関数とテスト関数には通常どおり effect 宣言と handler が必要。
+pub fn check_program_with_auto_main_effects(
+    program: &Program,
+    options: &CheckOptions,
+    auto_main_effects: &[DefId],
+) -> ProgramTypes {
+    let auto_main_effects: FxHashSet<DefId> = auto_main_effects.iter().copied().collect();
     let mut closed: FxHashMap<DefId, EffectContext> = FxHashMap::default();
     if let Some(main) = options.main {
         closed.insert(main, EffectContext::Main);
@@ -152,6 +163,7 @@ pub fn check_program_with(program: &Program, options: &CheckOptions) -> ProgramT
                 fails: &types.handler_fails,
             },
             &closed,
+            &auto_main_effects,
             &fibers,
         );
         for &def in &group {

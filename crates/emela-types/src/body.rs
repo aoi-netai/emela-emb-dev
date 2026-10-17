@@ -15,7 +15,7 @@ use emela_resolve::hir::{
     Stmt, StrPart, TypeId, UnaryOp, int_literal_value,
 };
 use la_arena::{ArenaMap, Idx};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smol_str::SmolStr;
 
 use crate::FnTy;
@@ -115,6 +115,8 @@ pub(crate) struct BodyInfer<'a> {
     handler_facts: HandlerFacts<'a>,
     /// Definitions whose R must be empty (`main` and test functions).
     closed: &'a FxHashMap<DefId, EffectContext>,
+    /// 組み込みターゲットがエントリーポイントへ提供する effect。
+    auto_main_effects: &'a FxHashSet<DefId>,
     /// Built-in effects and scope functions (spec chapter 11).
     fibers: &'a Fibers,
     current: Option<DefId>,
@@ -196,6 +198,7 @@ impl<'a> BodyInfer<'a> {
         sigs: &'a Signatures,
         handler_facts: HandlerFacts<'a>,
         closed: &'a FxHashMap<DefId, EffectContext>,
+        auto_main_effects: &'a FxHashSet<DefId>,
         fibers: &'a Fibers,
     ) -> Self {
         let mut ctx = InferCtx::new();
@@ -206,6 +209,7 @@ impl<'a> BodyInfer<'a> {
             sigs,
             handler_facts,
             closed,
+            auto_main_effects,
             fibers,
             current: None,
             module: DefModule::Prelude,

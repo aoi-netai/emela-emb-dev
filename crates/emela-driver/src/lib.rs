@@ -5,6 +5,7 @@
 
 mod actions;
 mod c;
+mod c_embedded;
 pub mod code;
 mod complete;
 mod diagnostic;
@@ -29,6 +30,7 @@ mod wasm;
 
 pub use actions::CodeAction;
 pub use c::{C_ENTRY_FILE, C_EXECUTABLE, CC_ENV, CoreC, build_executable, cc_command, run_native};
+pub use c_embedded::EmbeddedC;
 pub use complete::{Completion, CompletionKind};
 pub use diagnostic::{Diagnostic, HELP_PREFIX, Label, Location, Severity, Span, error_count};
 pub use doc::{DocChild, DocItem, DocKind, DocModule, collect_docs, render_html, render_markdown};

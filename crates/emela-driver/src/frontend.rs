@@ -4,7 +4,7 @@ use emela_resolve::hir::{DefId, DefKind, Program};
 use emela_resolve::{BuiltinModules, Import, ModuleId, ModuleName, NoBuiltins};
 use emela_syntax::ast::{self, AstNode};
 use emela_syntax::{Parse, SyntaxKind};
-use emela_types::{CheckOptions, ProgramTypes, check_program_with};
+use emela_types::{CheckOptions, ProgramTypes, check_program_with_auto_main_effects};
 use la_arena::ArenaMap;
 
 use crate::actions::CodeAction;
@@ -182,6 +182,8 @@ fn is_broken(import: &ast::Import) -> bool {
 /// results.
 pub struct Typecheck<B = NoBuiltins> {
     resolve: Resolve<B>,
+    /// c-embedded ターゲットが main に GPIO effect を提供する。
+    embedded_gpio: bool,
     /// Whether the entry module had a `main` fn in the last `check`. `None` without an entry or
     /// HIR.
     entry_main: Option<bool>,
@@ -200,6 +202,7 @@ impl Default for Typecheck<NoBuiltins> {
     fn default() -> Self {
         Typecheck {
             resolve: Resolve::default(),
+            embedded_gpio: false,
             entry_main: None,
         }
     }
@@ -209,8 +212,15 @@ impl<B: BuiltinModules> Typecheck<B> {
     pub fn new(resolve: Resolve<B>) -> Self {
         Typecheck {
             resolve,
+            embedded_gpio: false,
             entry_main: None,
         }
+    }
+
+    /// ターゲットが main に提供する組み込み effect を型検査へ反映する。
+    pub fn with_target(mut self, target: Target) -> Self {
+        self.embedded_gpio = target == Target::CEmbedded;
+        self
     }
 
     /// `None` for modules that were not read.
@@ -343,14 +353,28 @@ impl<B: BuiltinModules> Frontend for Typecheck<B> {
         test_diagnostics.extend(ref_diagnostics);
         // Placement of `@internal` (E0229) and references from outside core (E0228).
         test_diagnostics.extend(check_internal(analysis, &hir, |m| self.parse_of(m)));
-        // The R of main and test functions must be empty (spec 8.3, 13.3).
+        // 通常は main の R は空。組み込みターゲットは GPIO だけを追加で提供する。
         let main = analysis.entry.and_then(|entry| entry_main(&hir, entry));
         self.entry_main = analysis.entry.map(|_| main.is_some());
         let options = CheckOptions {
             main,
             tests: tests.iter().map(|t| t.def).collect(),
         };
-        let types = check_program_with(&hir, &options);
+        let auto_main_effects = if self.embedded_gpio {
+            hir.modules
+                .iter()
+                .find(|(_, module)| module.name.to_string() == "Std.Embedded.Gpio")
+                .into_iter()
+                .flat_map(|(_, module)| module.items.iter().copied())
+                .filter(|&def| {
+                    hir.defs[def].name == "GPIO"
+                        && hir.defs[def].kind == emela_resolve::hir::DefKind::Effect
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let types = check_program_with_auto_main_effects(&hir, &options, &auto_main_effects);
         // Inference proceeds in call order, so sort by file and position like name resolution.
         let mut type_diagnostics: Vec<Diagnostic> = types
             .diags
@@ -400,6 +424,7 @@ impl<B: BuiltinModules> Lower<B> {
     /// Checks external functions against `target` (spec 12.1) instead of JS.
     pub fn with_target(mut self, target: Target) -> Self {
         self.target = target;
+        self.typecheck = self.typecheck.with_target(target);
         self
     }
 }

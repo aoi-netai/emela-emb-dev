@@ -508,7 +508,20 @@ impl BodyInfer<'_> {
                 }
                 (Origin::Closed(def), _) => {
                     if let Some(context) = self.closed.get(def).cloned() {
-                        self.report_unhandled_effects(*def, &missing, context);
+                        let missing = if matches!(&context, EffectContext::Main) {
+                            missing
+                                .into_iter()
+                                .filter(|e| match e {
+                                    RowElem::Tag(tag) => !self.auto_main_effects.contains(&tag.def),
+                                    _ => true,
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            missing
+                        };
+                        if !missing.is_empty() {
+                            self.report_unhandled_effects(*def, &missing, context);
+                        }
                     }
                 }
                 (Origin::Coerce { span, def }, kind) => {

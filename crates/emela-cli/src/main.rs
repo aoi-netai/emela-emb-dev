@@ -1,6 +1,7 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use emela_driver::{
-    Analysis, Backend, CoreC, CoreJs, CoreWasm, Diagnostic, FileSystem, Input, Lower, LowerTests,
+    Analysis, Backend, CoreC, CoreJs, CoreWasm, Diagnostic, EmbeddedC, FileSystem, Input, Lower,
+    LowerTests,
     MemoryFiles, OsFs, Output, RunOptions, SourceDb, Target, TestBackend, TestModule, TestOptions,
     Typecheck,
 };
@@ -24,8 +25,7 @@ enum Command {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
     },
-    /// Compile to the output of `--target` (`target/emela/js` for JS; a native executable for C;
-    /// `main.wasm` for WASM)
+    /// Compile to JavaScript, host C, WASM, or board-linkable embedded C source
     Build {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
@@ -36,8 +36,7 @@ enum Command {
         #[arg(long, value_enum)]
         target: Option<TargetArg>,
     },
-    /// Compile and run: on Node.js, as a native executable (`--target c`), or with wasmtime
-    /// (`--target wasm`)
+    /// Compile and run on Node.js, as a native executable (`--target c`), or with wasmtime (`--target wasm`)
     Run {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
@@ -100,6 +99,9 @@ enum TargetArg {
     C,
     /// WebAssembly (WASI) run with `wasmtime` (`EMELA_WASMTIME`)
     Wasm,
+    /// Embedded C source, linked by the board support package
+    #[value(name = "c-embedded")]
+    CEmbedded,
 }
 
 impl From<TargetArg> for Target {
@@ -108,6 +110,7 @@ impl From<TargetArg> for Target {
             TargetArg::Js => Target::Js,
             TargetArg::C => Target::C,
             TargetArg::Wasm => Target::Wasm,
+            TargetArg::CEmbedded => Target::CEmbedded,
         }
     }
 }
@@ -199,6 +202,9 @@ fn build(path: &Path, out_dir: Option<PathBuf>, target: Option<TargetArg>) -> Ex
             &out_dir,
         ),
         Target::Wasm => emela_driver::build(&OsFs, &input, &mut frontend, &mut CoreWasm, &out_dir),
+        Target::CEmbedded => {
+            emela_driver::build(&OsFs, &input, &mut frontend, &mut EmbeddedC, &out_dir)
+        }
     };
     report(&analysis)
 }
@@ -225,6 +231,15 @@ fn run(
         Target::Js => run_with(&input, &options, target, &mut CoreJs),
         Target::C => run_with(&input, &options, target, &mut CoreC::default()),
         Target::Wasm => run_with(&input, &options, target, &mut CoreWasm),
+        Target::CEmbedded => {
+            print_diagnostics(
+                &[Diagnostic::error(
+                    "`run` is not available for the `c-embedded` target; use `build` to emit C source",
+                )],
+                &SourceDb::new(),
+            );
+            ExitCode::from(DIAGNOSTIC_FAILURE)
+        }
     }
 }
 
@@ -288,6 +303,13 @@ fn test(
         Target::Js => test_with(&input, &options, target, &mut CoreJs),
         Target::C => test_with(&input, &options, target, &mut CoreC::default()),
         Target::Wasm => test_with(&input, &options, target, &mut CoreWasm),
+        Target::CEmbedded => {
+            print_diagnostics(
+                &[Diagnostic::error("`test` is not available for the `c-embedded` target")],
+                &SourceDb::new(),
+            );
+            ExitCode::from(DIAGNOSTIC_FAILURE)
+        }
     }
 }
 
