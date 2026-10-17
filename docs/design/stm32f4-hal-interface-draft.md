@@ -12,9 +12,11 @@ pub error PeripheralError(code: Int)
 
 ## GPIO
 
+Emela の `GpioPin` はボード内の論理ピン ID とし、STM32 の GPIO ポート番号は公開しない。UART などの代替機能も GPIO の設定引数には出さず、ボード定義の周辺機器ルートに記録する。STM32 HAL の出力速度は HAL アダプター側の既定値とする。
+
 ```emel
 pub effect GPIO {
-  fn configure(pin: GpioPin, mode: GpioMode, pull: Pull, speed: GpioSpeed, alternate: Option[Int]) -> ()
+  fn configure(pin: GpioPin, mode: GpioMode, pull: Pull) -> ()
   fn read(pin: GpioPin) -> PinState
   fn write(pin: GpioPin, state: PinState) -> ()
   fn toggle(pin: GpioPin) -> ()
@@ -23,6 +25,8 @@ pub effect GPIO {
   fn poll_interrupt() -> Option[GpioEvent]
 }
 ```
+
+ボード内の `GpioPin(id: 13)` がどの MCU ピンを指すかはボード定義で決める。初期例の NUCLEO-F401RE では ID `0`〜`13` を Arduino の D0〜D13 と対応させる。
 
 ## UART
 
@@ -67,6 +71,7 @@ pub effect SPI {
 - UART、I2C、SPI の転送は HAL のポーリング API に対応する同期操作としている。`_IT`、`_DMA`、HAL コールバックは Emela の API に出していない。
 - 操作はそれぞれ `HAL_GPIO_Init` / `HAL_GPIO_ReadPin` / `HAL_GPIO_WritePin` / `HAL_GPIO_TogglePin`、`HAL_UART_Init` / `HAL_UART_Transmit` / `HAL_UART_Receive`、`HAL_I2C_Master_*` / `HAL_I2C_Mem_*`、`HAL_SPI_Transmit` / `HAL_SPI_Receive` / `HAL_SPI_TransmitReceive` に対応する想定である。
 - GPIO 割り込みは HAL の EXTI 割り込みを C 側で受け、`poll_interrupt` で通常処理へ渡す形を想定している。キュー容量と満杯時の扱いは未決。
+- GPIO の Emela API は論理ピン ID を受け取る。HAL のポート、ピン番号、UART などの代替機能番号はボード定義と HAL アダプターに置く。
 - `List[Int]` の要素範囲は UART が `data_bits` に応じて 0〜127 / 0〜255 / 0〜511、I2C が 0〜255、SPI が `data_size` に応じて 0〜255 / 0〜65535 とする。HAL が 9-bit UART 用に要求するバッファー形式への変換は C のボードバインディングで行う。`List` は通常処理で使う型であり、ISR からは使わない。
 - タイムアウトはミリ秒単位で、`Int64` の非負値を HAL の `uint32_t` 範囲へ検査して渡す。
 - F4 の型番やボードに存在しないポート・周辺機器 ID、またはその UART が実現できないデータ幅・パリティの組み合わせは、ボードバインディング時にエラーにする。設定値が実行時まで決まらない場合は `configure` が HAL を呼ぶ前に検査し、`PeripheralError` を返す。
@@ -91,3 +96,10 @@ STM32F4 HAL の UART フレーム形式では、7-bit データはパリティ�
 - [UART HAL ヘッダー](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Inc/stm32f4xx_hal_uart.h)
 - [I2C HAL ヘッダー](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Inc/stm32f4xx_hal_i2c.h)
 - [SPI HAL ヘッダー](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Inc/stm32f4xx_hal_spi.h)
+
+## 参照した NUCLEO-F401RE のピン割り当て
+
+ボード定義の例は NUCLEO-F401RE（STM32F401RET6）を対象とする。UM1724 では Arduino D0/D1 が PA3/PA2（USART2_RX/TX）、D2/D8 が PA10/PA9 と示されている。STM32F401 のデータシートでは PA10/PA9 の USART1 機能は AF7 である。D0/D1 と STM32 の PA2/PA3 の接続は SB62/SB63 に依存する。
+
+- [STM32 Nucleo-64 boards user manual UM1724](https://www.st.com/resource/en/user_manual/dm00105823.pdf)
+- [STM32F401xD/xE datasheet](https://www.st.com/resource/en/datasheet/stm32f401ve.pdf)

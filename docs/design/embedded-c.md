@@ -11,7 +11,7 @@
 - 組み込み機能は Emela 側に専用インターフェースを定義し、アプリケーションからはそのインターフェース経由でのみ利用できるようにする。GPIO と GPIO 割り込みは対象例である。
 - 初期に対応したい周辺機器は GPIO、UART、I2C、SPI とする。
 - ボードバインディング時に、論理 ID の割り当て、周辺機器の対応能力、ピン競合などを静的に検査し、不整合は理由が分かるエラーとして報告する。
-- 当面の参照環境は STM32F4 系と STM32CubeF4 HAL とする。個別の MCU 型番、ボード、HAL の版は未固定。
+- 当面の参照環境は STM32F4 系と STM32CubeF4 HAL とする。最初のボード定義例は NUCLEO-F401RE（STM32F401RET6）とする。
 - ボード固有の実装方法、外部関数の許可方法、ISR と通常処理の受け渡し方は未決。
 
 シングルスレッドでも割り込みは通常処理を中断する。共有状態の同期方法と ISR 安全性は別に定める。
@@ -30,7 +30,7 @@
 
 HAL の割り込み・DMA 完了処理は通常の Emela 処理と分ける。ISR からのイベント受け渡し方法は未決であり、固定容量バッファーを使う案を検討する。
 
-Emela 側の初期インターフェース宣言は `crates/emela-core/lib/std/embedded/` に置き、`Std.Embedded.Gpio`、`Std.Embedded.Uart`、`Std.Embedded.I2c`、`Std.Embedded.Spi` として同梱する。STM32F4 HAL との対応案は [`stm32f4-hal-interface-draft.md`](stm32f4-hal-interface-draft.md) を参照。宣言はコード化したが、ボード handler、C/HAL バインディング、コンパイル時バインディング検査は未実装である。
+Emela 側の初期インターフェース宣言は `crates/emela-core/lib/std/embedded/` に置き、`Std.Embedded.Gpio`、`Std.Embedded.Uart`、`Std.Embedded.I2c`、`Std.Embedded.Spi` として同梱する。GPIO ピンは論理 ID を使い、物理ピンへの対応をボード定義に置く。ボード定義形式と NUCLEO-F401RE の初期例は [`board-definition.md`](board-definition.md) と [`boards/stm32f4/nucleo-f401re.toml`](../../boards/stm32f4/nucleo-f401re.toml) を参照。STM32F4 HAL との対応案は [`stm32f4-hal-interface-draft.md`](stm32f4-hal-interface-draft.md) を参照。宣言とボード定義例は記述したが、ボード定義の読み込み、C/HAL バインディング、コンパイル時バインディング検査は未実装である。
 
 ## IR の使い分け案
 
@@ -65,8 +65,8 @@ crates/emela-codegen-c-embedded/
 
 - GPIO、UART、I2C、SPI の各 API が提供する操作と共通のエラー表現
 - UART / I2C / SPI の同期・非同期動作、タイムアウト、バッファーの所有権
-- ボードバインディング検査の設定形式と診断の詳細。静的に分からない実行時設定も、HAL 呼び出し前に検査する。
-- 対象とする STM32F4 の型番・ボード、STM32CubeF4 HAL の版、クロックやピンの設定方法
+- ボード定義の読み込みと検査の実装、診断の詳細。静的に分からない実行時設定も、HAL 呼び出し前に検査する。
+- 対象とする追加の STM32F4 型番・ボード、STM32CubeF4 HAL の版、クロックや起動コードの設定方法
 - 出力する C 規格と、コンパイラ・ボード設定の指定方法
 - 静的評価の対象、評価不能な `const` の扱い、循環参照の診断
 - 静的オブジェクトの出力形式と、動的確保が残る場合の固定容量 allocator

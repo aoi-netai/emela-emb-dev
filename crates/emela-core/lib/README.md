@@ -365,12 +365,12 @@ fn main() {
 
 ## Std.Embedded（`std/embedded/`）
 
-組み込み周辺機器用の Emela インターフェース宣言。GPIO、UART、I2C、SPI の effect と共通型を定義する。ボード固有の handler と HAL バインディングはまだ提供しない。
+組み込み周辺機器用の Emela インターフェース宣言。GPIO、UART、I2C、SPI の effect と共通型を定義する。GPIO ピンは論理 ID で表し、物理ピンへの対応はボード定義に置く。ボード固有の handler と HAL バインディングはまだ提供しない。
 
 | モジュール | 主な宣言 | 説明 |
 |---|---|---|
 | `Std.Embedded.Peripheral` | `PeripheralError` | 実行時エラー型 |
-| `Std.Embedded.Gpio` | `GPIO`, `GpioPin`, GPIO 用 enum | GPIO 操作と通常コンテキストからの割り込みイベント取得 |
+| `Std.Embedded.Gpio` | `GPIO`, `GpioPin`, GPIO 用 enum | ボード定義で物理ピンへ対応付ける論理ピン ID。通常コンテキストからの割り込みイベント取得 |
 | `Std.Embedded.Uart` | `UART`, `UartId`, `UartConfig` など | 論理 ID `Uart0` から利用する同期 UART 操作。データ幅は 7 / 8 / 9 bit |
 | `Std.Embedded.I2c` | `I2C`, `I2cId`, `I2cConfig` など | マスター転送とメモリー読み書き |
 | `Std.Embedded.Spi` | `SPI`, `SpiId`, `SpiConfig` など | 同期転送。チップセレクトは GPIO で操作 |

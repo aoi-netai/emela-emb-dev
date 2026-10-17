@@ -1,0 +1,101 @@
+# NUCLEO-F401RE の初期ボード定義案。
+# 現時点では Emela から読み込まず、項目と対応関係を検討するための資料として置く。
+format_version = 1
+
+[board]
+id = "stm32f4-nucleo-f401re"
+name = "NUCLEO-F401RE"
+mcu = "STM32F401RET6"
+hal = "STM32CubeF4"
+
+# 論理ピン ID は Arduino の D0〜D13 に合わせる。
+# STM32 のポート名とピン番号はこのボード定義に閉じ込める。
+[logical_pins."0"]
+label = "D0"
+port = "A"
+pin = 3
+
+[logical_pins."1"]
+label = "D1"
+port = "A"
+pin = 2
+
+[logical_pins."2"]
+label = "D2"
+port = "A"
+pin = 10
+
+[logical_pins."3"]
+label = "D3"
+port = "B"
+pin = 3
+
+[logical_pins."4"]
+label = "D4"
+port = "B"
+pin = 5
+
+[logical_pins."5"]
+label = "D5"
+port = "B"
+pin = 4
+
+[logical_pins."6"]
+label = "D6"
+port = "B"
+pin = 10
+
+[logical_pins."7"]
+label = "D7"
+port = "A"
+pin = 8
+
+[logical_pins."8"]
+label = "D8"
+port = "A"
+pin = 9
+
+[logical_pins."9"]
+label = "D9"
+port = "C"
+pin = 7
+
+[logical_pins."10"]
+label = "D10"
+port = "B"
+pin = 6
+
+[logical_pins."11"]
+label = "D11"
+port = "A"
+pin = 7
+
+[logical_pins."12"]
+label = "D12"
+port = "A"
+pin = 6
+
+[logical_pins."13"]
+label = "D13"
+port = "A"
+pin = 5
+onboard_device = "LD2"
+
+# 以下は後続の UART バインドに向けた対応案。
+# UART 機能を使う場合は GPIO として同じピンを同時に設定できない。
+[peripheral_routes.uart0]
+instance = "USART2"
+tx_pin = 1
+rx_pin = 0
+alternate_function = 7
+required_solder_bridges = ["SB13=OFF", "SB14=OFF", "SB62=ON", "SB63=ON"]
+
+[peripheral_routes.uart1]
+instance = "USART1"
+tx_pin = 8
+rx_pin = 2
+alternate_function = 7
+
+# GPIO_SPEED_FREQ_* の選択は Emela の共通 API に出さず、HAL 側で決める。
+[backend.stm32cube_f4.gpio]
+default_output_speed = "low"
