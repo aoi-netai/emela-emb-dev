@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "emela-codegen-c-embedded"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "emela-core",
 ]
