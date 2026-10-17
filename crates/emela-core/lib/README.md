@@ -363,6 +363,60 @@ fn main() {
 }
 ```
 
+## Std.Embedded（`std/embedded/`）
+
+組み込み周辺機器用の Emela インターフェース宣言。GPIO、UART、I2C、SPI の effect と共通型を定義する。ボード固有の handler と HAL バインディングはまだ提供しない。
+
+| モジュール | 主な宣言 | 説明 |
+|---|---|---|
+| `Std.Embedded.Peripheral` | `PeripheralError` | 実行時エラー型 |
+| `Std.Embedded.Gpio` | `GPIO`, `GpioPin`, GPIO 用 enum | GPIO 操作と通常コンテキストからの割り込みイベント取得 |
+| `Std.Embedded.Uart` | `UART`, `UartId`, `UartConfig` など | 論理 ID `Uart0` から利用する同期 UART 操作。データ幅は 7 / 8 / 9 bit |
+| `Std.Embedded.I2c` | `I2C`, `I2cId`, `I2cConfig` など | マスター転送とメモリー読み書き |
+| `Std.Embedded.Spi` | `SPI`, `SpiId`, `SpiConfig` など | 同期転送。チップセレクトは GPIO で操作 |
+
+UART の関数を使うコードは、たとえば次のように UART エフェクトを要求する。
+
+```emel
+import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Uart.{
+  UART,
+  UartId,
+  Uart0,
+  UartConfig,
+  UartDataBits,
+  Bits7,
+  UartStopBits,
+  One,
+  Parity,
+  Even,
+  UartDirection,
+  Both,
+  FlowControl,
+  NoFlowControl,
+  Oversampling,
+  By16,
+}
+
+fn send_startup() -> () fails PeripheralError use UART {
+  config = UartConfig(
+    baud_rate: 115200,
+    data_bits: Bits7,
+    stop_bits: One,
+    parity: Even,
+    direction: Both,
+    flow_control: NoFlowControl,
+    oversampling: By16
+  )
+
+  uart = use UART
+  uart.configure(Uart0, config)
+  uart.transmit(Uart0, [65], 100)
+}
+```
+
+ボード固有のハンドラを `with` で供給する仕組みと C/HAL 実装は、今後追加する。
+
 ## テスト用のハンドラの例
 
 ```emel

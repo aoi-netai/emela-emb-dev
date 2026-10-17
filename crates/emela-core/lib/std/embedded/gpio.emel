@@ -1,0 +1,35 @@
+# GPIO の Emela インターフェース。
+# 割り込み処理は固定容量キューに記録し、Emela では通常コンテキストから取得する。
+
+pub enum GpioPort { A, B, C, D, E, F, G, H, I, J, K }
+pub type GpioPin(port: GpioPort, number: Int)
+pub enum PinState { Low, High }
+pub enum Pull { NoPull, Up, Down }
+pub enum GpioSpeed { LowSpeed, MediumSpeed, HighSpeed, VeryHighSpeed }
+pub enum GpioMode {
+  Input
+  OutputPushPull
+  OutputOpenDrain
+  AlternatePushPull
+  AlternateOpenDrain
+  Analog
+}
+pub enum Edge { Rising, Falling, Both }
+pub type GpioEvent(pin: GpioPin, level: PinState)
+
+pub effect GPIO {
+  fn configure(
+    pin: GpioPin,
+    mode: GpioMode,
+    pull: Pull,
+    speed: GpioSpeed,
+    alternate: Option[Int]
+  ) -> ()
+  fn read(pin: GpioPin) -> PinState
+  fn write(pin: GpioPin, state: PinState) -> ()
+  fn toggle(pin: GpioPin) -> ()
+  fn enable_interrupt(pin: GpioPin, edge: Edge) -> ()
+  fn disable_interrupt(pin: GpioPin) -> ()
+  ## ISR のイベントを通常コンテキストで1件取り出す。キューが空なら None。
+  fn poll_interrupt() -> Option[GpioEvent]
+}
