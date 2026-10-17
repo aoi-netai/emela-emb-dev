@@ -1958,7 +1958,8 @@ sep          = "," | NL
 
 const_decl   = "const" upper_name [ ":" type ] "=" expr
 
-effect_decl  = "effect" type_name [ type_params ] "{" { op_sig NL } "}"
+effect_decl  = "effect" effect_name [ type_params ] "{" { op_sig NL } "}"
+effect_name  = type_name | upper_name                    (* GPIO などの略称を許す *)
 op_sig       = [ "suspend" ] "fn" lower_name [ type_params ] "(" [ params ] ")"
                "->" type [ "fails" error_set ]     (* type_params は組み込みのエフェクトだけ。8.1 *)
 
@@ -1999,6 +2000,7 @@ type       = type_ref [ "[" type_arg { "," type_arg } "]" ]
            | "fn" "(" [ type { "," type } ] ")" "->" type
              [ "fails" error_set ] [ "use" effect_set ]
 type_ref   = [ module_path "." ] type_name
+effect_ref = [ module_path "." ] effect_name
 
 type_arg   = type
            | "{" [ effect_item { "," effect_item } ] "}"          (* 効果の集合。{} は空の集合 *)
@@ -2006,8 +2008,8 @@ type_arg   = type
 
 error_set  = "{" "}" | error_item { "|" error_item }
 error_item = type_ref | upper_name                            (* エラーのタグか、集合の型引数。混ぜてよい *)
-effect_set = "{" [ effect_item { "," effect_item } ] "}" | type_ref | upper_name
-effect_item = type_ref [ "[" type { "," type } "]" ] | upper_name   (* エフェクト（型引数つきでよい）か、集合の型引数。混ぜてよい *)
+effect_set = "{" [ effect_item { "," effect_item } ] "}" | effect_ref | upper_name
+effect_item = effect_ref [ "[" type { "," type } "]" ] | upper_name   (* エフェクト（型引数つきでよい）か、集合の型引数。混ぜてよい *)
 ```
 
 ### 17.5 式
@@ -2028,7 +2030,7 @@ cmp_expr   = add_expr [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" ) add_expr ]
 add_expr   = mul_expr { ( "+" | "-" ) mul_expr }
 mul_expr   = unary    { ( "*" | "/" | "%" ) unary }
 unary      = ( "!" | "-" ) unary
-           | "use" type_ref [ "[" type { "," type } "]" ]
+           | "use" effect_ref [ "[" type { "," type } "]" ]
            | postfix
 postfix    = primary { "(" [ args ] ")" | "." lower_name }
 

@@ -1,25 +1,51 @@
-# GPIO effect と、割り込みから呼ばれる Emela 関数の例。
+# GPIO effect と、ボードから呼び出す割り込み関数の例。
 # ピン番号は論理 ID。ボード定義で MCU の端子へ対応付ける。
 
-import Std.Embedded.Gpio.{GPIO, GpioPin, GpioEvent, GpioMode, Pull, PinState, Edge}
+import Std.Embedded.Gpio.{
+  GPIO, GpioPin, GpioEvent, PinState,
+  OutputPushPull, NoPull, Low, Input, Up, Both, High
+}
 
 fn prepare_led(pin: GpioPin) use { GPIO } {
   gpio = use GPIO
-  gpio.configure(pin, GpioMode.OutputPushPull, Pull.NoPull)
-  gpio.write(pin, PinState.Low)
+  gpio.configure(pin, OutputPushPull, NoPull)
+  gpio.write(pin, Low)
 }
 
 fn prepare_button(pin: GpioPin) use { GPIO } {
   gpio = use GPIO
-  gpio.configure(pin, GpioMode.Input, Pull.Up)
-  gpio.enable_interrupt(pin, Edge.Both)
+  gpio.configure(pin, Input, Up)
+  gpio.enable_interrupt(pin, Both)
 }
 
-# ビルド時バインドで GpioPin(2) の割り込み先に指定する関数。
+fn button_level(event: GpioEvent) -> Option[PinState] {
+  if event.pin == GpioPin(2) {
+    Some(event.level)
+  } else {
+    None
+  }
+}
+
+fn is_pressed(level: PinState) -> Bool {
+  level == Low
+}
+
+fn led_state(pressed: Bool) -> PinState {
+  if pressed { High } else { Low }
+}
+
+# GpioEvent を引数に取る公開関数は、組み込みCでは割り込み入口として出力する。
 # HAL コールバックから ISR 内で呼ばれるため、到達する処理には ISR 制約が適用される。
-fn button_changed(event: GpioEvent) use { GPIO } {
+pub fn button_changed(event: GpioEvent) use { GPIO } {
   gpio = use GPIO
-  gpio.write(GpioPin(13), event.level)
+  output = button_level(event)
+    |> Option.map(is_pressed)
+    |> Option.map(led_state)
+
+  output match {
+    Some(state) -> gpio.write(GpioPin(13), state)
+    None -> ()
+  }
 }
 
 fn main() {

@@ -142,7 +142,7 @@ impl Path {
         self.0
             .children_with_tokens()
             .filter_map(|e| e.into_token())
-            .filter(|t| t.kind() == TYPE_NAME)
+            .filter(|t| matches!(t.kind(), TYPE_NAME | UPPER_NAME))
     }
 }
 

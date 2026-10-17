@@ -501,7 +501,11 @@ fn const_decl(p: &mut Parser<'_>, m: Marker) {
 /// `"effect" type_name "of" type_ref [ "[" type { "," type } "]" ] [ "default" ]`.
 fn effect_decl(p: &mut Parser<'_>, m: Marker) {
     p.bump_kind(EFFECT_KW);
-    decl_name(p, TYPE_NAME);
+    if matches!(p.current(), TYPE_NAME | UPPER_NAME) {
+        p.bump();
+    } else {
+        p.expect(TYPE_NAME);
+    }
     if p.at_contextual_kw("of") {
         let c = p.start();
         p.bump();

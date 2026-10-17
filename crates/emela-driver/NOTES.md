@@ -56,7 +56,7 @@ pub trait Backend<P> {
 
 ## 組み込みCの初期ターゲット（`--target c-embedded`）
 
-- `EmbeddedC` は `Backend` の出力先で、リンクはしない。`main.c` と `emela_gpio.h` を出力し、`Runner::None` を返す。
+- `EmbeddedC` は `Backend` の出力先で、リンクはしない。`main.c`、`emela_gpio.h`、`emela_embedded.h` を出力し、`Runner::None` を返す。
 - `Lower` は `Std.Embedded.Gpio.GPIO` だけを main に自動提供する。ほかの関数やテスト関数では通常の effect 宣言が必要。
 - 出力器は Core IR の GPIO 処理を扱う。生成した関数はボード側が実装する `emela_gpio_*` 境界を呼ぶ。ボード定義ファイルから物理ピンへの静的対応やISR安全性の検査はまだ行わない。
 - 既定の出力先は `target/emela/c-embedded`。実行とテストには使えない。詳細と初期対応範囲は `docs/design/c-embedded-codegen.md` に記載する。

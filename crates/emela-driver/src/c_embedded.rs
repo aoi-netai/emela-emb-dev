@@ -27,6 +27,7 @@ impl Backend<emela_core::Module> for EmbeddedC {
             files: vec![
                 OutputFile::new("main.c", output.main),
                 OutputFile::new("emela_gpio.h", output.gpio_header),
+                OutputFile::new("emela_embedded.h", output.app_header),
             ],
             entry: PathBuf::from("main.c"),
         })

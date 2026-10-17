@@ -1,7 +1,7 @@
 //! Expressions (spec 17.5).
 
 use super::patterns::pattern;
-use super::types::{effect_type_args, path, type_};
+use super::types::{effect_path, effect_type_args, path, type_};
 use super::{literal, param_list};
 use crate::SyntaxKind::{self, *};
 use crate::diagnostic::DiagnosticCode;
@@ -266,8 +266,8 @@ fn unary(p: &mut Parser<'_>) -> Option<CompletedMarker> {
         USE_KW => {
             let m = p.start();
             p.bump();
-            if p.at(TYPE_NAME) {
-                path(p);
+            if matches!(p.current(), TYPE_NAME | UPPER_NAME) {
+                effect_path(p);
                 effect_type_args(p);
             } else {
                 p.expect(TYPE_NAME);

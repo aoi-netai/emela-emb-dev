@@ -91,6 +91,28 @@ pub(crate) fn path(p: &mut Parser<'_>) -> CompletedMarker {
     m.complete(p, PATH)
 }
 
+/// エフェクト参照は通常の型名に加え、`GPIO` のような大文字名も受け付ける。
+/// 効果集合では大文字名が型引数にもなるため、どちらを指すかは名前解決で判断する。
+pub(crate) fn effect_path(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.start();
+    if p.at(TYPE_NAME) {
+        p.bump();
+        while p.at(DOT) && p.nth(1) == TYPE_NAME {
+            p.bump();
+            p.bump();
+        }
+        if p.at(DOT) && p.nth(1) == UPPER_NAME {
+            p.bump();
+            p.bump();
+        }
+    } else if p.at(UPPER_NAME) {
+        p.bump();
+    } else {
+        p.expect(TYPE_NAME);
+    }
+    m.complete(p, PATH)
+}
+
 fn type_var(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.start();
     p.bump_kind(UPPER_NAME);
@@ -204,7 +226,7 @@ fn effect_set(p: &mut Parser<'_>) {
         p.bump();
         while p.eat(NEWLINE) {}
         while !p.at(R_BRACE) && !p.at_eof() {
-            set_element(p);
+            effect_item(p);
             while p.eat(NEWLINE) {}
             if !p.eat(COMMA) {
                 break;
@@ -213,9 +235,23 @@ fn effect_set(p: &mut Parser<'_>) {
         }
         p.expect(R_BRACE);
     } else {
-        set_element(p);
+        effect_item(p);
     }
     m.complete(p, EFFECT_SET);
+}
+
+/// エフェクト参照または効果集合型引数を読む。
+fn effect_item(p: &mut Parser<'_>) {
+    if matches!(p.current(), TYPE_NAME | UPPER_NAME) {
+        let path = effect_path(p);
+        if p.at(L_BRACK) {
+            let m = path.precede(p);
+            effect_type_args(p);
+            m.complete(p, PATH_TYPE);
+        }
+    } else {
+        p.err_recover(DiagnosticCode::ExpectedType, "expected type", RECOVERY);
+    }
 }
 
 /// A type_ref or an uppercase name. An effect with type arguments (`State[Int]`, spec 8.1)
