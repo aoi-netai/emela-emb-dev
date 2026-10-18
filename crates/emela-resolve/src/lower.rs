@@ -1966,8 +1966,8 @@ fn external_attrs(f: &ast::FnDecl) -> Vec<ExternalAttr> {
         .collect()
 }
 
-/// Unescapes `\"` `\\` `\n` `\#`. Invalid escapes are already reported by the lexer, so they are
-/// kept as is.
+/// Unescapes `\"` `\\` `\n` `\t` `\r` `\#` `\u{...}`. Invalid escapes are already reported by
+/// the lexer, so they are kept as is.
 fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -1978,6 +1978,24 @@ fn unescape(text: &str) -> String {
         }
         match chars.next() {
             Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('u') => {
+                let rest = chars.as_str();
+                let value = rest
+                    .strip_prefix('{')
+                    .and_then(|r| r.split_once('}'))
+                    .and_then(|(digits, _)| u32::from_str_radix(digits, 16).ok())
+                    .and_then(char::from_u32);
+                match value {
+                    Some(v) => {
+                        out.push(v);
+                        let skip = rest.find('}').unwrap_or(0) + 1;
+                        chars = rest[skip..].chars();
+                    }
+                    None => out.push_str("\\u"),
+                }
+            }
             Some(c @ ('"' | '\\' | '#')) => out.push(c),
             Some(c) => {
                 out.push('\\');
