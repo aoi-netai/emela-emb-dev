@@ -53,6 +53,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     header.blank();
     header.line("#include <stdint.h>");
     header.blank();
+    layouts.emit_string_declaration(&mut header);
     layouts.emit_declarations(&mut header);
     layouts.emit_error_declaration(&mut header);
     if !layouts.aggregates.is_empty() {
@@ -171,6 +172,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     if has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem]) {
         emit_i64_division_helpers(&mut source);
+    }
+    if has_dynamic_defect(flow) {
+        emit_dynamic_defect_kind_helper(&mut source);
     }
 
     for (id, function) in flow.functions.iter() {
@@ -814,6 +818,7 @@ fn emit_compound_sequence(
             emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
         }
+        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
         other => return Err(unsupported(&function.name, term_name(other))),
     }
     Ok(())
@@ -994,6 +999,101 @@ fn emit_failure_return(layouts: &TypeLayouts<'_>, function: &Function, writer: &
     } else {
         writer.ret(Some(&format!("({}){{0}}", layouts.c_type(function.ret))));
     }
+}
+
+fn emit_defect(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    message: &Operand,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    match message {
+        Operand::Const(Const::String(message)) => {
+            let length = u16::try_from(message.len()).map_err(|_| {
+                unsupported(
+                    &function.name,
+                    "a defect message longer than the embedded C ABI supports",
+                )
+            })?;
+            writer.line(&format!(
+                "emela_board_defect(EMELA_DEFECT_{}, {}, UINT16_C({length}));",
+                defect_kind_for_message(message),
+                c_string_literal(message.as_bytes())
+            ));
+            Ok(())
+        }
+        Operand::Var(variable)
+            if matches!(layouts.types[function.vars[*variable].ty], Type::String) =>
+        {
+            let value = variable_name(*variable);
+            writer.line(&format!(
+                "emela_board_defect(emela_emb_defect_kind({value}), {value}.data, {value}.length);"
+            ));
+            Ok(())
+        }
+        _ => Err(invalid_flow_ir(
+            &function.name,
+            "Defect message is not a String value",
+        )),
+    }
+}
+
+fn defect_kind_for_message(message: &str) -> &'static str {
+    if message == "not yet implemented" {
+        "TODO"
+    } else if message.starts_with("unreachable: no match arm matched") {
+        "NO_MATCH"
+    } else if message.starts_with("assertion failed") {
+        "ASSERT"
+    } else {
+        "PANIC"
+    }
+}
+
+fn has_dynamic_defect(flow: &emela_lir::Module) -> bool {
+    flow.functions.iter().any(|(_, function)| {
+        function.seqs.iter().any(|(_, sequence)| {
+            matches!(
+                &sequence.term,
+                Term::Defect(Operand::Var(variable))
+                    if matches!(flow.core.ty(function.vars[*variable].ty), Type::String)
+            )
+        })
+    })
+}
+
+fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
+    );
+    writer.begin_block("if (value.length < length || (exact && value.length != length))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.begin_block("for (uint16_t i = 0; i < length; ++i)");
+    writer.begin_block("if (value.data[i] != expected[i])");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return 1;");
+    writer.end_block();
+    writer.blank();
+    writer.begin_block("static inline EmelaDefectKind emela_emb_defect_kind(EmelaString message)");
+    for (message, kind, exact) in [
+        ("not yet implemented", "TODO", "1"),
+        ("unreachable: no match arm matched", "NO_MATCH", "1"),
+        ("assertion failed", "ASSERT", "0"),
+    ] {
+        writer.begin_block(&format!(
+            "if (emela_emb_string_matches(message, {}, UINT16_C({}), {exact}))",
+            c_string_literal(message.as_bytes()),
+            message.len(),
+        ));
+        writer.line(&format!("return EMELA_DEFECT_{kind};"));
+        writer.end_block();
+    }
+    writer.line("return EMELA_DEFECT_PANIC;");
+    writer.end_block();
+    writer.blank();
 }
 
 fn emit_protect(
@@ -1662,6 +1762,7 @@ fn emit_return(
             emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
         }
+        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
         other => return Err(unsupported(&function.name, term_name(other))),
     }
 
@@ -1696,8 +1797,22 @@ fn constant_expression(value: &emela_lir::Const) -> Result<Option<String>, &'sta
         emela_lir::Const::Unit => Ok(None),
         emela_lir::Const::Int64(value) => Ok(Some(int64_literal(*value))),
         emela_lir::Const::Float(value) => Ok(Some(float_literal(*value))),
-        emela_lir::Const::String(_) => Err("String constant"),
+        emela_lir::Const::String(value) => {
+            let length = u16::try_from(value.len()).map_err(|_| "String constant is too long")?;
+            Ok(Some(format!(
+                "(EmelaString){{ .data = {}, .length = UINT16_C({length}) }}",
+                c_string_literal(value.as_bytes())
+            )))
+        }
     }
+}
+
+fn c_string_literal(bytes: &[u8]) -> String {
+    let escaped = bytes
+        .iter()
+        .map(|byte| format!("\\x{byte:02x}"))
+        .collect::<String>();
+    format!("\"{escaped}\"")
 }
 
 fn int32_literal(value: i32) -> String {
@@ -1955,6 +2070,7 @@ impl<'a> TypeLayouts<'a> {
             Type::Int64 => "int64_t".to_owned(),
             Type::Float => "double".to_owned(),
             Type::Unit | Type::Never | Type::Set(_) => "void".to_owned(),
+            Type::String => "EmelaString".to_owned(),
             Type::Tuple(_) => type_name(ty),
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
             Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
@@ -2026,6 +2142,11 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!("}} {};", type_name(aggregate.ty)));
             writer.blank();
         }
+    }
+
+    fn emit_string_declaration(&self, writer: &mut Writer) {
+        writer.line("typedef struct { const char *data; uint16_t length; } EmelaString;");
+        writer.blank();
     }
 
     fn emit_error_declaration(&self, writer: &mut Writer) {

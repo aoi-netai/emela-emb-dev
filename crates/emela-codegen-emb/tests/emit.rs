@@ -132,6 +132,83 @@ fn emits_and_runs_float_constants_including_non_finite_values() {
 }
 
 #[test]
+fn emits_utf8_and_embedded_nul_string_constants_as_views() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_literal");
+    builder.set_ret(TypeId::STRING).set_exported();
+    builder.term(Term::Return(Some(Operand::Const(Const::String(
+        "a\0é".to_owned(),
+    )))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit a String view constant");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { const unsigned char expected[] = { UINT8_C(0x61), UINT8_C(0x00), UINT8_C(0xc3), UINT8_C(0xa9) }; EmelaString value = emela_export_string_literal_0(); return value.length == UINT16_C(4) && memcmp(value.data, expected, sizeof expected) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn sends_dynamic_defect_string_views_to_the_board_hook() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "panic_message");
+    let message = builder.param("message", TypeId::STRING);
+    builder.set_ret(TypeId::NEVER).set_exported();
+    builder.term(Term::Defect(Operand::Var(message)));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit dynamic defect message");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char expected[] = \"assertion failed: x\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_ASSERT && length == sizeof expected - 1 && memcmp(message, expected, length) == 0) exit(0); exit(1); }\nint main(void) { EmelaString message = { expected, (uint16_t)(sizeof expected - 1) }; emela_export_panic_message_0(message); return 2; }\n",
+    );
+}
+
+#[test]
+fn classifies_a_static_todo_defect() {
+    let core = emela_core::Module::new();
+    let mut flow = Module::new(core);
+    let mut cleanup = FnBuilder::new(&flow.core, "cleanup_probe");
+    cleanup.set_ret(TypeId::UNIT);
+    let cleanup_id = flow.add(cleanup.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".to_owned(),
+            host: HostRef::Global("fixture_cleanup".to_owned()),
+        }],
+    }));
+    let mut builder = FnBuilder::new(&flow.core, "todo");
+    builder.set_ret(TypeId::NEVER).set_exported();
+    builder.protect(
+        None,
+        |builder| {
+            builder.term(Term::Defect(Operand::Const(Const::String(
+                "not yet implemented".to_owned(),
+            ))));
+        },
+        |builder| {
+            builder.let_(
+                None,
+                Value::Call {
+                    callee: Callee::Direct(cleanup_id),
+                    args: Vec::new(),
+                    suspends: false,
+                    on_fail: None,
+                },
+            );
+        },
+    );
+    builder.term(Term::Return(None));
+    flow.add(builder.finish());
+    let output = compile_flow(&flow, &Options::default()).expect("emit Todo defect");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic int cleanup_calls;\nstatic const char expected[] = \"not yet implemented\";\nvoid fixture_cleanup(void) { cleanup_calls += 1; }\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_TODO && cleanup_calls == 0 && length == sizeof expected - 1 && memcmp(message, expected, length) == 0) exit(0); exit(1); }\nint main(void) { emela_export_todo_1(); return 2; }\n",
+    );
+}
+
+#[test]
 fn emits_inline_c_layouts_for_tuple_and_generic_enum_signatures() {
     let mut tuple_core = emela_core::Module::new();
     let tuple_ty = tuple_core.tuple(vec![TypeId::INT, TypeId::BOOL]);
