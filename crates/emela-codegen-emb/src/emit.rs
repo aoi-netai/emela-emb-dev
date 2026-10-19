@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use emela_lir::{FnId, Function, Operand, Repr, Term, VarId};
+use emela_lir::{FnId, Function, Operand, Repr, Stmt, Term, Value, VarId};
 
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
@@ -52,15 +52,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             return Err(unsupported(&function.name, "external function bodies"));
         };
         let sequence = &function.seqs[body];
-        if let Some(&statement) = sequence.stmts.first() {
-            return Err(unsupported(
-                &function.name,
-                statement_name(&function.stmts[statement]),
-            ));
-        }
-
         let name = &names[&id];
         source.begin_block(&signature(flow, function, name, !function.exported));
+        emit_local_declarations(function, &mut source);
+        for &statement in &sequence.stmts {
+            emit_statement(function, &function.stmts[statement], &mut source)?;
+        }
         emit_return(flow, function, &sequence.term, &mut source)?;
         source.end_block();
         source.blank();
@@ -78,6 +75,59 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             },
         ],
     })
+}
+
+fn emit_local_declarations(function: &Function, writer: &mut Writer) {
+    for (id, variable) in function.vars.iter() {
+        if !function.params.contains(&id) {
+            writer.decl(c_type(variable.repr), &variable_name(id), None);
+        }
+    }
+}
+
+fn emit_statement(
+    function: &Function,
+    statement: &Stmt,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    match statement {
+        Stmt::Let {
+            dst,
+            value: Value::Const(value),
+            on_defect,
+            on_suspend,
+        } => {
+            if on_defect.is_some() || on_suspend.is_some() {
+                return Err(vec![Error {
+                    kind: ErrorKind::InvalidFlowIr,
+                    message: format!(
+                        "invalid Flow IR in function `{}`: Flow-stage Let has a landing edge",
+                        function.name
+                    ),
+                }]);
+            }
+            let expression = constant_expression(value)
+                .map_err(|kind| unsupported(&function.name, &format!("{kind} in Value::Const")))?;
+            match (dst, expression) {
+                (Some(dst), Some(expression)) => {
+                    writer.assign(&variable_name(*dst), &expression);
+                }
+                (None, None) => {}
+                (Some(_), None) => {
+                    return Err(vec![Error {
+                        kind: ErrorKind::InvalidFlowIr,
+                        message: format!(
+                            "invalid Flow IR in function `{}`: Unit constant has a destination",
+                            function.name
+                        ),
+                    }]);
+                }
+                (None, Some(_)) => {}
+            }
+            Ok(())
+        }
+        other => Err(unsupported(&function.name, statement_name(other))),
+    }
 }
 
 fn emit_return(

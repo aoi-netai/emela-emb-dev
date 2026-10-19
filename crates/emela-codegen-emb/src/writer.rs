@@ -19,6 +19,10 @@ impl Writer {
         self.output.push('\n');
     }
 
+    pub(crate) fn assign(&mut self, target: &str, expression: &str) {
+        self.line(&format!("{target} = {expression};"));
+    }
+
     pub(crate) fn blank(&mut self) {
         self.output.push('\n');
     }
@@ -37,6 +41,13 @@ impl Writer {
         match value {
             Some(value) => self.line(&format!("return {value};")),
             None => self.line("return;"),
+        }
+    }
+
+    pub(crate) fn decl(&mut self, ty: &str, name: &str, init: Option<&str>) {
+        match init {
+            Some(init) => self.line(&format!("{ty} {name} = {init};")),
+            None => self.line(&format!("{ty} {name};")),
         }
     }
 
