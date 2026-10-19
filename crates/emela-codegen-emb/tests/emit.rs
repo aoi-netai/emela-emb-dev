@@ -661,6 +661,26 @@ fn emits_and_runs_recur_with_multiple_loop_variables() {
 }
 
 #[test]
+fn emits_and_runs_a_block_that_yields_a_value() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "block_value");
+    builder.set_ret(TypeId::INT).set_exported();
+    let result = builder.var("result", TypeId::INT);
+    builder.block(Some(result), "exit", |builder, _label| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(123)))));
+    });
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit a yielding block");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_block_value_0() == INT32_C(123) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (

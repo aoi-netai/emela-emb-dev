@@ -389,6 +389,14 @@ fn emit_statement(
         } => emit_loop(
             layouts, function, *dst, vars, inits, *body, writer, names, loops, next_temp,
         ),
+        Stmt::Block { dst, body, .. } => {
+            writer.begin_block("");
+            let result = emit_compound_sequence(
+                layouts, function, *body, *dst, writer, names, loops, next_temp,
+            );
+            writer.end_block();
+            result
+        }
         other => Err(unsupported(&function.name, statement_name(other))),
     }
 }
