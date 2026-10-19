@@ -145,6 +145,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.line("void emela_embedded_retain(void *value);");
         header.line("/* Releases an owned List value returned by this module. */");
         header.line("void emela_embedded_release(void *value);");
+        header.line("/* Retains the backing owner of an EmelaString value. */");
+        header.line("void emela_embedded_retain_string(const EmelaString *value);");
+        header.line("/* Releases the backing owner of an EmelaString value. */");
+        header.line("void emela_embedded_release_string(EmelaString *value);");
         layouts.emit_public_release_declarations(&mut header);
     }
 
@@ -276,9 +280,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         layouts.emit_public_release_helpers(&mut source);
         crate::heap::emit_public_retain(&mut source);
         crate::heap::emit_public_release(&mut source);
+        emit_public_string_ownership(&mut source);
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
+        layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
     }
     let has_int_shift = has_builtin(
@@ -1504,11 +1510,11 @@ fn function_needs_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
         });
     let local_managed_value = function.vars.iter().any(|(variable, data)| {
         !function.params.contains(&variable)
-            && layouts.is_managed_value(data.ty)
+            && layouts.contains_heap_ref(data.ty, &mut HashSet::new())
             && !known_empty.contains(&variable)
     });
     let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
-        && layouts.is_managed_value(function.ret);
+        && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
     statement_needs_heap
         || returns_managed_alias
         || local_managed_value
@@ -1665,6 +1671,7 @@ fn emit_builtin(
         Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
         Builtin::StringCodePoints => (1, Type::List(TypeId::INT)),
+        Builtin::StringSplit => (2, Type::List(TypeId::STRING)),
         Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
             (2, Type::Bool)
         }
@@ -1731,6 +1738,9 @@ fn emit_builtin(
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::StringCodePoints => operand_is_string(layouts, function, &args[0]),
+        Builtin::StringSplit => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
         Builtin::IntParse => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1779,6 +1789,11 @@ fn emit_builtin(
             layouts.types[function.vars[dst].ty],
             Type::List(TypeId::INT)
         )
+    } else if op == Builtin::StringSplit {
+        matches!(
+            layouts.types[function.vars[dst].ty],
+            Type::List(TypeId::STRING)
+        )
     } else {
         layouts.types[function.vars[dst].ty] == result_type
     };
@@ -1794,6 +1809,24 @@ fn emit_builtin(
         .map(operand_expression)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
+    if op == Builtin::StringSplit {
+        if matches!(args.get(1), Some(Operand::Const(Const::String(separator))) if separator.is_empty())
+        {
+            return Err(unsupported(
+                &function.name,
+                "String.split with an empty separator needs Unicode grapheme tables",
+            ));
+        }
+        emit_string_split(
+            layouts,
+            function,
+            dst,
+            &expressions[0],
+            &expressions[1],
+            writer,
+        )?;
+        return Ok(());
+    }
     if op == Builtin::StringCodePoints {
         emit_string_code_points(layouts, function, dst, &expressions[0], writer)?;
         return Ok(());
@@ -2157,6 +2190,23 @@ fn emit_builtin(
     };
     writer.assign(&variable_name(dst), &expression);
     Ok(())
+}
+
+fn emit_public_string_ownership(writer: &mut Writer) {
+    writer.begin_block("void emela_embedded_retain_string(const EmelaString *value)");
+    writer.begin_block("if (value != NULL)");
+    writer.line("emela_heap_retain(value->owner);");
+    writer.end_block();
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("void emela_embedded_release_string(EmelaString *value)");
+    writer.begin_block("if (value != NULL)");
+    writer.line("emela_heap_release(value->owner);");
+    writer.line("*value = (EmelaString){0};");
+    writer.end_block();
+    writer.end_block();
+    writer.blank();
 }
 
 fn emit_runtime(
@@ -2581,7 +2631,7 @@ fn emit_string_trim_helper(writer: &mut Writer) {
     writer.line("end = begin;");
     writer.end_block();
     writer.line(
-        "return (EmelaString){ .data = value.data + start, .length = (uint16_t)(end - start) };",
+        "return (EmelaString){ .data = value.data + start, .length = (uint16_t)(end - start), .owner = value.owner };",
     );
     writer.end_block();
     writer.blank();
@@ -2612,6 +2662,22 @@ fn emit_statement(
                 Value::ListHead(_) | Value::ListTail(_) | Value::Field { .. } | Value::TupleGet { .. },
             ..
         } => true,
+        Stmt::Let {
+            value:
+                Value::Builtin {
+                    op: Builtin::StringTrim,
+                    ..
+                },
+            ..
+        } => true,
+        Stmt::Let {
+            value:
+                Value::Builtin {
+                    op: Builtin::StringAppend,
+                    args,
+                },
+            ..
+        } if append_has_empty_constant(args) => true,
         Stmt::Let {
             value: Value::List {
                 elems,
@@ -3289,6 +3355,178 @@ fn emit_string_code_points(
     writer.end_block();
     writer.assign(&variable_name(dst), &head_name);
     Ok(())
+}
+
+fn emit_string_split(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    separator: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::STRING)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringSplit destination is not List[String]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_split_input_{suffix}");
+    let separator_name = format!("emela_string_split_separator_{suffix}");
+    let bytes_name = format!("emela_string_split_bytes_{suffix}");
+    let owner_name = format!("emela_string_split_owner_{suffix}");
+    let owner_created_name = format!("emela_string_split_owner_created_{suffix}");
+    let head_name = format!("emela_string_split_head_{suffix}");
+    let last_name = format!("emela_string_split_last_{suffix}");
+    let node_name = format!("emela_string_split_node_{suffix}");
+    let start_name = format!("emela_string_split_start_{suffix}");
+    let scan_name = format!("emela_string_split_scan_{suffix}");
+    let matched_name = format!("emela_string_split_matched_{suffix}");
+    let separator_index_name = format!("emela_string_split_separator_index_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let string_owner_kind = layouts.string_owner_kind();
+    let defect = b"String.split with an empty separator needs Unicode grapheme tables";
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("EmelaString", &separator_name, Some(separator));
+    writer.begin_block(&format!("if ({separator_name}.length == UINT16_C(0))"));
+    writer.line(&format!(
+        "emela_board_defect(EMELA_DEFECT_UNSUPPORTED_UNICODE, {}, UINT16_C({}));",
+        c_string_literal(defect),
+        defect.len()
+    ));
+    writer.end_block();
+
+    writer.decl(
+        "const char *",
+        &bytes_name,
+        Some(&format!("{input_name}.data")),
+    );
+    writer.decl("void *", &owner_name, Some(&format!("{input_name}.owner")));
+    writer.decl("int", &owner_created_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "if ({owner_name} == NULL && {input_name}.length != UINT16_C(0))"
+    ));
+    writer.assign(
+        &owner_name,
+        &format!("emela_heap_allocate((size_t){input_name}.length, UINT32_C({string_owner_kind}))"),
+    );
+    writer.assign(&bytes_name, &format!("(const char *){owner_name}"));
+    let copy_index_name = format!("emela_string_split_copy_index_{suffix}");
+    writer.decl("uint32_t", &copy_index_name, Some("UINT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({copy_index_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.line(&format!(
+        "((char *){owner_name})[{copy_index_name}] = {input_name}.data[{copy_index_name}];"
+    ));
+    writer.line(&format!("++{copy_index_name};"));
+    writer.end_block();
+    writer.assign(&owner_created_name, "INT32_C(1)");
+    writer.end_block();
+    writer.begin_block(&format!("if ({bytes_name} == NULL)"));
+    writer.assign(&bytes_name, "\"\"");
+    writer.end_block();
+
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+    writer.decl("uint32_t", &start_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &scan_name, Some("UINT32_C(0)"));
+    writer.decl("int", &matched_name, None);
+    writer.decl("uint32_t", &separator_index_name, None);
+    writer.begin_block(&format!(
+        "while ({scan_name} <= (uint32_t){input_name}.length && (uint32_t){separator_name}.length <= (uint32_t){input_name}.length - {scan_name})"
+    ));
+    writer.assign(&matched_name, "INT32_C(1)");
+    writer.assign(&separator_index_name, "UINT32_C(0)");
+    writer.begin_block(&format!(
+        "while ({separator_index_name} < (uint32_t){separator_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if ({bytes_name}[{scan_name} + {separator_index_name}] != {separator_name}.data[{separator_index_name}])"
+    ));
+    writer.assign(&matched_name, "INT32_C(0)");
+    writer.line("break;");
+    writer.end_block();
+    writer.line(&format!("++{separator_index_name};"));
+    writer.end_block();
+    writer.begin_block(&format!("if ({matched_name} != INT32_C(0))"));
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &start_name,
+        &format!("{scan_name} - {start_name}"),
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    writer.line(&format!(
+        "{scan_name} += (uint32_t){separator_name}.length;"
+    ));
+    writer.assign(&start_name, &scan_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.line(&format!("++{scan_name};"));
+    writer.end_block();
+    writer.end_block();
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &start_name,
+        &format!("(uint32_t){input_name}.length - {start_name}"),
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
+    writer.line(&format!("emela_heap_release({owner_name});"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
+    Ok(())
+}
+
+fn emit_string_split_push(
+    writer: &mut Writer,
+    node_name: &str,
+    list_node: &str,
+    list_kind: u32,
+    bytes: &str,
+    start: &str,
+    length: &str,
+    owner: &str,
+    last: &str,
+    head: &str,
+) {
+    writer.assign(
+        node_name,
+        &format!("({list_node} *)emela_heap_allocate(sizeof({list_node}), UINT32_C({list_kind}))"),
+    );
+    writer.assign(
+        &format!("{node_name}->head"),
+        &format!(
+            "(EmelaString){{ .data = {bytes} + ({start}), .length = (uint16_t)({length}), .owner = {owner} }}"
+        ),
+    );
+    writer.line(&format!("emela_heap_retain({owner});"));
+    writer.assign(&format!("{node_name}->tail"), "NULL");
+    writer.begin_block(&format!("if ({last} == NULL)"));
+    writer.assign(head, node_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.assign(&format!("{last}->tail"), node_name);
+    writer.end_block();
+    writer.assign(last, node_name);
 }
 
 fn emit_list_head(
@@ -5139,14 +5377,7 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 }
                 match layouts.types[ty].clone() {
-                    Type::List(element)
-                        if !type_contains_string(&layouts, element, &mut HashSet::new()) => {}
-                    Type::List(_) => {
-                        return Err(unsupported(
-                            &function.name,
-                            "List elements that contain a String view",
-                        ));
-                    }
+                    Type::List(_) => {}
                     Type::Any => {
                         return Err(unsupported(
                             &function.name,
@@ -5157,14 +5388,6 @@ impl<'a> TypeLayouts<'a> {
                         return Err(unsupported(
                             &function.name,
                             "error enum values that contain a heap reference",
-                        ));
-                    }
-                    Type::Tuple(_) | Type::Enum(_, _)
-                        if type_contains_string(&layouts, ty, &mut HashSet::new()) =>
-                    {
-                        return Err(unsupported(
-                            &function.name,
-                            "inline aggregate values that combine List references and String views",
                         ));
                     }
                     Type::Tuple(_) | Type::Enum(_, _) => {}
@@ -5341,7 +5564,34 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn is_managed_value(&self, ty: TypeId) -> bool {
-        self.contains_heap_ref(ty, &mut HashSet::new())
+        self.contains_owned_ref(ty, &mut HashSet::new())
+    }
+
+    fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if matches!(self.types[ty], Type::String | Type::List(_)) {
+            return true;
+        }
+        if !seen.insert(ty) {
+            return false;
+        }
+        let Some(&aggregate_index) = self.aggregate_ids.get(&ty) else {
+            return false;
+        };
+        let aggregate = &self.aggregates[aggregate_index];
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => fields.iter().enumerate().any(|(index, &field)| {
+                self.recursive_edges.contains(&(ty, 0, index))
+                    || self.contains_owned_ref(field, seen)
+            }),
+            AggregateKind::Enum(variants) => {
+                variants.iter().enumerate().any(|(variant, fields)| {
+                    fields.iter().enumerate().any(|(index, &field)| {
+                        self.recursive_edges.contains(&(ty, variant, index))
+                            || self.contains_owned_ref(field, seen)
+                    })
+                })
+            }
+        }
     }
 
     fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
@@ -5380,6 +5630,11 @@ impl<'a> TypeLayouts<'a> {
         u32::try_from(self.list_types.len() + index).ok()
     }
 
+    fn string_owner_kind(&self) -> u32 {
+        u32::try_from(self.list_types.len() + self.recursive_box_types.len())
+            .expect("too many fixed-heap object kinds")
+    }
+
     fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize> {
         let index = *self.aggregate_ids.get(&ty)?;
         self.is_managed_value(ty).then_some(index)
@@ -5388,6 +5643,8 @@ impl<'a> TypeLayouts<'a> {
     fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty) {
             writer.line(&format!("emela_heap_retain({expression});"));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!("emela_heap_retain(({expression}).owner);"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_retain_value_{index}(&({expression}));"
@@ -5407,6 +5664,10 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!(
                 "emela_heap_enqueue({expression}, {pending}, {tail});"
             ));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!(
+                "emela_heap_enqueue(({expression}).owner, {pending}, {tail});"
+            ));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_enqueue_value_{index}(&({expression}), {pending}, {tail});"
@@ -5417,10 +5678,34 @@ impl<'a> TypeLayouts<'a> {
     fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty) {
             writer.line(&format!("emela_heap_release({expression});"));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!("emela_heap_release(({expression}).owner);"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_release_value_{index}(&({expression}));"
             ));
+        }
+    }
+
+    fn emit_noheap_ownership_stubs(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty)
+                || self.contains_heap_ref(aggregate.ty, &mut HashSet::new())
+            {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "static inline void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.line("(void)value;");
+            writer.end_block();
+            writer.begin_block(&format!(
+                "static inline void emela_heap_release_value_{index}({aggregate_type} *value)"
+            ));
+            writer.line("(void)value;");
+            writer.end_block();
+            writer.blank();
         }
     }
 
@@ -5602,6 +5887,11 @@ impl<'a> TypeLayouts<'a> {
             writer.line("break;");
             writer.end_block();
         }
+        let string_owner_kind = self.string_owner_kind();
+        writer.line(&format!("case UINT32_C({string_owner_kind}):"));
+        writer.begin_block("");
+        writer.line("break;");
+        writer.end_block();
         writer.line("default:");
         writer.begin_block("");
         writer.line(&format!(
@@ -5734,7 +6024,9 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn emit_string_declaration(&self, writer: &mut Writer) {
-        writer.line("typedef struct { const char *data; uint16_t length; } EmelaString;");
+        writer.line(
+            "typedef struct { const char *data; uint16_t length; void *owner; } EmelaString;",
+        );
         writer.blank();
     }
 

@@ -962,6 +962,104 @@ fn string_code_points_builds_and_releases_a_list_in_code_point_order() {
 }
 
 #[test]
+fn string_split_keeps_views_alive_after_copying_the_source() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let first_trimmed = {
+        let mut builder = FnBuilder::new(&core, "first_trimmed_split");
+        builder.set_ret(TypeId::STRING).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(parts));
+        let trimmed = builder.assign(
+            "trimmed",
+            TypeId::STRING,
+            Value::Builtin {
+                op: Builtin::StringTrim,
+                args: vec![first.into()],
+            },
+        );
+        builder.term(Term::Return(Some(trimmed.into())));
+        builder.finish()
+    };
+    let trailing_empty = {
+        let mut builder = FnBuilder::new(&core, "trailing_split_item_is_empty");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        let middle = builder.assign("middle", list_string, Value::ListTail(parts));
+        let last = builder.assign("last", list_string, Value::ListTail(middle));
+        let last_item = builder.assign("last_item", TypeId::STRING, Value::ListHead(last));
+        let length = builder.assign(
+            "length",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![last_item.into()],
+            },
+        );
+        let empty = builder.assign(
+            "empty",
+            TypeId::BOOL,
+            Value::Prim {
+                op: PrimOp::Eq,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![length.into(), Const::Int(0).into()],
+            },
+        );
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let dynamic_empty_separator = {
+        let mut builder = FnBuilder::new(&core, "dynamic_empty_separator");
+        builder.set_ret(list_string).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        builder.term(Term::Return(Some(parts.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(first_trimmed);
+    flow.add(trailing_empty);
+    flow.add(dynamic_empty_separator);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit String.split with nonempty separators");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char unsupported[] = \"String.split with an empty separator needs Unicode grapheme tables\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_UNSUPPORTED_UNICODE && length == sizeof unsupported - 1 && message[0] == unsupported[0] ? 0 : 3); }\nint main(void) { EmelaString separator = { .data = \"::\", .length = UINT16_C(2) }; for (int i = 0; i < 1000; ++i) { char input[] = \"  alpha  ::beta::\"; EmelaString source = { .data = input, .length = (uint16_t)(sizeof input - 1) }; if (emela_export_trailing_split_item_is_empty_1(source, separator) != INT32_C(1)) return 1; EmelaString value = emela_export_first_trimmed_split_0(source, separator); memset(input, 'x', sizeof input - 1); if (value.length != UINT16_C(5) || memcmp(value.data, \"alpha\", 5) != 0) return 2; emela_embedded_release_string(&value); } EmelaString input = { .data = \"abc\", .length = UINT16_C(3) }; EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; (void)emela_export_dynamic_empty_separator_2(input, empty); return 4; }\n",
+    );
+}
+
+#[test]
 fn fixed_heap_exhaustion_calls_the_board_defect_hook() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));
