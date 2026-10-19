@@ -66,7 +66,7 @@ compile_asm "$STARTUP"
 
 "$CC" "${ARCH_FLAGS[@]}" -nostartfiles --specs=nano.specs --specs=nosys.specs \
     -T"$SCRIPT_DIR/firmware.ld" -Wl,--gc-sections \
-    "-Wl,-Map,$OUT/firmware.map" "${OBJECTS[@]}" -o "$OUT/firmware.elf" \
+    "-Wl,-Map,$OUT/firmware.map" "${OBJECTS[@]}" -lm -o "$OUT/firmware.elf" \
     >"$OUT/link.log" 2>&1 || {
         cat "$OUT/link.log" >&2
         exit 1

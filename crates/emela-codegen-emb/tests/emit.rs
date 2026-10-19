@@ -341,6 +341,109 @@ fn int64_division_by_zero_calls_the_board_defect_hook() {
 }
 
 #[test]
+fn emits_and_runs_float_primitive_operations() {
+    let cases = [
+        (
+            PrimOp::Add,
+            vec![Const::Float(1.25), Const::Float(2.75)],
+            TypeId::FLOAT,
+            "actual == 4.0",
+        ),
+        (
+            PrimOp::Sub,
+            vec![Const::Float(4.5), Const::Float(1.25)],
+            TypeId::FLOAT,
+            "actual == 3.25",
+        ),
+        (
+            PrimOp::Mul,
+            vec![Const::Float(1.5), Const::Float(2.0)],
+            TypeId::FLOAT,
+            "actual == 3.0",
+        ),
+        (
+            PrimOp::Div,
+            vec![Const::Float(7.0), Const::Float(2.0)],
+            TypeId::FLOAT,
+            "actual == 3.5",
+        ),
+        (
+            PrimOp::Rem,
+            vec![Const::Float(7.0), Const::Float(2.0)],
+            TypeId::FLOAT,
+            "actual == 1.0",
+        ),
+        (
+            PrimOp::Neg,
+            vec![Const::Float(-2.5)],
+            TypeId::FLOAT,
+            "actual == 2.5",
+        ),
+        (
+            PrimOp::Eq,
+            vec![Const::Float(1.25), Const::Float(1.25)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Ne,
+            vec![Const::Float(1.25), Const::Float(2.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Lt,
+            vec![Const::Float(-1.0), Const::Float(0.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Le,
+            vec![Const::Float(2.0), Const::Float(2.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Gt,
+            vec![Const::Float(3.0), Const::Float(2.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Ge,
+            vec![Const::Float(2.0), Const::Float(2.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+        (
+            PrimOp::Eq,
+            vec![Const::Float(f64::NAN), Const::Float(0.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(0)",
+        ),
+        (
+            PrimOp::Ne,
+            vec![Const::Float(f64::NAN), Const::Float(0.0)],
+            TypeId::BOOL,
+            "actual == INT32_C(1)",
+        ),
+    ];
+
+    for (op, args, result_type, expected) in cases {
+        let output = compile_f64_prim(op, args, result_type);
+        let actual_type = if result_type == TypeId::FLOAT {
+            "double"
+        } else {
+            "int32_t"
+        };
+        let harness = format!(
+            "#include <math.h>\n#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {actual_type} actual = emela_export_probe_0(); return ({expected}) ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
 fn compiles_core_int_add_with_twos_complement_wraparound() {
     let mut core = emela_core::Module::new();
     let main = core.declare("main", true);
@@ -556,6 +659,26 @@ fn compile_i64_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output
     compile_flow(&flow, &Options::default()).expect("emit Int64 primitive")
 }
 
+fn compile_f64_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "probe");
+    builder.set_ret(result_type).set_exported();
+    let result = builder.assign(
+        "result",
+        result_type,
+        Value::Prim {
+            op,
+            ty: PrimTy::F64,
+            args: args.into_iter().map(Operand::Const).collect(),
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    compile_flow(&flow, &Options::default()).expect("emit Float primitive")
+}
+
 fn compile_constant_function(name: &str, return_type: TypeId, value: Const) -> Output {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, name);
@@ -601,6 +724,7 @@ fn compile_and_run(output: Output, harness_source: &str) {
         .arg(&temp.0)
         .arg(temp.0.join("emela_embedded.c"))
         .arg(&harness)
+        .arg("-lm")
         .arg("-o")
         .arg(&executable)
         .output()

@@ -471,6 +471,7 @@ fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<Stri
     match ty {
         PrimTy::I32 => primitive_i32_expression(op, args.as_slice()),
         PrimTy::I64 => primitive_i64_expression(op, args.as_slice()),
+        PrimTy::F64 => primitive_f64_expression(op, args.as_slice()),
         _ => Err("unsupported Value::Prim type"),
     }
 }
@@ -526,6 +527,24 @@ fn primitive_i64_expression(op: PrimOp, args: &[String]) -> Result<String, &'sta
         (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
         (PrimOp::Div, [lhs, rhs]) => Ok(format!("emela_i64_div({lhs}, {rhs})")),
         (PrimOp::Rem, [lhs, rhs]) => Ok(format!("emela_i64_rem({lhs}, {rhs})")),
+        _ => Err("Value::Prim with an invalid arity"),
+    }
+}
+
+fn primitive_f64_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {
+    match (op, args) {
+        (PrimOp::Add, [lhs, rhs]) => Ok(format!("(({lhs}) + ({rhs}))")),
+        (PrimOp::Sub, [lhs, rhs]) => Ok(format!("(({lhs}) - ({rhs}))")),
+        (PrimOp::Mul, [lhs, rhs]) => Ok(format!("(({lhs}) * ({rhs}))")),
+        (PrimOp::Div, [lhs, rhs]) => Ok(format!("(({lhs}) / ({rhs}))")),
+        (PrimOp::Rem, [lhs, rhs]) => Ok(format!("fmod(({lhs}), ({rhs}))")),
+        (PrimOp::Neg, [value]) => Ok(format!("(-({value}))")),
+        (PrimOp::Eq, [lhs, rhs]) => comparison_expression(lhs, "==", rhs),
+        (PrimOp::Ne, [lhs, rhs]) => comparison_expression(lhs, "!=", rhs),
+        (PrimOp::Lt, [lhs, rhs]) => comparison_expression(lhs, "<", rhs),
+        (PrimOp::Le, [lhs, rhs]) => comparison_expression(lhs, "<=", rhs),
+        (PrimOp::Gt, [lhs, rhs]) => comparison_expression(lhs, ">", rhs),
+        (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
         _ => Err("Value::Prim with an invalid arity"),
     }
 }
