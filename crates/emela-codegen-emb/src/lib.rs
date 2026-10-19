@@ -3,6 +3,7 @@
 //! This crate starts from Core IR, obtains and verifies Flow IR, and will emit embedded C without
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
+mod emit;
 #[allow(dead_code)]
 mod writer;
 
@@ -42,6 +43,8 @@ pub enum ErrorKind {
     FlowLowering,
     /// The Flow IR module was not valid for the Flow stage.
     InvalidFlowIr,
+    /// A valid Flow IR construct is not implemented by this backend yet.
+    Unsupported,
 }
 
 /// An error encountered while preparing a module for embedded code generation.
@@ -58,6 +61,18 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// Converts Core IR to Flow IR and emits embedded C files.
+pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    let flow = flow_from_core(core)?;
+    compile_flow(&flow, options)
+}
+
+/// Verifies and emits a Flow IR module without running Heap IR passes.
+pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    verify_flow(flow)?;
+    emit::emit(flow, options)
+}
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
 ///
