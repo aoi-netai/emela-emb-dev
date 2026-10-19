@@ -7,6 +7,7 @@ use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
 const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
+const BOARD_HEADER_FILE: &str = "emela_board.h";
 
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
     let names: HashMap<FnId, String> = flow
@@ -36,8 +37,45 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     header.blank();
     header.line("#endif");
 
+    let mut board_header = Writer::new();
+    board_header.line("#ifndef EMELA_BOARD_H");
+    board_header.line("#define EMELA_BOARD_H");
+    board_header.blank();
+    board_header.line("#include <stdint.h>");
+    board_header.blank();
+    board_header.line("typedef enum {");
+    for (index, kind) in [
+        "PANIC",
+        "TODO",
+        "DIVISION_BY_ZERO",
+        "NO_MATCH",
+        "FLOAT_TO_INT",
+        "NEGATIVE_SHIFT",
+        "HEAP_EXHAUSTED",
+        "STRING_CAPACITY",
+        "UNSUPPORTED_UNICODE",
+        "UNHANDLED_ERROR",
+        "ASSERT",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let suffix = if index == 10 { "" } else { "," };
+        board_header.line(&format!("  EMELA_DEFECT_{kind}{suffix}"));
+    }
+    board_header.line("} EmelaDefectKind;");
+    board_header.blank();
+    board_header.line(
+        "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
+    );
+    board_header.line("void emela_board_init(void);");
+    board_header.line("void emela_board_idle(void);");
+    board_header.blank();
+    board_header.line("#endif");
+
     let mut source = Writer::new();
     source.line(&format!("#include \"{HEADER_FILE}\""));
+    source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.blank();
     source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
     source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
@@ -75,6 +113,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             GeneratedFile {
                 path: HEADER_FILE.to_owned(),
                 contents: header.finish(),
+            },
+            GeneratedFile {
+                path: BOARD_HEADER_FILE.to_owned(),
+                contents: board_header.finish(),
             },
             GeneratedFile {
                 path: SOURCE_FILE.to_owned(),
