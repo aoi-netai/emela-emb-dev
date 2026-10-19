@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use emela_core::{Type, TypeId, TypeTable};
 use emela_lir::{Callee, FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
 
 use crate::writer::Writer;
@@ -10,6 +11,7 @@ const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
+    let layouts = TypeLayouts::new(flow)?;
     let mut names = HashMap::new();
     for (id, function) in flow.functions.iter() {
         let name = if function.external.is_some() {
@@ -41,6 +43,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     header.blank();
     header.line("#include <stdint.h>");
     header.blank();
+    layouts.emit_declarations(&mut header);
+    if !layouts.aggregates.is_empty() {
+        header.blank();
+    }
 
     for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported) {
         if function.fails || function.suspends {
@@ -50,7 +56,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             ));
         }
         let name = &names[&id];
-        header.line(&format!("{};", signature(flow, function, name, false)));
+        header.line(&format!("{};", signature(&layouts, function, name, false)));
     }
     if main_entry.is_some() {
         header.line("void emela_embedded_start(void);");
@@ -144,10 +150,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         if function.external.is_some() {
             source.line(&format!(
                 "extern {};",
-                signature(flow, function, name, false)
+                signature(&layouts, function, name, false)
             ));
         } else if !function.exported {
-            source.line(&format!("{};", signature(flow, function, name, true)));
+            source.line(&format!("{};", signature(&layouts, function, name, true)));
         }
     }
     source.blank();
@@ -177,10 +183,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         };
         let sequence = &function.seqs[body];
         let name = &names[&id];
-        source.begin_block(&signature(flow, function, name, !function.exported));
-        emit_local_declarations(function, &mut source);
+        source.begin_block(&signature(&layouts, function, name, !function.exported));
+        emit_local_declarations(&layouts, function, &mut source);
         for &statement in &sequence.stmts {
-            emit_statement(function, &function.stmts[statement], &mut source, &names)?;
+            emit_statement(
+                &layouts,
+                function,
+                &function.stmts[statement],
+                &mut source,
+                &names,
+            )?;
         }
         emit_return(flow, function, &sequence.term, &mut source)?;
         source.end_block();
@@ -216,15 +228,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     })
 }
 
-fn emit_local_declarations(function: &Function, writer: &mut Writer) {
+fn emit_local_declarations(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
-            writer.decl(c_type(variable.repr), &variable_name(id), None);
+            writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
         }
     }
 }
 
 fn emit_statement(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
     writer: &mut Writer,
@@ -315,10 +328,10 @@ fn emit_statement(
             let condition =
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
             writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
-            emit_compound_sequence(function, *then, *dst, writer, names)?;
+            emit_compound_sequence(layouts, function, *then, *dst, writer, names)?;
             writer.end_block();
             writer.begin_block("else");
-            emit_compound_sequence(function, *else_, *dst, writer, names)?;
+            emit_compound_sequence(layouts, function, *else_, *dst, writer, names)?;
             writer.end_block();
             Ok(())
         }
@@ -327,6 +340,7 @@ fn emit_statement(
 }
 
 fn emit_compound_sequence(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     sequence: emela_lir::SeqId,
     dst: Option<VarId>,
@@ -335,7 +349,7 @@ fn emit_compound_sequence(
 ) -> Result<(), Vec<Error>> {
     let sequence = &function.seqs[sequence];
     for &statement in &sequence.stmts {
-        emit_statement(function, &function.stmts[statement], writer, names)?;
+        emit_statement(layouts, function, &function.stmts[statement], writer, names)?;
     }
     let Term::Yield(value) = &sequence.term else {
         return Err(unsupported(&function.name, term_name(&sequence.term)));
@@ -721,14 +735,19 @@ fn float_literal(value: f64) -> String {
     }
 }
 
-fn signature(flow: &emela_lir::Module, function: &Function, name: &str, is_static: bool) -> String {
-    let return_type = c_type(emela_lir::repr_of(&flow.core, function.ret));
+fn signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    is_static: bool,
+) -> String {
+    let return_type = layouts.c_type(function.ret);
     let params = function
         .params
         .iter()
         .map(|&variable| {
             let data = &function.vars[variable];
-            format!("{} {}", c_type(data.repr), variable_name(variable))
+            format!("{} {}", layouts.c_type(data.ty), variable_name(variable))
         })
         .collect::<Vec<_>>();
     let params = if params.is_empty() {
@@ -738,6 +757,189 @@ fn signature(flow: &emela_lir::Module, function: &Function, name: &str, is_stati
     };
     let linkage = if is_static { "static " } else { "" };
     format!("{linkage}{return_type} {name}({params})")
+}
+
+#[derive(Debug)]
+struct AggregateLayout {
+    ty: TypeId,
+    kind: AggregateKind,
+}
+
+#[derive(Debug)]
+enum AggregateKind {
+    Tuple(Vec<TypeId>),
+    Enum(Vec<Vec<TypeId>>),
+}
+
+struct TypeLayouts<'a> {
+    core: &'a emela_core::Module,
+    types: TypeTable,
+    aggregates: Vec<AggregateLayout>,
+    aggregate_ids: HashMap<TypeId, usize>,
+}
+
+impl<'a> TypeLayouts<'a> {
+    fn new(flow: &'a emela_lir::Module) -> Result<Self, Vec<Error>> {
+        let mut layouts = TypeLayouts {
+            core: &flow.core,
+            types: flow.core.types.clone(),
+            aggregates: Vec::new(),
+            aggregate_ids: HashMap::new(),
+        };
+        let mut states = HashMap::new();
+        for (_, function) in flow.functions.iter() {
+            layouts.collect(function.ret, &function.name, &mut states)?;
+            for (_, variable) in function.vars.iter() {
+                layouts.collect(variable.ty, &function.name, &mut states)?;
+            }
+        }
+        Ok(layouts)
+    }
+
+    fn collect(
+        &mut self,
+        ty: TypeId,
+        function: &str,
+        states: &mut HashMap<TypeId, u8>,
+    ) -> Result<(), Vec<Error>> {
+        let kind = match self.types[ty].clone() {
+            Type::Tuple(fields) => Some(AggregateKind::Tuple(fields)),
+            Type::Enum(id, args) if self.enum_layout_required(id) => {
+                let raw_fields: Vec<Vec<TypeId>> = self.core.enums[id]
+                    .variants
+                    .iter()
+                    .map(|variant| variant.tys.clone())
+                    .collect();
+                let fields = raw_fields
+                    .iter()
+                    .map(|variant| {
+                        variant
+                            .iter()
+                            .map(|&field| self.types.subst(field, &args))
+                            .collect()
+                    })
+                    .collect();
+                Some(AggregateKind::Enum(fields))
+            }
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            return Ok(());
+        };
+
+        match states.get(&ty) {
+            Some(2) => return Ok(()),
+            Some(1) => {
+                return Err(unsupported(
+                    function,
+                    &format!("recursive inline aggregate type {}", type_name(ty)),
+                ));
+            }
+            _ => {}
+        }
+        states.insert(ty, 1);
+
+        let fields: Vec<TypeId> = match &kind {
+            AggregateKind::Tuple(fields) => fields.clone(),
+            AggregateKind::Enum(variants) => variants.iter().flatten().copied().collect(),
+        };
+        for field in fields {
+            if self.type_repr(field) != Repr::Void {
+                self.collect(field, function, states)?;
+            }
+        }
+
+        let index = self.aggregates.len();
+        self.aggregate_ids.insert(ty, index);
+        self.aggregates.push(AggregateLayout { ty, kind });
+        states.insert(ty, 2);
+        Ok(())
+    }
+
+    fn enum_is_i32(&self, id: emela_core::EnumId) -> bool {
+        let def = &self.core.enums[id];
+        !def.error
+            && !def.external
+            && !def.variants.is_empty()
+            && def.variants.iter().all(|variant| variant.fields.is_empty())
+    }
+
+    fn enum_layout_required(&self, id: emela_core::EnumId) -> bool {
+        let def = &self.core.enums[id];
+        !def.external && !def.variants.is_empty() && !self.enum_is_i32(id)
+    }
+
+    fn type_repr(&self, ty: TypeId) -> Repr {
+        match self.types[ty] {
+            Type::Int | Type::Bool => Repr::I32,
+            Type::Int64 => Repr::I64,
+            Type::Float => Repr::F64,
+            Type::Unit | Type::Never | Type::Set(_) => Repr::Void,
+            Type::Enum(id, _) if self.enum_is_i32(id) => Repr::I32,
+            _ => Repr::Ref,
+        }
+    }
+
+    fn c_type(&self, ty: TypeId) -> String {
+        match self.types[ty] {
+            Type::Int | Type::Bool => "int32_t".to_owned(),
+            Type::Int64 => "int64_t".to_owned(),
+            Type::Float => "double".to_owned(),
+            Type::Unit | Type::Never | Type::Set(_) => "void".to_owned(),
+            Type::Tuple(_) => type_name(ty),
+            Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
+            Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
+            _ => c_type(self.type_repr(ty)).to_owned(),
+        }
+    }
+
+    fn emit_declarations(&self, writer: &mut Writer) {
+        for aggregate in &self.aggregates {
+            writer.line("typedef struct {");
+            match &aggregate.kind {
+                AggregateKind::Tuple(fields) => {
+                    let mut represented = false;
+                    for (index, &field) in fields.iter().enumerate() {
+                        if self.type_repr(field) == Repr::Void {
+                            continue;
+                        }
+                        represented = true;
+                        writer.line(&format!("  {} f{index};", self.c_type(field)));
+                    }
+                    if !represented {
+                        writer.line("  uint8_t _unit;");
+                    }
+                }
+                AggregateKind::Enum(variants) => {
+                    writer.line("  int32_t tag;");
+                    writer.line("  union {");
+                    for (variant_index, fields) in variants.iter().enumerate() {
+                        let represented_fields = fields
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, field)| self.type_repr(**field) != Repr::Void)
+                            .map(|(field_index, field)| {
+                                format!("{} f{field_index};", self.c_type(*field))
+                            })
+                            .collect::<Vec<_>>();
+                        let body = if represented_fields.is_empty() {
+                            "uint8_t _unit;".to_owned()
+                        } else {
+                            represented_fields.join(" ")
+                        };
+                        writer.line(&format!("    struct {{ {body} }} v{variant_index};"));
+                    }
+                    writer.line("  } payload;");
+                }
+            }
+            writer.line(&format!("}} {};", type_name(aggregate.ty)));
+            writer.blank();
+        }
+    }
+}
+
+fn type_name(ty: TypeId) -> String {
+    format!("emela_type_{}", ty.index())
 }
 
 fn c_type(repr: Repr) -> &'static str {

@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
-use emela_core::{BinOp, OpTy, TypeId};
+use emela_core::{BinOp, EnumDef, OpTy, TypeId, VariantDef};
 use emela_lir::{Const, FnBuilder, Module, Operand, PrimOp, PrimTy, Term, Value};
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -124,6 +124,58 @@ fn emits_and_runs_float_constants_including_non_finite_values() {
         );
         compile_and_run(output, &harness);
     }
+}
+
+#[test]
+fn emits_inline_c_layouts_for_tuple_and_generic_enum_signatures() {
+    let mut tuple_core = emela_core::Module::new();
+    let tuple_ty = tuple_core.tuple(vec![TypeId::INT, TypeId::BOOL]);
+    let mut tuple_builder = FnBuilder::new(&tuple_core, "tuple_identity");
+    let tuple_value = tuple_builder.param("value", tuple_ty);
+    tuple_builder
+        .set_ret(tuple_ty)
+        .set_exported()
+        .term(Term::Return(Some(Operand::Var(tuple_value))));
+    let tuple_function = tuple_builder.finish();
+    let mut tuple_flow = Module::new(tuple_core);
+    tuple_flow.add(tuple_function);
+    let tuple_output = compile_flow(&tuple_flow, &Options::default())
+        .expect("emit tuple parameter and return types");
+    let tuple_c_type = format!("emela_type_{}", tuple_ty.index());
+    let tuple_harness = format!(
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {tuple_c_type} value = {{ .f0 = INT32_C(42), .f1 = INT32_C(1) }}; {tuple_c_type} result = emela_export_tuple_identity_0(value); return result.f0 == INT32_C(42) && result.f1 == INT32_C(1) ? 0 : 1; }}\n"
+    );
+    compile_and_run(tuple_output, &tuple_harness);
+
+    let mut enum_core = emela_core::Module::new();
+    let value_param = enum_core.type_param(0);
+    let enum_id = enum_core.add_enum(EnumDef {
+        name: "Maybe".to_owned(),
+        params: 1,
+        variants: vec![
+            VariantDef::positional("Some", vec![value_param]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let enum_ty = enum_core.enum_type(enum_id, vec![TypeId::INT64]);
+    let mut enum_builder = FnBuilder::new(&enum_core, "enum_identity");
+    let enum_value = enum_builder.param("value", enum_ty);
+    enum_builder
+        .set_ret(enum_ty)
+        .set_exported()
+        .term(Term::Return(Some(Operand::Var(enum_value))));
+    let enum_function = enum_builder.finish();
+    let mut enum_flow = Module::new(enum_core);
+    enum_flow.add(enum_function);
+    let enum_output =
+        compile_flow(&enum_flow, &Options::default()).expect("emit generic enum layout");
+    let enum_c_type = format!("emela_type_{}", enum_ty.index());
+    let enum_harness = format!(
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {enum_c_type} value = {{ .tag = INT32_C(0), .payload.v0.f0 = INT64_C(42) }}; {enum_c_type} result = emela_export_enum_identity_0(value); return result.tag == INT32_C(0) && result.payload.v0.f0 == INT64_C(42) ? 0 : 1; }}\n"
+    );
+    compile_and_run(enum_output, &enum_harness);
 }
 
 #[test]
