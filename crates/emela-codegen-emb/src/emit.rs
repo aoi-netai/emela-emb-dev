@@ -327,6 +327,9 @@ fn emit_statement(
                 Value::Tuple(args) => {
                     emit_tuple(layouts, function, *dst, args, writer)?;
                 }
+                Value::TupleGet { base, index } => {
+                    emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
@@ -630,6 +633,52 @@ fn emit_tuple(
     }
     if !represented {
         writer.assign(&format!("{target}._unit"), "UINT8_C(0)");
+    }
+    Ok(())
+}
+
+fn emit_tuple_get(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    base: VarId,
+    index: usize,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let base_ty = function.vars[base].ty;
+    let Type::Tuple(fields) = &layouts.types[base_ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple projection base is not a tuple",
+                function.name
+            ),
+        }]);
+    };
+    let Some(&field_ty) = fields.get(index) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple field index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    let has_repr = layouts.type_repr(field_ty) != Repr::Void;
+    if has_repr != dst.is_some() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple projection destination does not match its representation",
+                function.name
+            ),
+        }]);
+    }
+    if let Some(dst) = dst {
+        writer.assign(
+            &variable_name(dst),
+            &format!("{}.f{index}", variable_name(base)),
+        );
     }
     Ok(())
 }

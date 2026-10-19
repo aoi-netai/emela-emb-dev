@@ -379,6 +379,47 @@ fn constructs_inline_tuples_and_keeps_unit_field_positions() {
 }
 
 #[test]
+fn reads_tuple_fields_and_ignores_unit_projections() {
+    let mut core = emela_core::Module::new();
+    let tuple_ty = core.tuple(vec![TypeId::INT64, TypeId::UNIT, TypeId::BOOL]);
+    let mut builder = FnBuilder::new(&core, "tuple_field");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let tuple = builder.assign(
+        "tuple",
+        tuple_ty,
+        Value::Tuple(vec![
+            Operand::Const(Const::Int64(91)),
+            Operand::Const(Const::Unit),
+            Operand::Const(Const::Bool(true)),
+        ]),
+    );
+    builder.let_(
+        None,
+        Value::TupleGet {
+            base: tuple,
+            index: 1,
+        },
+    );
+    let value = builder.assign(
+        "value",
+        TypeId::BOOL,
+        Value::TupleGet {
+            base: tuple,
+            index: 2,
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(value))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit tuple projections");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_tuple_field_0() == INT32_C(1) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
