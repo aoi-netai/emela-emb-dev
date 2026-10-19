@@ -159,7 +159,14 @@ fn evaluate_value(
                 .iter()
                 .map(|arg| operand_value(arg, values))
                 .collect::<Result<Vec<_>, _>>()?;
-            evaluate_builtin(*op, args).map(Outcome::Value)
+            match evaluate_builtin(*op, args) {
+                Ok(value) => Ok(Outcome::Value(value)),
+                Err("float conversion to Int is out of range") => Ok(Outcome::Defect {
+                    kind: "FLOAT_TO_INT",
+                    message: "cannot convert Float to Int".to_owned(),
+                }),
+                Err(reason) => Err(reason),
+            }
         }
         _ => Err("const body contains a value that is not statically evaluable"),
     }
@@ -173,6 +180,10 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         (Builtin::IntToString, [Const::Int(value)]) => Ok(Const::String(value.to_string())),
         (Builtin::Int64ToString, [Const::Int64(value)]) => Ok(Const::String(value.to_string())),
         (Builtin::FloatFromInt, [Const::Int(value)]) => Ok(Const::Float(f64::from(*value))),
+        (Builtin::FloatFloor, [Const::Float(value)]) => float_to_int(value.floor()),
+        (Builtin::FloatCeil, [Const::Float(value)]) => float_to_int(value.ceil()),
+        (Builtin::FloatRound, [Const::Float(value)]) => float_to_int(value.round()),
+        (Builtin::FloatTruncate, [Const::Float(value)]) => float_to_int(value.trunc()),
         (Builtin::StringByteSize, [Const::String(value)]) => i32::try_from(value.len())
             .map(Const::Int)
             .map_err(|_| "String byte size exceeds Int range"),
@@ -192,6 +203,13 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         )),
         _ => Err("const body contains an unsupported builtin or builtin operand"),
     }
+}
+
+fn float_to_int(value: f64) -> Result<Const, &'static str> {
+    if !value.is_finite() || value < f64::from(i32::MIN) || value > f64::from(i32::MAX) {
+        return Err("float conversion to Int is out of range");
+    }
+    Ok(Const::Int(value as i32))
 }
 
 fn is_white_space(code_point: u32) -> bool {

@@ -470,6 +470,82 @@ fn statically_evaluates_float_from_int() {
 }
 
 #[test]
+fn float_rounding_builtins_match_spec_and_defect_out_of_range() {
+    let core = emela_core::Module::new();
+    let mut flow = Module::new(core);
+    for (name, op) in [
+        ("float_floor", Builtin::FloatFloor),
+        ("float_ceil", Builtin::FloatCeil),
+        ("float_round", Builtin::FloatRound),
+        ("float_truncate", Builtin::FloatTruncate),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(TypeId::INT).set_exported();
+        let input = builder.param("input", TypeId::FLOAT);
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Builtin {
+                op,
+                args: vec![input.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Float rounding builtins");
+    compile_and_run(
+        output,
+        r#"
+#include <math.h>
+#include <setjmp.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static jmp_buf defect_target;
+static int defect_count;
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {
+    if (kind != EMELA_DEFECT_FLOAT_TO_INT || length != UINT16_C(27) || memcmp(message, "cannot convert Float to Int", length) != 0) exit(2);
+    ++defect_count;
+    longjmp(defect_target, 1);
+}
+int main(void) {
+    if (emela_export_float_floor_0(2.5) != 2 || emela_export_float_floor_0(-2.5) != -3 || emela_export_float_floor_0(2147483647.75) != INT32_MAX || emela_export_float_ceil_1(-2.5) != -2 || emela_export_float_ceil_1(-2147483648.75) != INT32_MIN || emela_export_float_round_2(2.5) != 3 || emela_export_float_round_2(-2.5) != -3 || emela_export_float_round_2(-0.5) != -1 || emela_export_float_truncate_3(-2.9) != -2) return 1;
+    if (setjmp(defect_target) == 0) { (void)emela_export_float_floor_0(NAN); return 3; }
+    if (setjmp(defect_target) == 0) { (void)emela_export_float_floor_0(-2147483648.5); return 4; }
+    if (setjmp(defect_target) == 0) { (void)emela_export_float_round_2(2147483647.5); return 5; }
+    return defect_count == 3 ? 0 : 6;
+}
+"#,
+    );
+}
+
+#[test]
+fn statically_evaluates_float_rounding_builtin() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut constant = FnBuilder::new(&flow.core, "ROUND_ANSWER");
+    constant.set_ret(TypeId::INT).set_exported().set_constant();
+    let result = constant.assign(
+        "result",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::FloatRound,
+            args: vec![Const::Float(-2.5).into()],
+        },
+    );
+    constant.term(Term::Return(Some(result.into())));
+    flow.add(constant.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate Float.round const");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_ROUND_ANSWER_0() == INT32_C(-3) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn int_checked_add_returns_some_or_none_at_int_boundaries() {
     let mut flow = Module::new(emela_core::Module::new());
     let option = flow.core.option_enum();
