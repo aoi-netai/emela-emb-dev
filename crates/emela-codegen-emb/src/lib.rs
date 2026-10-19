@@ -8,6 +8,7 @@ mod emit;
 mod float_parse;
 mod float_to_string;
 mod heap;
+mod static_closure;
 mod unicode_grapheme;
 mod writer;
 

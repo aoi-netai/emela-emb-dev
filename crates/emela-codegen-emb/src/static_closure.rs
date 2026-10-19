@@ -1,0 +1,517 @@
+use std::collections::{HashMap, HashSet};
+
+use emela_core::Type;
+use emela_lir::{
+    Case, Closure, Const, Function, LabelId, Module, OnFail, Operand, Seq, SeqId, Stmt, StmtId,
+    Suspend, SwitchOn, Term, Value, VarId,
+};
+
+use crate::{Error, ErrorKind};
+
+#[derive(Default)]
+struct BodySlice {
+    sequences: HashSet<SeqId>,
+    statements: HashSet<StmtId>,
+    variables: HashSet<VarId>,
+    labels: HashSet<LabelId>,
+}
+
+pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
+    let mut lowered = flow.clone();
+    let mut next_name = 0usize;
+    loop {
+        let reachable = crate::emit::runtime_reachable(&lowered);
+        let next = lowered.functions.iter().find_map(|(id, function)| {
+            if !reachable.contains(&id) {
+                return None;
+            }
+            function.stmts.iter().find_map(|(statement, stmt)| {
+                let Stmt::Let {
+                    dst: Some(dst),
+                    value: Value::Closure(closure),
+                    ..
+                } = stmt
+                else {
+                    return None;
+                };
+                Some((id, statement, *dst, (**closure).clone()))
+            })
+        });
+        let Some((parent, statement, dst, closure)) = next else {
+            break;
+        };
+        let parent_function = &lowered.functions[parent];
+        let name = loop {
+            let name = format!("{}$static_closure_{}", parent_function.name, next_name);
+            next_name += 1;
+            if lowered
+                .functions
+                .iter()
+                .all(|(_, function)| function.name != name)
+            {
+                break name;
+            }
+        };
+        let Type::Fn(function_type) = lowered.core.types[parent_function.vars[dst].ty].clone()
+        else {
+            return Err(invalid_flow_ir(
+                &parent_function.name,
+                "Closure destination is not a function value",
+            ));
+        };
+        if !closure.captures.is_empty() {
+            return Err(unsupported(
+                &parent_function.name,
+                "closure with captured variables",
+            ));
+        }
+        if function_type.fails || function_type.suspends || function_type.ev || closure.suspends {
+            return Err(unsupported(
+                &parent_function.name,
+                "closure with failure, suspend, or effect evidence",
+            ));
+        }
+        if parent_function.constant {
+            return Err(unsupported(
+                &parent_function.name,
+                "closure in a const function",
+            ));
+        }
+
+        let mut lifted = lift_body(parent_function, &closure, &name)?;
+        lifted.ret = function_type.ret;
+        lifted.fails = function_type.fails;
+        lifted.suspends = closure.suspends;
+        let target = lowered.add(lifted);
+        if let Stmt::Let { value, .. } = &mut lowered.functions[parent].stmts[statement] {
+            *value = Value::FnRef(target);
+        }
+    }
+
+    Ok(lowered)
+}
+
+fn lift_body(parent: &Function, closure: &Closure, name: &str) -> Result<Function, Vec<Error>> {
+    let mut slice = BodySlice::default();
+    visit_sequence(parent, closure.body, &mut slice, name)?;
+    for &parameter in &closure.params {
+        slice.variables.insert(parameter);
+    }
+
+    let mut lifted = Function::new(name);
+    let mut variable_map = HashMap::new();
+    for (variable, data) in parent.vars.iter() {
+        if slice.variables.contains(&variable) {
+            let mapped = lifted.vars.alloc(data.clone());
+            variable_map.insert(variable, mapped);
+        }
+    }
+    lifted.params = closure
+        .params
+        .iter()
+        .map(|parameter| mapped_id(&variable_map, *parameter, name))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut label_map = HashMap::new();
+    for (label, data) in parent.labels.iter() {
+        if slice.labels.contains(&label) {
+            let mapped = lifted.labels.alloc(data.clone());
+            label_map.insert(label, mapped);
+        }
+    }
+
+    let mut sequence_map = HashMap::new();
+    for (sequence, _) in parent.seqs.iter() {
+        if slice.sequences.contains(&sequence) {
+            let mapped = lifted.seqs.alloc(Seq {
+                stmts: Vec::new(),
+                term: Term::Unreachable,
+            });
+            sequence_map.insert(sequence, mapped);
+        }
+    }
+    let mut statement_map = HashMap::new();
+    for (statement, _) in parent.stmts.iter() {
+        if slice.statements.contains(&statement) {
+            let mapped = lifted.stmts.alloc(Stmt::Let {
+                dst: None,
+                value: Value::Const(Const::Unit),
+                on_defect: None,
+                on_suspend: None,
+            });
+            statement_map.insert(statement, mapped);
+        }
+    }
+
+    for (old, new) in &label_map {
+        lifted.labels[*new] = parent.labels[*old].clone();
+    }
+    for (old, new) in &statement_map {
+        lifted.stmts[*new] = remap_statement(
+            parent.stmts[*old].clone(),
+            &variable_map,
+            &label_map,
+            &sequence_map,
+            name,
+        )?;
+    }
+    for (old, new) in &sequence_map {
+        let sequence = &parent.seqs[*old];
+        let statements = sequence
+            .stmts
+            .iter()
+            .map(|statement| mapped_id(&statement_map, *statement, name))
+            .collect::<Result<Vec<_>, _>>()?;
+        lifted.seqs[*new] = Seq {
+            stmts: statements,
+            term: remap_term(sequence.term.clone(), &variable_map, &label_map, name)?,
+        };
+    }
+    lifted.body = Some(mapped_id(&sequence_map, closure.body, name)?);
+    Ok(lifted)
+}
+
+fn visit_sequence(
+    function: &Function,
+    sequence: SeqId,
+    slice: &mut BodySlice,
+    owner: &str,
+) -> Result<(), Vec<Error>> {
+    if !slice.sequences.insert(sequence) {
+        return Ok(());
+    }
+    let sequence_data = &function.seqs[sequence];
+    for &statement_id in &sequence_data.stmts {
+        if !slice.statements.insert(statement_id) {
+            continue;
+        }
+        let statement = &function.stmts[statement_id];
+        if let Some(dst) = statement.dst() {
+            slice.variables.insert(dst);
+        }
+        match statement {
+            Stmt::Let {
+                value,
+                on_defect,
+                on_suspend,
+                ..
+            } => {
+                if matches!(value, Value::Closure(_)) {
+                    return Err(unsupported(owner, "nested closure in a closure body"));
+                }
+                value.for_each_var(|variable| {
+                    slice.variables.insert(variable);
+                });
+                if let Some(sequence) = on_defect {
+                    visit_sequence(function, *sequence, slice, owner)?;
+                }
+                if let Some(Suspend { saved, .. }) = on_suspend {
+                    slice.variables.extend(saved.iter().copied());
+                }
+                if let Value::Call {
+                    on_fail: Some(edge),
+                    ..
+                } = value
+                {
+                    match edge {
+                        OnFail::Break(label) => {
+                            slice.labels.insert(*label);
+                        }
+                        OnFail::Handle { error, body } => {
+                            slice.variables.insert(*error);
+                            visit_sequence(function, *body, slice, owner)?;
+                        }
+                        OnFail::Propagate => {}
+                    }
+                }
+            }
+            Stmt::If {
+                cond, then, else_, ..
+            } => {
+                add_operand(slice, cond);
+                visit_sequence(function, *then, slice, owner)?;
+                visit_sequence(function, *else_, slice, owner)?;
+            }
+            Stmt::Switch {
+                on, cases, default, ..
+            } => {
+                slice.variables.insert(match on {
+                    SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
+                });
+                for case in cases {
+                    visit_sequence(function, case.body, slice, owner)?;
+                }
+                if let Some(default) = default {
+                    visit_sequence(function, *default, slice, owner)?;
+                }
+            }
+            Stmt::Loop {
+                vars, inits, body, ..
+            } => {
+                slice.variables.extend(vars.iter().copied());
+                for operand in inits {
+                    add_operand(slice, operand);
+                }
+                visit_sequence(function, *body, slice, owner)?;
+            }
+            Stmt::Block { label, body, .. } => {
+                slice.labels.insert(*label);
+                visit_sequence(function, *body, slice, owner)?;
+            }
+            Stmt::Protect { body, cleanup, .. } => {
+                visit_sequence(function, *body, slice, owner)?;
+                visit_sequence(function, *cleanup, slice, owner)?;
+            }
+            Stmt::Dup(variable) | Stmt::Drop(variable) => {
+                slice.variables.insert(*variable);
+            }
+        }
+    }
+    match &sequence_data.term {
+        Term::Yield(value) | Term::Return(value) => {
+            if let Some(value) = value {
+                add_operand(slice, value);
+            }
+        }
+        Term::Fail(value) | Term::Defect(value) => add_operand(slice, value),
+        Term::Break { label, value } => {
+            slice.labels.insert(*label);
+            if let Some(value) = value {
+                add_operand(slice, value);
+            }
+        }
+        Term::Recur(values) => {
+            for value in values {
+                add_operand(slice, value);
+            }
+        }
+        Term::Unwind | Term::Unreachable => {}
+    }
+    Ok(())
+}
+
+fn add_operand(slice: &mut BodySlice, operand: &Operand) {
+    if let Operand::Var(variable) = operand {
+        slice.variables.insert(*variable);
+    }
+}
+
+fn remap_statement(
+    statement: Stmt,
+    variables: &HashMap<VarId, VarId>,
+    labels: &HashMap<LabelId, LabelId>,
+    sequences: &HashMap<SeqId, SeqId>,
+    owner: &str,
+) -> Result<Stmt, Vec<Error>> {
+    Ok(match statement {
+        Stmt::Let {
+            dst,
+            mut value,
+            on_defect,
+            on_suspend,
+        } => {
+            let mut missing = false;
+            value.for_each_var_mut(|variable| {
+                if let Some(mapped) = variables.get(variable) {
+                    *variable = *mapped;
+                } else {
+                    missing = true;
+                }
+            });
+            if missing || matches!(value, Value::Closure(_)) {
+                return Err(invalid_flow_ir(
+                    owner,
+                    "closure body contains an unmapped or nested variable",
+                ));
+            }
+            if let Value::Call {
+                on_fail: Some(edge),
+                ..
+            } = &mut value
+            {
+                match edge {
+                    OnFail::Break(label) => *label = mapped_id(labels, *label, owner)?,
+                    OnFail::Handle { error, body } => {
+                        *error = mapped_id(variables, *error, owner)?;
+                        *body = mapped_id(sequences, *body, owner)?;
+                    }
+                    OnFail::Propagate => {}
+                }
+            }
+            Stmt::Let {
+                dst: dst
+                    .map(|dst| mapped_id(variables, dst, owner))
+                    .transpose()?,
+                value,
+                on_defect: on_defect
+                    .map(|sequence| mapped_id(sequences, sequence, owner))
+                    .transpose()?,
+                on_suspend: on_suspend
+                    .map(|suspend| remap_suspend(suspend, variables, owner))
+                    .transpose()?,
+            }
+        }
+        Stmt::If {
+            dst,
+            cond,
+            then,
+            else_,
+        } => Stmt::If {
+            dst: dst
+                .map(|dst| mapped_id(variables, dst, owner))
+                .transpose()?,
+            cond: remap_operand(cond, variables, owner)?,
+            then: mapped_id(sequences, then, owner)?,
+            else_: mapped_id(sequences, else_, owner)?,
+        },
+        Stmt::Switch {
+            dst,
+            on,
+            cases,
+            default,
+        } => Stmt::Switch {
+            dst: dst
+                .map(|dst| mapped_id(variables, dst, owner))
+                .transpose()?,
+            on: match on {
+                SwitchOn::Tag(variable) => SwitchOn::Tag(mapped_id(variables, variable, owner)?),
+                SwitchOn::Lit(variable) => SwitchOn::Lit(mapped_id(variables, variable, owner)?),
+            },
+            cases: cases
+                .into_iter()
+                .map(|Case { key, body }| {
+                    Ok(Case {
+                        key,
+                        body: mapped_id(sequences, body, owner)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, Vec<Error>>>()?,
+            default: default
+                .map(|sequence| mapped_id(sequences, sequence, owner))
+                .transpose()?,
+        },
+        Stmt::Loop {
+            dst,
+            vars,
+            inits,
+            body,
+        } => Stmt::Loop {
+            dst: dst
+                .map(|dst| mapped_id(variables, dst, owner))
+                .transpose()?,
+            vars: vars
+                .into_iter()
+                .map(|variable| mapped_id(variables, variable, owner))
+                .collect::<Result<Vec<_>, _>>()?,
+            inits: inits
+                .into_iter()
+                .map(|operand| remap_operand(operand, variables, owner))
+                .collect::<Result<Vec<_>, _>>()?,
+            body: mapped_id(sequences, body, owner)?,
+        },
+        Stmt::Block { dst, label, body } => Stmt::Block {
+            dst: dst
+                .map(|dst| mapped_id(variables, dst, owner))
+                .transpose()?,
+            label: mapped_id(labels, label, owner)?,
+            body: mapped_id(sequences, body, owner)?,
+        },
+        Stmt::Protect { dst, body, cleanup } => Stmt::Protect {
+            dst: dst
+                .map(|dst| mapped_id(variables, dst, owner))
+                .transpose()?,
+            body: mapped_id(sequences, body, owner)?,
+            cleanup: mapped_id(sequences, cleanup, owner)?,
+        },
+        Stmt::Dup(variable) => Stmt::Dup(mapped_id(variables, variable, owner)?),
+        Stmt::Drop(variable) => Stmt::Drop(mapped_id(variables, variable, owner)?),
+    })
+}
+
+fn remap_suspend(
+    suspend: Suspend,
+    variables: &HashMap<VarId, VarId>,
+    owner: &str,
+) -> Result<Suspend, Vec<Error>> {
+    Ok(Suspend {
+        state: suspend.state,
+        saved: suspend
+            .saved
+            .into_iter()
+            .map(|variable| mapped_id(variables, variable, owner))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+fn remap_term(
+    term: Term,
+    variables: &HashMap<VarId, VarId>,
+    labels: &HashMap<LabelId, LabelId>,
+    owner: &str,
+) -> Result<Term, Vec<Error>> {
+    Ok(match term {
+        Term::Yield(value) => Term::Yield(
+            value
+                .map(|value| remap_operand(value, variables, owner))
+                .transpose()?,
+        ),
+        Term::Return(value) => Term::Return(
+            value
+                .map(|value| remap_operand(value, variables, owner))
+                .transpose()?,
+        ),
+        Term::Fail(value) => Term::Fail(remap_operand(value, variables, owner)?),
+        Term::Break { label, value } => Term::Break {
+            label: mapped_id(labels, label, owner)?,
+            value: value
+                .map(|value| remap_operand(value, variables, owner))
+                .transpose()?,
+        },
+        Term::Recur(values) => Term::Recur(
+            values
+                .into_iter()
+                .map(|value| remap_operand(value, variables, owner))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Term::Defect(value) => Term::Defect(remap_operand(value, variables, owner)?),
+        Term::Unwind => Term::Unwind,
+        Term::Unreachable => Term::Unreachable,
+    })
+}
+
+fn remap_operand(
+    operand: Operand,
+    variables: &HashMap<VarId, VarId>,
+    owner: &str,
+) -> Result<Operand, Vec<Error>> {
+    Ok(match operand {
+        Operand::Var(variable) => Operand::Var(mapped_id(variables, variable, owner)?),
+        Operand::Const(value) => Operand::Const(value),
+    })
+}
+
+fn mapped_id<K: Copy + std::hash::Hash + Eq, V: Copy>(
+    map: &HashMap<K, V>,
+    id: K,
+    owner: &str,
+) -> Result<V, Vec<Error>> {
+    map.get(&id)
+        .copied()
+        .ok_or_else(|| invalid_flow_ir(owner, "closure body references an unmapped Flow IR id"))
+}
+
+fn unsupported(function: &str, construct: &str) -> Vec<Error> {
+    vec![Error {
+        kind: ErrorKind::Unsupported,
+        message: format!(
+            "embedded C codegen does not support {construct} in function `{function}` yet"
+        ),
+    }]
+}
+
+fn invalid_flow_ir(function: &str, message: &str) -> Vec<Error> {
+    vec![Error {
+        kind: ErrorKind::InvalidFlowIr,
+        message: format!("invalid Flow IR in function `{function}`: {message}"),
+    }]
+}

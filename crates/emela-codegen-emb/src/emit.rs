@@ -24,6 +24,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             ),
         }]);
     }
+    let lowered_flow = crate::static_closure::lower(flow)?;
+    crate::verify_flow(&lowered_flow)?;
+    let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
@@ -1853,7 +1856,7 @@ fn type_contains_string_with_types(
     }
 }
 
-fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
+pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     let mut pending: Vec<FnId> = flow
         .functions
         .iter()
