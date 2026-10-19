@@ -200,6 +200,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         emit_local_declarations(&layouts, function, &mut source);
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
+        let mut protects = Vec::new();
         let mut next_temp = 0;
         let mut next_label = 0;
         for &statement in &sequence.stmts {
@@ -211,11 +212,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                 &names,
                 &mut loops,
                 &mut blocks,
+                &mut protects,
                 &mut next_temp,
                 &mut next_label,
             )?;
         }
-        emit_return(flow, function, &sequence.term, &mut source)?;
+        emit_return(&layouts, function, &sequence.term, &mut source)?;
         source.end_block();
         source.blank();
     }
@@ -265,6 +267,7 @@ fn emit_statement(
     names: &HashMap<FnId, String>,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -369,12 +372,13 @@ fn emit_statement(
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
             writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
             emit_compound_sequence(
-                layouts, function, *then, *dst, writer, names, loops, blocks, next_temp, next_label,
+                layouts, function, *then, *dst, writer, names, loops, blocks, protects, next_temp,
+                next_label,
             )?;
             writer.end_block();
             writer.begin_block("else");
             emit_compound_sequence(
-                layouts, function, *else_, *dst, writer, names, loops, blocks, next_temp,
+                layouts, function, *else_, *dst, writer, names, loops, blocks, protects, next_temp,
                 next_label,
             )?;
             writer.end_block();
@@ -386,8 +390,8 @@ fn emit_statement(
             cases,
             default,
         } => emit_switch(
-            layouts, function, *dst, *on, cases, *default, writer, names, loops, blocks, next_temp,
-            next_label,
+            layouts, function, *dst, *on, cases, *default, writer, names, loops, blocks, protects,
+            next_temp, next_label,
         ),
         Stmt::Loop {
             dst,
@@ -395,8 +399,8 @@ fn emit_statement(
             inits,
             body,
         } => emit_loop(
-            layouts, function, *dst, vars, inits, *body, writer, names, loops, blocks, next_temp,
-            next_label,
+            layouts, function, *dst, vars, inits, *body, writer, names, loops, blocks, protects,
+            next_temp, next_label,
         ),
         Stmt::Block { dst, label, body } => {
             let exit = format!("emela_block_exit_{}", *next_label);
@@ -407,9 +411,11 @@ fn emit_statement(
                 dst: *dst,
                 exit: exit.clone(),
                 used: false,
+                protect_depth: protects.len(),
             });
             let result = emit_compound_sequence(
-                layouts, function, *body, *dst, writer, names, loops, blocks, next_temp, next_label,
+                layouts, function, *body, *dst, writer, names, loops, blocks, protects, next_temp,
+                next_label,
             );
             let block = blocks.pop().expect("block target stack underflow");
             writer.end_block();
@@ -418,6 +424,10 @@ fn emit_statement(
             }
             result
         }
+        Stmt::Protect { dst, body, cleanup } => emit_protect(
+            layouts, function, *dst, *body, *cleanup, writer, names, loops, blocks, protects,
+            next_temp, next_label,
+        ),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
 }
@@ -433,6 +443,7 @@ fn emit_switch(
     names: &HashMap<FnId, String>,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -513,7 +524,8 @@ fn emit_switch(
         };
         writer.begin_block(&format!("case {label}:"));
         emit_compound_sequence(
-            layouts, function, case.body, dst, writer, names, loops, blocks, next_temp, next_label,
+            layouts, function, case.body, dst, writer, names, loops, blocks, protects, next_temp,
+            next_label,
         )?;
         writer.line("break;");
         writer.end_block();
@@ -522,7 +534,8 @@ fn emit_switch(
     if let Some(default) = default {
         writer.begin_block("default:");
         emit_compound_sequence(
-            layouts, function, default, dst, writer, names, loops, blocks, next_temp, next_label,
+            layouts, function, default, dst, writer, names, loops, blocks, protects, next_temp,
+            next_label,
         )?;
         writer.line("break;");
         writer.end_block();
@@ -553,6 +566,7 @@ fn emit_loop(
     names: &HashMap<FnId, String>,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -570,7 +584,7 @@ fn emit_loop(
     writer.begin_block("for (;;)");
     loops.push(vars.to_vec());
     let result = emit_compound_sequence(
-        layouts, function, body, dst, writer, names, loops, blocks, next_temp, next_label,
+        layouts, function, body, dst, writer, names, loops, blocks, protects, next_temp, next_label,
     );
     loops.pop();
     result?;
@@ -588,6 +602,7 @@ fn emit_compound_sequence(
     names: &HashMap<FnId, String>,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -601,6 +616,7 @@ fn emit_compound_sequence(
             names,
             loops,
             blocks,
+            protects,
             next_temp,
             next_label,
         )?;
@@ -631,6 +647,7 @@ fn emit_compound_sequence(
             };
             let target_dst = blocks[target_index].dst;
             let exit = blocks[target_index].exit.clone();
+            let protect_depth = blocks[target_index].protect_depth;
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
                     let expression = operand_expression(value)
@@ -645,8 +662,26 @@ fn emit_compound_sequence(
                 }
                 (None, _) => {}
             }
+            emit_pending_cleanups(
+                layouts,
+                function,
+                protect_depth,
+                writer,
+                names,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
             blocks[target_index].used = true;
             writer.line(&format!("goto {exit};"));
+        }
+        Term::Return(_) => {
+            emit_pending_cleanups(
+                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+            )?;
+            emit_return(layouts, function, &sequence.term, writer)?;
         }
         other => return Err(unsupported(&function.name, term_name(other))),
     }
@@ -658,6 +693,12 @@ struct BlockTarget {
     dst: Option<VarId>,
     exit: String,
     used: bool,
+    protect_depth: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ProtectTarget {
+    cleanup: emela_lir::SeqId,
 }
 
 fn emit_recur(
@@ -698,6 +739,80 @@ fn emit_recur(
         writer.assign(&variable_name(variable), &temporary);
     }
     writer.line("continue;");
+    Ok(())
+}
+
+fn emit_protect(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    body: emela_lir::SeqId,
+    cleanup: emela_lir::SeqId,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let body_yields = matches!(function.seqs[body].term, Term::Yield(_));
+    writer.begin_block("");
+    protects.push(ProtectTarget { cleanup });
+    let body_result = emit_compound_sequence(
+        layouts, function, body, dst, writer, names, loops, blocks, protects, next_temp, next_label,
+    );
+    protects.pop();
+    let cleanup_result = if body_result.is_ok() && body_yields {
+        emit_compound_sequence(
+            layouts, function, cleanup, None, writer, names, loops, blocks, protects, next_temp,
+            next_label,
+        )
+    } else {
+        Ok(())
+    };
+    writer.end_block();
+    body_result?;
+    cleanup_result
+}
+
+fn emit_pending_cleanups(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    keep_depth: usize,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    if keep_depth > protects.len() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "control transfer escapes a block outside the active protect stack",
+        ));
+    }
+    let saved = protects.clone();
+    for index in (keep_depth..saved.len()).rev() {
+        protects.truncate(index);
+        let result = emit_compound_sequence(
+            layouts,
+            function,
+            saved[index].cleanup,
+            None,
+            writer,
+            names,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        );
+        *protects = saved.clone();
+        result?;
+    }
     Ok(())
 }
 
@@ -1271,7 +1386,7 @@ fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'sta
 }
 
 fn emit_return(
-    flow: &emela_lir::Module,
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     term: &Term,
     writer: &mut Writer,
@@ -1286,7 +1401,7 @@ fn emit_return(
         other => return Err(unsupported(&function.name, term_name(other))),
     }
 
-    let return_repr = emela_lir::repr_of(&flow.core, function.ret);
+    let return_repr = layouts.type_repr(function.ret);
     if return_repr == Repr::Void && matches!(term, Term::Return(Some(_))) {
         return Err(vec![Error {
             kind: ErrorKind::InvalidFlowIr,

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
 use emela_core::{BinOp, CtorRef, EnumDef, OpTy, TypeId, VariantDef};
 use emela_lir::{
-    CaseKey, Const, FnBuilder, Module, Operand, PrimOp, PrimTy, SwitchOn, Term, Value,
+    Callee, CaseKey, Const, FnBuilder, Module, Operand, PrimOp, PrimTy, SwitchOn, Term, Value,
 };
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -703,6 +703,74 @@ fn emits_and_runs_break_to_an_enclosing_block() {
     compile_and_run(
         output,
         "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_break_value_0() == INT32_C(137) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn runs_protect_cleanup_on_yield_break_and_return() {
+    let core = emela_core::Module::new();
+    let mut hook_builder = FnBuilder::new(&core, "cleanup_hook");
+    hook_builder.set_ret(TypeId::UNIT);
+    let hook = hook_builder.finish_external(emela_core::External {
+        bindings: vec![emela_core::ExternalBinding {
+            target: "c".to_owned(),
+            host: emela_core::HostRef::Global("fixture_cleanup".to_owned()),
+        }],
+    });
+    let mut flow = Module::new(core);
+    let hook_id = flow.add(hook);
+
+    let cleanup_call = || Value::Call {
+        callee: Callee::Direct(hook_id),
+        args: Vec::new(),
+        suspends: false,
+        on_fail: None,
+    };
+
+    let mut normal = FnBuilder::new(&flow.core, "protect_yield");
+    normal.set_ret(TypeId::INT).set_exported();
+    let normal_result = normal.var("result", TypeId::INT);
+    normal.protect(
+        Some(normal_result),
+        |builder| builder.term(Term::Yield(Some(Operand::Const(Const::Int(42))))),
+        |builder| builder.let_(None, cleanup_call()),
+    );
+    normal.term(Term::Return(Some(Operand::Var(normal_result))));
+    flow.add(normal.finish());
+
+    let mut returning = FnBuilder::new(&flow.core, "protect_return");
+    returning.set_ret(TypeId::INT).set_exported();
+    returning.protect(
+        None,
+        |builder| builder.term(Term::Return(Some(Operand::Const(Const::Int(58))))),
+        |builder| builder.let_(None, cleanup_call()),
+    );
+    returning.term(Term::Return(Some(Operand::Const(Const::Int(0)))));
+    flow.add(returning.finish());
+
+    let mut breaking = FnBuilder::new(&flow.core, "protect_break");
+    breaking.set_ret(TypeId::INT).set_exported();
+    let break_result = breaking.var("result", TypeId::INT);
+    breaking.block(Some(break_result), "exit", |builder, label| {
+        builder.protect(
+            None,
+            |builder| {
+                builder.term(Term::Break {
+                    label,
+                    value: Some(Operand::Const(Const::Int(61))),
+                });
+            },
+            |builder| builder.let_(None, cleanup_call()),
+        );
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(0)))));
+    });
+    breaking.term(Term::Return(Some(Operand::Var(break_result))));
+    flow.add(breaking.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit protected control flow");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nstatic int cleanup_calls;\nvoid fixture_cleanup(void) { cleanup_calls += 1; }\nint main(void) { if (emela_export_protect_yield_1() != INT32_C(42) || cleanup_calls != 1) return 1; cleanup_calls = 0; if (emela_export_protect_return_2() != INT32_C(58) || cleanup_calls != 1) return 2; cleanup_calls = 0; if (emela_export_protect_break_3() != INT32_C(61) || cleanup_calls != 1) return 3; return 0; }\n",
     );
 }
 
