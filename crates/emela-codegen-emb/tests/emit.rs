@@ -237,6 +237,54 @@ fn constructs_payload_and_unit_enum_variants_as_inline_values() {
 }
 
 #[test]
+fn reads_generic_enum_fields_from_inline_values() {
+    let mut core = emela_core::Module::new();
+    let value_param = core.type_param(0);
+    let enum_id = core.add_enum(EnumDef {
+        name: "Boxed".to_owned(),
+        params: 1,
+        variants: vec![VariantDef::positional("Box", vec![value_param])],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, vec![TypeId::INT64]);
+    let mut builder = FnBuilder::new(&core, "field_value");
+    builder.set_ret(TypeId::INT64).set_exported();
+    let wrapped = builder.assign(
+        "wrapped",
+        enum_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: vec![Operand::Const(Const::Int64(73))],
+        },
+    );
+    let field = builder.assign(
+        "field",
+        TypeId::INT64,
+        Value::Field {
+            base: wrapped,
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            index: 0,
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(field))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit enum field read");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_field_value_0() == INT64_C(73) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (

@@ -318,6 +318,9 @@ fn emit_statement(
                 Value::Make { ctor, args } => {
                     emit_make(layouts, function, *dst, *ctor, args, writer)?;
                 }
+                Value::Field { base, ctor, index } => {
+                    emit_field(layouts, function, *dst, *base, *ctor, *index, writer)?;
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
@@ -466,6 +469,74 @@ fn emit_make(
         writer.assign(
             &format!("{target}.payload.v{}._unit", ctor.variant),
             "UINT8_C(0)",
+        );
+    }
+    Ok(())
+}
+
+fn emit_field(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    base: VarId,
+    ctor: CtorRef,
+    index: usize,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let base_ty = function.vars[base].ty;
+    let Type::Enum(enum_id, _) = layouts.types[base_ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field base is not an enum",
+                function.name
+            ),
+        }]);
+    };
+    if enum_id != ctor.enum_id {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field constructor and base types differ",
+                function.name
+            ),
+        }]);
+    }
+    let Some(fields) = layouts
+        .enum_fields(base_ty)
+        .and_then(|variants| variants.get(ctor.variant))
+    else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field base has no inline enum layout",
+                function.name
+            ),
+        }]);
+    };
+    let Some(&field_ty) = fields.get(index) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum field index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    let has_repr = layouts.type_repr(field_ty) != Repr::Void;
+    if has_repr != dst.is_some() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum field destination does not match its representation",
+                function.name
+            ),
+        }]);
+    }
+    if let Some(dst) = dst {
+        writer.assign(
+            &variable_name(dst),
+            &format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant),
         );
     }
     Ok(())
