@@ -1060,6 +1060,62 @@ fn string_split_keeps_views_alive_after_copying_the_source() {
 }
 
 #[test]
+fn string_join_reads_split_views_into_a_bounded_stack_buffer() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let mut builder = FnBuilder::new(&core, "split_join_matches");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let parts = builder.assign(
+        "parts",
+        list_string,
+        Value::Builtin {
+            op: Builtin::StringSplit,
+            args: vec![input.into(), Const::String("::".to_owned()).into()],
+        },
+    );
+    let joined = builder.assign(
+        "joined",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringJoin,
+            args: vec![parts.into(), Const::String("|".to_owned()).into()],
+        },
+    );
+    let result = builder.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![joined.into(), Const::String("alpha|βeta".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit bounded String.join");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"alpha::\\xce\\xb2\" \"eta\", .length = UINT16_C(12) }; return emela_export_split_join_matches_0(input) == INT32_C(1) ? 0 : 1; }\n",
+    );
+
+    let limited = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(2048)
+            .with_string_capacity(5),
+    )
+    .expect("emit String.join with a short output limit");
+    compile_and_run(
+        limited,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_STRING_CAPACITY ? 0 : 3); }\nint main(void) { EmelaString input = { .data = \"alpha::beta\", .length = UINT16_C(11) }; (void)emela_export_split_join_matches_0(input); return 4; }\n",
+    );
+}
+
+#[test]
 fn fixed_heap_exhaustion_calls_the_board_defect_hook() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));
