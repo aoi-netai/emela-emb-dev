@@ -25,16 +25,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     let emitted_functions = runtime_reachable(flow);
+    let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let heap_required = flow.functions.iter().any(|(id, function)| {
-        emitted_functions.contains(&id) && function_needs_list_heap(function, &flow.core.types)
+        emitted_functions.contains(&id) && function_needs_list_heap(function, &layouts)
     });
     if options.heap_bytes() == 0 && heap_required {
         let (_, function) = flow
             .functions
             .iter()
             .find(|(id, function)| {
-                emitted_functions.contains(id)
-                    && function_needs_list_heap(function, &flow.core.types)
+                emitted_functions.contains(id) && function_needs_list_heap(function, &layouts)
             })
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
@@ -42,7 +42,6 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             "heap-backed List operations with heap_bytes = 0; configure Options::with_heap_bytes",
         ));
     }
-    let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let mut const_outcomes = HashMap::new();
     for (id, function) in flow
         .functions
@@ -142,8 +141,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.line("void emela_embedded_start(void);");
     }
     if heap_required {
+        header.line("/* Retains an owned List value before copying it. */");
+        header.line("void emela_embedded_retain(void *value);");
         header.line("/* Releases an owned List value returned by this module. */");
         header.line("void emela_embedded_release(void *value);");
+        layouts.emit_public_release_declarations(&mut header);
     }
 
     header.blank();
@@ -269,21 +271,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if heap_required {
         layouts.emit_list_node_declarations(&mut source);
         crate::heap::emit_runtime(&mut source, options.heap_bytes());
-        let list_kinds = layouts
-            .list_types
-            .iter()
-            .map(|&ty| {
-                let Type::List(element) = layouts.types[ty] else {
-                    unreachable!("list layout has a non-List type")
-                };
-                (
-                    layouts.list_node_name(ty),
-                    layouts.list_index(ty),
-                    layouts.is_managed_list(element),
-                )
-            })
-            .collect::<Vec<_>>();
-        crate::heap::emit_destroy_switch(&mut source, &list_kinds);
+        layouts.emit_heap_ownership_helpers(&mut source);
+        layouts.emit_heap_destroy_switch(&mut source);
+        layouts.emit_public_release_helpers(&mut source);
+        crate::heap::emit_public_retain(&mut source);
         crate::heap::emit_public_release(&mut source);
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
@@ -598,11 +589,16 @@ fn emit_local_declarations(
 ) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
-            if layouts.is_managed_list(variable.ty) {
+            if layouts.is_managed_value(variable.ty) {
+                let initial = if layouts.is_managed_list(variable.ty) {
+                    "NULL"
+                } else {
+                    "{0}"
+                };
                 writer.decl(
                     &layouts.c_type(variable.ty),
                     &variable_name(id),
-                    Some("NULL"),
+                    Some(initial),
                 );
                 writer.decl("int", &owned_variable_name(id), Some("INT32_C(0)"));
             } else {
@@ -621,14 +617,15 @@ fn emit_release_if_owned(
     variable: VarId,
     writer: &mut Writer,
 ) {
-    if !layouts.is_managed_list(function.vars[variable].ty) {
+    let ty = function.vars[variable].ty;
+    if !layouts.is_managed_value(ty) {
         return;
     }
     writer.begin_block(&format!(
         "if ({} != INT32_C(0))",
         owned_variable_name(variable)
     ));
-    writer.line(&format!("emela_heap_release({});", variable_name(variable)));
+    layouts.emit_release_value_expression(ty, &variable_name(variable), writer);
     writer.end_block();
     writer.assign(&owned_variable_name(variable), "INT32_C(0)");
 }
@@ -640,9 +637,13 @@ fn emit_retain_operand(
     writer: &mut Writer,
 ) {
     if let Operand::Var(variable) = operand
-        && layouts.is_managed_list(function.vars[*variable].ty)
+        && layouts.is_managed_value(function.vars[*variable].ty)
     {
-        writer.line(&format!("emela_heap_retain({});", variable_name(*variable)));
+        layouts.emit_retain_value_expression(
+            function.vars[*variable].ty,
+            &variable_name(*variable),
+            writer,
+        );
     }
 }
 
@@ -655,7 +656,7 @@ fn emit_owned_cleanup(
     for (variable, data) in function.vars.iter() {
         if except == Some(variable)
             || function.params.contains(&variable)
-            || !layouts.is_managed_list(data.ty)
+            || !layouts.is_managed_value(data.ty)
         {
             continue;
         }
@@ -1437,7 +1438,7 @@ fn validate_isr_function(
     Ok(())
 }
 
-fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {
+fn function_needs_list_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
         let Stmt::Let {
@@ -1485,7 +1486,7 @@ fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {
         } => true,
         _ => false,
     });
-    let returns_managed_alias = matches!(types[function.ret], Type::List(_))
+    let returns_managed_alias = matches!(layouts.types[function.ret], Type::List(_))
         && function.seqs.iter().any(|(_, sequence)| {
             matches!(
                 sequence.term,
@@ -1494,7 +1495,17 @@ fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {
                         && !known_empty.contains(&variable)
             )
         });
-    statement_needs_heap || returns_managed_alias
+    let local_managed_value = function.vars.iter().any(|(variable, data)| {
+        !function.params.contains(&variable)
+            && layouts.is_managed_value(data.ty)
+            && !known_empty.contains(&variable)
+    });
+    let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
+        && layouts.is_managed_value(function.ret);
+    statement_needs_heap
+        || returns_managed_alias
+        || local_managed_value
+        || returns_managed_aggregate
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -2571,22 +2582,16 @@ fn emit_statement(
 ) -> Result<(), Vec<Error>> {
     let managed_dst = statement
         .dst()
-        .filter(|&dst| layouts.is_managed_list(function.vars[dst].ty));
+        .filter(|&dst| layouts.is_managed_value(function.vars[dst].ty));
     if let Some(dst) = managed_dst {
         emit_release_if_owned(layouts, function, dst, writer);
     }
     let retain_result = match statement {
         Stmt::Let {
-            value: Value::ListTail(_),
+            value:
+                Value::ListHead(_) | Value::ListTail(_) | Value::Field { .. } | Value::TupleGet { .. },
             ..
         } => true,
-        Stmt::Let {
-            value: Value::ListHead(list),
-            ..
-        } => match layouts.types[function.vars[*list].ty] {
-            Type::List(element) => layouts.is_managed_list(element),
-            _ => false,
-        },
         Stmt::Let {
             value: Value::List {
                 elems,
@@ -2611,7 +2616,11 @@ fn emit_statement(
     )?;
     if let Some(dst) = managed_dst {
         if retain_result {
-            writer.line(&format!("emela_heap_retain({});", variable_name(dst)));
+            layouts.emit_retain_value_expression(
+                function.vars[dst].ty,
+                &variable_name(dst),
+                writer,
+            );
         }
         writer.assign(&owned_variable_name(dst), "INT32_C(1)");
     }
@@ -3184,7 +3193,7 @@ fn emit_list_value(
                 "UINT8_C(0)",
             );
         } else {
-            if layouts.is_managed_list(element_ty) {
+            if layouts.is_managed_value(element_ty) {
                 emit_retain_operand(layouts, function, elem, writer);
             }
             let expression =
@@ -3285,7 +3294,7 @@ fn emit_loop(
         emit_retain_operand(layouts, function, initial, writer);
         emit_release_if_owned(layouts, function, variable, writer);
         writer.assign(&variable_name(variable), &expression);
-        if layouts.is_managed_list(function.vars[variable].ty) {
+        if layouts.is_managed_value(function.vars[variable].ty) {
             writer.assign(&owned_variable_name(variable), "INT32_C(1)");
         }
     }
@@ -3494,8 +3503,8 @@ fn emit_recur(
         temporaries.push(temporary);
     }
     for (&variable, temporary) in vars.iter().zip(&temporaries) {
-        if layouts.is_managed_list(function.vars[variable].ty) {
-            writer.line(&format!("emela_heap_retain({temporary});"));
+        if layouts.is_managed_value(function.vars[variable].ty) {
+            layouts.emit_retain_value_expression(function.vars[variable].ty, temporary, writer);
         }
     }
     for &variable in vars {
@@ -3503,7 +3512,7 @@ fn emit_recur(
     }
     for (&variable, temporary) in vars.iter().zip(temporaries) {
         writer.assign(&variable_name(variable), &temporary);
-        if layouts.is_managed_list(function.vars[variable].ty) {
+        if layouts.is_managed_value(function.vars[variable].ty) {
             writer.assign(&owned_variable_name(variable), "INT32_C(1)");
         }
     }
@@ -3920,6 +3929,9 @@ fn emit_make(
             continue;
         }
         represented = true;
+        if layouts.is_managed_value(*field_ty) {
+            emit_retain_operand(layouts, function, arg, writer);
+        }
         let expression =
             operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
         writer.assign(
@@ -4080,6 +4092,9 @@ fn emit_tuple(
             continue;
         }
         represented = true;
+        if layouts.is_managed_value(field_ty) {
+            emit_retain_operand(layouts, function, arg, writer);
+        }
         let expression =
             operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
         writer.assign(&format!("{target}.f{index}"), &expression);
@@ -4686,7 +4701,7 @@ fn emit_return(
             let expression = operand_expression(operand)
                 .map_err(|variant| unsupported(&function.name, variant))?;
             let mut moved = None;
-            if layouts.is_managed_list(function.ret)
+            if layouts.is_managed_value(function.ret)
                 && let Operand::Var(variable) = operand
             {
                 if function.params.contains(variable) {
@@ -4922,6 +4937,16 @@ impl<'a> TypeLayouts<'a> {
                 layouts.collect(ty, "EmelaError", &mut states)?;
                 layouts.error_types.push((id, ty));
             }
+            if layouts
+                .error_types
+                .iter()
+                .any(|(_, ty)| layouts.contains_list_ref(*ty, &mut HashSet::new()))
+            {
+                return Err(unsupported(
+                    "EmelaError",
+                    "error enum values containing a List reference",
+                ));
+            }
         }
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id) {
@@ -4958,22 +4983,38 @@ impl<'a> TypeLayouts<'a> {
                 }
                 match layouts.types[ty].clone() {
                     Type::List(element)
-                        if (!layouts.contains_list_ref(element, &mut HashSet::new())
-                            || matches!(layouts.types[element], Type::List(_)))
-                            && !type_contains_string(&layouts, element, &mut HashSet::new()) =>
-                    {
-                        // Scalar and inline values need no nested ownership; List elements use the List path.
-                    }
+                        if !type_contains_string(&layouts, element, &mut HashSet::new()) => {}
                     Type::List(_) => {
                         return Err(unsupported(
                             &function.name,
-                            "List elements that contain a List reference or String view",
+                            "List elements that contain a String view",
                         ));
                     }
+                    Type::Any => {
+                        return Err(unsupported(
+                            &function.name,
+                            "EmelaError values that contain a List reference",
+                        ));
+                    }
+                    Type::Enum(enum_id, _) if layouts.core.enums[enum_id].error => {
+                        return Err(unsupported(
+                            &function.name,
+                            "error enum values that contain a List reference",
+                        ));
+                    }
+                    Type::Tuple(_) | Type::Enum(_, _)
+                        if type_contains_string(&layouts, ty, &mut HashSet::new()) =>
+                    {
+                        return Err(unsupported(
+                            &function.name,
+                            "inline aggregate values that combine List references and String views",
+                        ));
+                    }
+                    Type::Tuple(_) | Type::Enum(_, _) => {}
                     _ => {
                         return Err(unsupported(
                             &function.name,
-                            "inline aggregate values that contain a List reference",
+                            "managed List reference in an unsupported value type",
                         ));
                     }
                 }
@@ -5122,6 +5163,10 @@ impl<'a> TypeLayouts<'a> {
         matches!(self.types[ty], Type::List(_))
     }
 
+    fn is_managed_value(&self, ty: TypeId) -> bool {
+        self.contains_list_ref(ty, &mut HashSet::new())
+    }
+
     fn contains_list_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
         let mut types = self.types.clone();
         self.contains_list_ref_with_types(&mut types, ty, seen)
@@ -5157,6 +5202,247 @@ impl<'a> TypeLayouts<'a> {
                     })
             }),
             _ => false,
+        }
+    }
+
+    fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize> {
+        let index = *self.aggregate_ids.get(&ty)?;
+        self.is_managed_value(ty).then_some(index)
+    }
+
+    fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
+        if self.is_managed_list(ty) {
+            writer.line(&format!("emela_heap_retain({expression});"));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_retain_value_{index}(&({expression}));"
+            ));
+        }
+    }
+
+    fn emit_enqueue_value_expression(
+        &self,
+        ty: TypeId,
+        expression: &str,
+        pending: &str,
+        tail: &str,
+        writer: &mut Writer,
+    ) {
+        if self.is_managed_list(ty) {
+            writer.line(&format!(
+                "emela_heap_enqueue({expression}, {pending}, {tail});"
+            ));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{index}(&({expression}), {pending}, {tail});"
+            ));
+        }
+    }
+
+    fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
+        if self.is_managed_list(ty) {
+            writer.line(&format!("emela_heap_release({expression});"));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_release_value_{index}(&({expression}));"
+            ));
+        }
+    }
+
+    fn emit_heap_ownership_helpers(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "static void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            self.emit_aggregate_retain_body(aggregate, writer);
+            writer.end_block();
+
+            writer.begin_block(&format!(
+                "static void emela_heap_enqueue_value_{index}(const {aggregate_type} *value, emela_heap_block **pending, emela_heap_block **tail)"
+            ));
+            self.emit_aggregate_enqueue_body(aggregate, writer);
+            writer.end_block();
+
+            writer.begin_block(&format!(
+                "static void emela_heap_release_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.line("emela_heap_block *pending = NULL;");
+            writer.line("emela_heap_block *tail = NULL;");
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{index}(value, &pending, &tail);"
+            ));
+            writer.line("emela_heap_drain(pending, tail);");
+            writer.end_block();
+            writer.blank();
+        }
+    }
+
+    fn emit_aggregate_retain_body(&self, aggregate: &AggregateLayout, writer: &mut Writer) {
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => {
+                for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_managed_value(field_ty) {
+                        self.emit_retain_value_expression(
+                            field_ty,
+                            &format!("value->f{index}"),
+                            writer,
+                        );
+                    }
+                }
+            }
+            AggregateKind::Enum(variants) => {
+                writer.begin_block("switch (value->tag)");
+                for (variant, fields) in variants.iter().enumerate() {
+                    writer.line(&format!("case INT32_C({variant}):"));
+                    writer.begin_block("");
+                    for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_managed_value(field_ty) {
+                            self.emit_retain_value_expression(
+                                field_ty,
+                                &format!("value->payload.v{variant}.f{index}"),
+                                writer,
+                            );
+                        }
+                    }
+                    writer.line("break;");
+                    writer.end_block();
+                }
+                writer.line("default:");
+                writer.begin_block("");
+                writer.line("break;");
+                writer.end_block();
+                writer.end_block();
+            }
+        }
+    }
+
+    fn emit_aggregate_enqueue_body(&self, aggregate: &AggregateLayout, writer: &mut Writer) {
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => {
+                for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_managed_value(field_ty) {
+                        self.emit_enqueue_value_expression(
+                            field_ty,
+                            &format!("value->f{index}"),
+                            "pending",
+                            "tail",
+                            writer,
+                        );
+                    }
+                }
+            }
+            AggregateKind::Enum(variants) => {
+                writer.begin_block("switch (value->tag)");
+                for (variant, fields) in variants.iter().enumerate() {
+                    writer.line(&format!("case INT32_C({variant}):"));
+                    writer.begin_block("");
+                    for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_managed_value(field_ty) {
+                            self.emit_enqueue_value_expression(
+                                field_ty,
+                                &format!("value->payload.v{variant}.f{index}"),
+                                "pending",
+                                "tail",
+                                writer,
+                            );
+                        }
+                    }
+                    writer.line("break;");
+                    writer.end_block();
+                }
+                writer.line("default:");
+                writer.begin_block("");
+                writer.line("break;");
+                writer.end_block();
+                writer.end_block();
+            }
+        }
+    }
+
+    fn emit_heap_destroy_switch(&self, writer: &mut Writer) {
+        writer.begin_block(
+            "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
+        );
+        writer.begin_block("switch (kind)");
+        for &list_ty in &self.list_types {
+            let Type::List(element) = self.types[list_ty] else {
+                unreachable!("list layout has a non-List type")
+            };
+            let node_type = self.list_node_name(list_ty);
+            let kind = self.list_index(list_ty);
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            writer.line(&format!("{node_type} *node = ({node_type} *)value;"));
+            if self.type_repr(element) != Repr::Void && self.is_managed_value(element) {
+                self.emit_enqueue_value_expression(
+                    element,
+                    "node->head",
+                    "pending",
+                    "tail",
+                    writer,
+                );
+            }
+            writer.line("emela_heap_enqueue(node->tail, pending, tail);");
+            writer.line("break;");
+            writer.end_block();
+        }
+        writer.line("default:");
+        writer.begin_block("");
+        writer.line(&format!(
+            "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({}));",
+            c_string_literal(b"invalid fixed heap reference"),
+            b"invalid fixed heap reference".len()
+        ));
+        writer.line("break;");
+        writer.end_block();
+        writer.end_block();
+        writer.end_block();
+        writer.blank();
+    }
+
+    fn emit_public_release_declarations(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.line("/* Retains heap references before copying this aggregate value. */");
+            writer.line(&format!(
+                "void emela_embedded_retain_value_{index}(const {aggregate_type} *value);"
+            ));
+            writer.line("/* Releases the heap references owned by this aggregate value. */");
+            writer.line(&format!(
+                "void emela_embedded_release_value_{index}({aggregate_type} *value);"
+            ));
+        }
+    }
+
+    fn emit_public_release_helpers(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "void emela_embedded_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line(&format!("emela_heap_retain_value_{index}(value);"));
+            writer.end_block();
+            writer.end_block();
+            writer.begin_block(&format!(
+                "void emela_embedded_release_value_{index}({aggregate_type} *value)"
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line(&format!("emela_heap_release_value_{index}(value);"));
+            writer.line(&format!("*value = ({aggregate_type}){{0}};"));
+            writer.end_block();
+            writer.end_block();
+            writer.blank();
         }
     }
 

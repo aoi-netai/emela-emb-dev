@@ -29,39 +29,16 @@ pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
     emit_reference_functions(writer);
 }
 
-pub(crate) fn emit_destroy_switch(writer: &mut Writer, list_types: &[(String, u32, bool)]) {
-    writer.begin_block(
-        "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
-    );
-    writer.begin_block("switch (kind)");
-    for (node_type, kind, has_managed_head) in list_types {
-        writer.line(&format!("case UINT32_C({kind}):"));
-        writer.begin_block("");
-        writer.line(&format!("{node_type} *node = ({node_type} *)value;"));
-        if *has_managed_head {
-            writer.line("emela_heap_enqueue(node->head, pending, tail);");
-        }
-        writer.line("emela_heap_enqueue(node->tail, pending, tail);");
-        writer.line("break;");
-        writer.end_block();
-    }
-    writer.line("default:");
-    writer.begin_block("");
-    writer.line(&format!(
-        "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({}));",
-        c_string_literal(INVALID_REFERENCE_MESSAGE),
-        INVALID_REFERENCE_MESSAGE.len()
-    ));
-    writer.line("break;");
-    writer.end_block();
-    writer.end_block();
+pub(crate) fn emit_public_release(writer: &mut Writer) {
+    writer.begin_block("void emela_embedded_release(void *value)");
+    writer.line("emela_heap_release(value);");
     writer.end_block();
     writer.blank();
 }
 
-pub(crate) fn emit_public_release(writer: &mut Writer) {
-    writer.begin_block("void emela_embedded_release(void *value)");
-    writer.line("emela_heap_release(value);");
+pub(crate) fn emit_public_retain(writer: &mut Writer) {
+    writer.begin_block("void emela_embedded_retain(void *value)");
+    writer.line("emela_heap_retain(value);");
     writer.end_block();
     writer.blank();
 }
@@ -269,10 +246,9 @@ fn emit_reference_functions(writer: &mut Writer) {
     writer.end_block();
     writer.end_block();
 
-    writer.begin_block("static void emela_heap_release(void *value)");
-    writer.line("emela_heap_block *pending = NULL;");
-    writer.line("emela_heap_block *tail = NULL;");
-    writer.line("emela_heap_enqueue(value, &pending, &tail);");
+    writer.begin_block(
+        "static void emela_heap_drain(emela_heap_block *pending, emela_heap_block *tail)",
+    );
     writer.begin_block("while (pending != NULL)");
     writer.line("emela_heap_block *block = pending;");
     writer.line("pending = block->free_next;");
@@ -283,6 +259,13 @@ fn emit_reference_functions(writer: &mut Writer) {
     writer.line("emela_heap_destroy(block->kind, payload, &pending, &tail);");
     writer.line("emela_heap_free_block(block);");
     writer.end_block();
+    writer.end_block();
+
+    writer.begin_block("static void emela_heap_release(void *value)");
+    writer.line("emela_heap_block *pending = NULL;");
+    writer.line("emela_heap_block *tail = NULL;");
+    writer.line("emela_heap_enqueue(value, &pending, &tail);");
+    writer.line("emela_heap_drain(pending, tail);");
     writer.end_block();
     writer.blank();
 }

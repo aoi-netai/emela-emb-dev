@@ -363,26 +363,208 @@ fn stores_and_releases_nested_lists() {
 }
 
 #[test]
-fn rejects_list_elements_with_aggregate_managed_references() {
+fn stores_and_releases_list_references_inside_tuples_and_list_elements() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));
     let tuple_with_list = core.types.intern(Type::Tuple(vec![list_int]));
     let list_tuple = core.types.intern(Type::List(tuple_with_list));
-    let function = {
-        let mut builder = FnBuilder::new(&core, "check_nested_aggregate");
-        builder.set_ret(TypeId::BOOL).set_exported();
-        let list = builder.param("list", list_tuple);
-        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(list));
-        builder.term(Term::Return(Some(empty.into())));
+
+    let tuple_function = {
+        let mut builder = FnBuilder::new(&core, "tuple_list_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        let extracted = builder.assign(
+            "extracted",
+            list_int,
+            Value::TupleGet {
+                base: tuple,
+                index: 0,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(extracted));
+        builder.term(Term::Return(Some(head.into())));
         builder.finish()
     };
+
+    let list_element_function = {
+        let mut builder = FnBuilder::new(&core, "list_tuple_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(73).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        let outer = builder.assign(
+            "outer",
+            list_tuple,
+            Value::List {
+                elems: vec![tuple.into()],
+                tail: None,
+            },
+        );
+        let extracted_tuple =
+            builder.assign("extracted_tuple", tuple_with_list, Value::ListHead(outer));
+        let extracted_list = builder.assign(
+            "extracted_list",
+            list_int,
+            Value::TupleGet {
+                base: extracted_tuple,
+                index: 0,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(extracted_list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+
+    let returned_tuple_function = {
+        let mut builder = FnBuilder::new(&core, "tuple_value");
+        builder.set_ret(tuple_with_list).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(5).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        builder.term(Term::Return(Some(tuple.into())));
+        builder.finish()
+    };
+
+    let mut flow = Module::new(core);
+    flow.add(tuple_function);
+    flow.add(list_element_function);
+    flow.add(returned_tuple_function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit List references inside inline tuple values");
+    let tuple_c_type = format!("emela_type_{}", tuple_with_list.index());
+    let harness = format!(
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ (void)kind; (void)message; (void)length; exit(1); }}\nint main(void) {{ for (int i = 0; i < 1000; i++) {{ if (emela_export_tuple_list_head_0() != INT32_C(42)) return 2; if (emela_export_list_tuple_head_1() != INT32_C(73)) return 3; {tuple_c_type} value = emela_export_tuple_value_2(); emela_embedded_release_value_0(&value); }} return 0; }}\n"
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn stores_and_releases_list_references_inside_enum_fields() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let enum_id = core.add_enum(EnumDef {
+        name: "ListBox".to_owned(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![list_int]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, Vec::new());
+    let mut builder = FnBuilder::new(&core, "enum_list_head");
+    builder.set_ret(TypeId::INT).set_exported();
+    let inner = builder.assign(
+        "inner",
+        list_int,
+        Value::List {
+            elems: vec![Const::Int(91).into()],
+            tail: None,
+        },
+    );
+    let boxed = builder.assign(
+        "boxed",
+        enum_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: vec![inner.into()],
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(boxed));
+    let list = builder.assign(
+        "list",
+        list_int,
+        Value::Field {
+            base: boxed,
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            index: 0,
+        },
+    );
+    let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+    let result = builder.assign(
+        "result",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![head.into(), tag.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit List references inside enum payloads");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_enum_list_head_0() != INT32_C(91)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_managed_aggregate_values() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let tuple_with_list = core.types.intern(Type::Tuple(vec![list_int]));
+    let mut builder = FnBuilder::new(&core, "managed_tuple");
+    builder.set_ret(TypeId::INT).set_exported();
+    let list = builder.assign(
+        "list",
+        list_int,
+        Value::List {
+            elems: vec![Const::Int(1).into()],
+            tail: None,
+        },
+    );
+    let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![list.into()]));
+    let field = builder.assign(
+        "field",
+        list_int,
+        Value::TupleGet {
+            base: tuple,
+            index: 0,
+        },
+    );
+    let head = builder.assign("head", TypeId::INT, Value::ListHead(field));
+    builder.term(Term::Return(Some(head.into())));
+    let function = builder.finish();
     let mut flow = Module::new(core);
     flow.add(function);
 
     let errors = compile_flow(&flow, &Options::default())
-        .expect_err("reject aggregate List elements until field ownership is supported");
+        .expect_err("managed aggregate values require heap-backed reference management");
     assert_eq!(errors[0].kind, ErrorKind::Unsupported);
-    assert!(errors[0].message.contains("List elements"));
+    assert!(errors[0].message.contains("heap_bytes = 0"));
 }
 
 #[test]

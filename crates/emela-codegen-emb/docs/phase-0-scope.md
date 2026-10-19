@@ -61,8 +61,8 @@
 | `Field` | enum値からフィールドを取得 | 対応 | 静的またはヒープ（enumの格納表現による） | inline値またはheap箱からフィールドを読む。型・構成子・フィールド番号の整合性はFlow IR検証で確認する。heap値の確保条件とISR制約は共通のメモリ方針に従う。 |
 | `Tag` | enum構成子の番号を取得 | 対応 | 静的またはヒープ（enumの格納表現による） | inline値またはheap箱から構成子tagを読む。heap値の利用に関するISR制約は共通のメモリ方針に従う。 |
 | `Tuple` | タプル値を生成 | 対応 | 静的に対応可能 | 固定レイアウトのタプルをC構造体にする。Listなどのheap参照を含む場合もタプル自体はinline値とし、フィールド位置とUnit placeholderを保つ。 |
-| `TupleGet` | タプル要素を取得 | 対応 | 静的に対応可能（heap参照の所有権処理は別途必要） | C構造体から要素を読む。heap参照フィールドの所有権はbackend内の解析で扱う。 |
-| `List` | Listを生成 | 対応 | ヒープで対応可能 | 実行時生成に固定heapを使う。`heap_bytes = 0`はheapを必要とするプログラム向けの設定ではない。容量不足はdefectにし、ISR内ではheap確保を禁止する。 |
+| `TupleGet` | タプル要素を取得 | 対応 | 静的に対応可能 | C構造体から要素を読み、heap参照を含むmanaged valueはborrowed fieldからretainする。 |
+| `List` | Listを生成 | 対応 | ヒープで対応可能 | scalar、List参照、List参照を含むTuple/enumを要素にできる。構成時の参照保持とnode破棄時の解放を行う。実行時生成に固定heapを使い、`heap_bytes = 0`ではheapが必要な入力を診断する。容量不足はdefectにし、ISR内ではheap確保を禁止する。 |
 | `ListIsEmpty` | Listが空か判定 | 対応 | ヒープで対応可能（heap上のListを参照） | List表現に従って空か判定する。Listの生成とheap参照に関する条件は共通のメモリ方針に従う。 |
 | `ListHead` | Listの先頭要素を取得 | 対応 | ヒープで対応可能（heap上のListを参照） | 非空Listから要素を読む。非空条件はFlow IR側のパターン制御で保証する。Listの生成とheap参照に関する条件は共通のメモリ方針に従う。 |
 | `ListTail` | Listの先頭を除いた残りを取得 | 対応 | ヒープで対応可能（heap参照を返す） | 末尾を返し、参照カウントを維持する。heap参照に対するretain/releaseはbackend内で挿入する。Listの生成とheap参照に関する条件は共通のメモリ方針に従う。 |
