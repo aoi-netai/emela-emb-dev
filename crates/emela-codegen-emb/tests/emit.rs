@@ -260,6 +260,46 @@ fn int32_division_by_zero_calls_the_board_defect_hook() {
     );
 }
 
+#[test]
+fn compiles_direct_calls_to_internal_and_external_c_functions() {
+    let mut core = emela_core::Module::new();
+    let main = core.declare("main", true);
+    let helper = core.declare("helper", false);
+    let external = core.declare("external_next", false);
+    let external_value = core.local("value", TypeId::INT);
+    core.define_external(
+        external,
+        vec![external_value],
+        TypeId::INT,
+        emela_core::External {
+            bindings: vec![emela_core::ExternalBinding {
+                target: "c".to_owned(),
+                host: emela_core::HostRef::Global("fixture_increment".to_owned()),
+            }],
+        },
+    );
+
+    let helper_value = core.local("value", TypeId::INT);
+    core.define(
+        helper,
+        vec![helper_value],
+        TypeId::INT,
+        emela_core::build::call(external, vec![emela_core::build::var(helper_value)]),
+    );
+    core.define(
+        main,
+        Vec::new(),
+        TypeId::INT,
+        emela_core::build::call(helper, vec![emela_core::build::int(41)]),
+    );
+
+    let output = compile(&core, &Options::default()).expect("compile direct calls");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include <stdint.h>\nint32_t fixture_increment(int32_t value) { return value + INT32_C(1); }\nint main(void) { return emela_export_main_0() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
 fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "probe");

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use emela_lir::{FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
+use emela_lir::{Callee, FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
 
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
@@ -10,11 +10,18 @@ const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
-    let names: HashMap<FnId, String> = flow
-        .functions
-        .iter()
-        .map(|(id, function)| (id, function_name(id, function)))
-        .collect();
+    let mut names = HashMap::new();
+    for (id, function) in flow.functions.iter() {
+        let name = if function.external.is_some() {
+            if function.exported {
+                return Err(unsupported(&function.name, "exported external functions"));
+            }
+            validate_external(flow, function)?
+        } else {
+            function_name(id, function)
+        };
+        names.insert(id, name);
+    }
 
     let mut header = Writer::new();
     header.line("#ifndef EMELA_EMBEDDED_H");
@@ -91,6 +98,19 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
 
     for (id, function) in flow.functions.iter() {
+        let name = &names[&id];
+        if function.external.is_some() {
+            source.line(&format!(
+                "extern {};",
+                signature(flow, function, name, false)
+            ));
+        } else if !function.exported {
+            source.line(&format!("{};", signature(flow, function, name, true)));
+        }
+    }
+    source.blank();
+
+    for (id, function) in flow.functions.iter() {
         if function.fails || function.suspends {
             return Err(unsupported(
                 &function.name,
@@ -98,15 +118,27 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             ));
         }
 
+        if function.external.is_some() {
+            if function.body.is_some() {
+                return Err(vec![Error {
+                    kind: ErrorKind::InvalidFlowIr,
+                    message: format!(
+                        "invalid Flow IR in function `{}`: external function has a body",
+                        function.name
+                    ),
+                }]);
+            }
+            continue;
+        }
         let Some(body) = function.body else {
-            return Err(unsupported(&function.name, "external function bodies"));
+            return Err(unsupported(&function.name, "function without a body"));
         };
         let sequence = &function.seqs[body];
         let name = &names[&id];
         source.begin_block(&signature(flow, function, name, !function.exported));
         emit_local_declarations(function, &mut source);
         for &statement in &sequence.stmts {
-            emit_statement(function, &function.stmts[statement], &mut source)?;
+            emit_statement(function, &function.stmts[statement], &mut source, &names)?;
         }
         emit_return(flow, function, &sequence.term, &mut source)?;
         source.end_block();
@@ -143,6 +175,7 @@ fn emit_statement(
     function: &Function,
     statement: &Stmt,
     writer: &mut Writer,
+    names: &HashMap<FnId, String>,
 ) -> Result<(), Vec<Error>> {
     match statement {
         Stmt::Let {
@@ -189,12 +222,136 @@ fn emit_statement(
                         writer.assign(&variable_name(*dst), &expression);
                     }
                 }
+                Value::Call {
+                    callee: Callee::Direct(id),
+                    args,
+                    suspends: false,
+                    on_fail: None,
+                } => {
+                    let name = names
+                        .get(id)
+                        .ok_or_else(|| unsupported(&function.name, "call to missing function"))?;
+                    let args = args
+                        .iter()
+                        .map(operand_expression)
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|variant| unsupported(&function.name, variant))?;
+                    let expression = format!("{name}({})", args.join(", "));
+                    if let Some(dst) = dst {
+                        writer.assign(&variable_name(*dst), &expression);
+                    } else {
+                        writer.line(&format!("{expression};"));
+                    }
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
         }
         other => Err(unsupported(&function.name, statement_name(other))),
     }
+}
+
+fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<String, Vec<Error>> {
+    let Some(external) = &function.external else {
+        return Err(unsupported(&function.name, "missing external binding"));
+    };
+    let Some(binding) = external.binding("c") else {
+        return Err(unsupported(
+            &function.name,
+            "external function without a C binding",
+        ));
+    };
+    let symbol = match &binding.host {
+        emela_core::HostRef::Global(name) => name.clone(),
+        emela_core::HostRef::Import { name, .. } => name.clone(),
+    };
+    if !is_c_identifier(&symbol) {
+        return Err(unsupported(
+            &function.name,
+            "external function with an invalid C symbol",
+        ));
+    }
+
+    let supported_type = |ty| {
+        matches!(
+            flow.core.ty(ty),
+            emela_core::Type::Int
+                | emela_core::Type::Bool
+                | emela_core::Type::Unit
+                | emela_core::Type::Never
+        )
+    };
+    if function
+        .params
+        .iter()
+        .any(|&param| !supported_type(function.vars[param].ty))
+        || !supported_type(function.ret)
+    {
+        return Err(unsupported(
+            &function.name,
+            "external function with a non-Int32 or non-Unit signature",
+        ));
+    }
+    Ok(symbol)
+}
+
+fn is_c_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    !matches!(
+        value,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Alignas"
+            | "_Alignof"
+            | "_Atomic"
+            | "_Bool"
+            | "_Complex"
+            | "_Generic"
+            | "_Imaginary"
+            | "_Noreturn"
+            | "_Static_assert"
+            | "_Thread_local"
+    )
 }
 
 fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<String, &'static str> {
