@@ -29,15 +29,18 @@ pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
     emit_reference_functions(writer);
 }
 
-pub(crate) fn emit_destroy_switch(writer: &mut Writer, list_types: &[(String, u32)]) {
+pub(crate) fn emit_destroy_switch(writer: &mut Writer, list_types: &[(String, u32, bool)]) {
     writer.begin_block(
         "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
     );
     writer.begin_block("switch (kind)");
-    for (node_type, kind) in list_types {
+    for (node_type, kind, has_managed_head) in list_types {
         writer.line(&format!("case UINT32_C({kind}):"));
         writer.begin_block("");
         writer.line(&format!("{node_type} *node = ({node_type} *)value;"));
+        if *has_managed_head {
+            writer.line("emela_heap_enqueue(node->head, pending, tail);");
+        }
         writer.line("emela_heap_enqueue(node->tail, pending, tail);");
         writer.line("break;");
         writer.end_block();

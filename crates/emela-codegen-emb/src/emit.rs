@@ -272,7 +272,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let list_kinds = layouts
             .list_types
             .iter()
-            .map(|&ty| (layouts.list_node_name(ty), layouts.list_index(ty)))
+            .map(|&ty| {
+                let Type::List(element) = layouts.types[ty] else {
+                    unreachable!("list layout has a non-List type")
+                };
+                (
+                    layouts.list_node_name(ty),
+                    layouts.list_index(ty),
+                    layouts.is_managed_list(element),
+                )
+            })
             .collect::<Vec<_>>();
         crate::heap::emit_destroy_switch(&mut source, &list_kinds);
         crate::heap::emit_public_release(&mut source);
@@ -2572,6 +2581,13 @@ fn emit_statement(
             ..
         } => true,
         Stmt::Let {
+            value: Value::ListHead(list),
+            ..
+        } => match layouts.types[function.vars[*list].ty] {
+            Type::List(element) => layouts.is_managed_list(element),
+            _ => false,
+        },
+        Stmt::Let {
             value: Value::List {
                 elems,
                 tail: Some(_),
@@ -3168,6 +3184,9 @@ fn emit_list_value(
                 "UINT8_C(0)",
             );
         } else {
+            if layouts.is_managed_list(element_ty) {
+                emit_retain_operand(layouts, function, elem, writer);
+            }
             let expression =
                 operand_expression(elem).map_err(|variant| unsupported(&function.name, variant))?;
             writer.assign(&format!("(({list_name} *){node_temp})->head"), &expression);
@@ -4932,16 +4951,18 @@ impl<'a> TypeLayouts<'a> {
                 .map(|(_, variable)| variable.ty)
                 .collect::<Vec<_>>();
             types.push(function.ret);
+            types.extend(layouts.list_types.iter().copied());
             for ty in types {
                 if !layouts.contains_list_ref(ty, &mut HashSet::new()) {
                     continue;
                 }
                 match layouts.types[ty].clone() {
                     Type::List(element)
-                        if !layouts.contains_list_ref(element, &mut HashSet::new())
+                        if (!layouts.contains_list_ref(element, &mut HashSet::new())
+                            || matches!(layouts.types[element], Type::List(_)))
                             && !type_contains_string(&layouts, element, &mut HashSet::new()) =>
                     {
-                        // Scalar and inline element layouts have no nested owner to retain.
+                        // Scalar and inline values need no nested ownership; List elements use the List path.
                     }
                     Type::List(_) => {
                         return Err(unsupported(

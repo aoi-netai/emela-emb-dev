@@ -306,6 +306,86 @@ fn reads_list_heads_and_keeps_shared_tails_alive() {
 }
 
 #[test]
+fn stores_and_releases_nested_lists() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let nested_list = core.types.intern(Type::List(list_int));
+    let make_nested = {
+        let mut builder = FnBuilder::new(&core, "extract_inner_list");
+        builder.set_ret(list_int);
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let outer = builder.assign(
+            "outer",
+            nested_list,
+            Value::List {
+                elems: vec![inner.into()],
+                tail: None,
+            },
+        );
+        let extracted = builder.assign("extracted", list_int, Value::ListHead(outer));
+        builder.term(Term::Return(Some(extracted.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let make_nested_id = flow.add(make_nested);
+    let nested_head = {
+        let mut builder = FnBuilder::new(&flow.core, "nested_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::Call {
+                callee: Callee::Direct(make_nested_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(inner));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    flow.add(nested_head);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit nested List ownership");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_nested_head_1() != INT32_C(42)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
+fn rejects_list_elements_with_aggregate_managed_references() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let tuple_with_list = core.types.intern(Type::Tuple(vec![list_int]));
+    let list_tuple = core.types.intern(Type::List(tuple_with_list));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "check_nested_aggregate");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.param("list", list_tuple);
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(list));
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("reject aggregate List elements until field ownership is supported");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("List elements"));
+}
+
+#[test]
 fn allocates_and_releases_lists_in_the_fixed_heap() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));
