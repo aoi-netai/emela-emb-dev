@@ -170,6 +170,8 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         (Builtin::StringAppend, [Const::String(left), Const::String(right)]) => {
             Ok(Const::String(format!("{left}{right}")))
         }
+        (Builtin::IntToString, [Const::Int(value)]) => Ok(Const::String(value.to_string())),
+        (Builtin::Int64ToString, [Const::Int64(value)]) => Ok(Const::String(value.to_string())),
         (Builtin::StringByteSize, [Const::String(value)]) => i32::try_from(value.len())
             .map(Const::Int)
             .map_err(|_| "String byte size exceeds Int range"),

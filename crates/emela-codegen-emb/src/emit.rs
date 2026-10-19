@@ -172,6 +172,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         )
     }) || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
+        || has_runtime_int_string(flow, &emitted_functions)
         || has_builtin(
             flow,
             &emitted_functions,
@@ -328,6 +329,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_string_show(flow, &emitted_functions) {
         emit_string_show_helpers(&mut source);
     }
+    if has_runtime_int_string(flow, &emitted_functions) {
+        emit_int_to_string_helper(&mut source);
+    }
 
     for (id, function) in flow
         .functions
@@ -437,7 +441,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         {
             return Err(unsupported(
                 &function.name,
-                "a String append buffer that could outlive its function stack frame",
+                "a String scratch buffer that could outlive its function stack frame",
             ));
         }
         emit_local_declarations(&layouts, function, &string_buffers, &mut source);
@@ -562,6 +566,16 @@ impl StringBufferPlan {
                     args,
                 } if args.len() == 1
                     && !matches!(args[0], Operand::Const(Const::String(_)))
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Builtin {
+                    op: Builtin::IntToString | Builtin::Int64ToString,
+                    args,
+                } if args.len() == 1
+                    && matches!(args[0], Operand::Var(_))
                     && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
                 {
                     buffer_producers.insert(*dst);
@@ -756,6 +770,16 @@ impl StringBufferPlan {
                             left.saturating_add(right).min(usize::from(capacity))
                         }
                     }
+                    Value::Builtin {
+                        op: op @ (Builtin::IntToString | Builtin::Int64ToString),
+                        args,
+                    } if args.len() == 1 => match (&args[0], op) {
+                        (Operand::Const(Const::Int(value)), _) => value.to_string().len(),
+                        (Operand::Const(Const::Int64(value)), _) => value.to_string().len(),
+                        (_, Builtin::IntToString) => 11.min(usize::from(capacity)),
+                        (_, Builtin::Int64ToString) => 20.min(usize::from(capacity)),
+                        _ => unreachable!(),
+                    },
                     _ => usize::from(capacity),
                 };
                 let bound = match value {
@@ -1264,6 +1288,7 @@ fn emit_builtin(
             (2, Type::Bool)
         }
         Builtin::StringTrim => (1, Type::String),
+        Builtin::IntToString => (1, Type::String),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
         Builtin::IntBitNot => (1, Type::Int),
         Builtin::IntCheckedAdd => (2, Type::Int),
@@ -1272,6 +1297,7 @@ fn emit_builtin(
         }
         Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
         Builtin::Int64BitNot => (1, Type::Int64),
+        Builtin::Int64ToString => (1, Type::String),
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             (2, Type::Int64)
         }
@@ -1301,6 +1327,9 @@ fn emit_builtin(
         Builtin::IntCheckedAdd => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntToString => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             operand_is_int64(layouts, function, &args[0])
                 && operand_is_int(layouts, function, &args[1])
@@ -1313,6 +1342,9 @@ fn emit_builtin(
             .all(|operand| operand_is_int64(layouts, function, operand)),
         Builtin::Int64FromInt => operand_is_int(layouts, function, &args[0]),
         Builtin::Int64ToInt => operand_is_int64(layouts, function, &args[0]),
+        Builtin::Int64ToString => args
+            .iter()
+            .all(|operand| operand_is_int64(layouts, function, operand)),
         _ => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1426,6 +1458,25 @@ fn emit_builtin(
             }
         }
         Builtin::StringByteSize => format!("(int32_t)(({}).length)", expressions[0]),
+        Builtin::IntToString => match &args[0] {
+            Operand::Const(Const::Int(value)) => {
+                constant_expression(&Const::String(value.to_string()))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic Int.to_string has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_int_to_string((int64_t)({}), {buffer}, UINT16_C({capacity}))",
+                    expressions[0]
+                )
+            }
+        },
         Builtin::IntBitAnd => format!("({} & {})", expressions[0], expressions[1]),
         Builtin::IntBitOr => format!("({} | {})", expressions[0], expressions[1]),
         Builtin::IntBitXor => format!("({} ^ {})", expressions[0], expressions[1]),
@@ -1462,6 +1513,25 @@ fn emit_builtin(
         Builtin::Int64ToInt => {
             format!("emela_i32_from_bits((uint32_t)({}))", expressions[0])
         }
+        Builtin::Int64ToString => match &args[0] {
+            Operand::Const(Const::Int64(value)) => {
+                constant_expression(&Const::String(value.to_string()))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic Int64.to_string has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_int_to_string({}, {buffer}, UINT16_C({capacity}))",
+                    expressions[0]
+                )
+            }
+        },
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
             expressions[0], expressions[1]
@@ -1660,6 +1730,36 @@ fn emit_string_append_helper(writer: &mut Writer) {
     writer.line(
         "return (EmelaString){ .data = buffer, .length = (uint16_t)(left.length + right.length) };",
     );
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_int_to_string_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
+    );
+    writer.line("uint64_t magnitude = value < INT64_C(0) ? (uint64_t)(-(value + INT64_C(1))) + UINT64_C(1) : (uint64_t)value;");
+    writer.line("uint32_t digit_count = UINT32_C(1);");
+    writer.begin_block("for (uint64_t remaining = magnitude; remaining >= UINT64_C(10); remaining /= UINT64_C(10))");
+    writer.line("++digit_count;");
+    writer.end_block();
+    writer
+        .line("uint32_t length = digit_count + (value < INT64_C(0) ? UINT32_C(1) : UINT32_C(0));");
+    writer.begin_block("if (length > (uint32_t)capacity)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.line("uint32_t cursor = length;");
+    writer.begin_block("do");
+    writer.line("buffer[--cursor] = (char)('0' + magnitude % UINT64_C(10));");
+    writer.line("magnitude /= UINT64_C(10);");
+    writer.end_block();
+    writer.line("while (magnitude != UINT64_C(0));");
+    writer.begin_block("if (value < INT64_C(0))");
+    writer.line("buffer[0] = '-';");
+    writer.end_block();
+    writer.line("return (EmelaString){ .data = buffer, .length = (uint16_t)length };");
     writer.end_block();
     writer.blank();
 }
@@ -3561,6 +3661,26 @@ fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) 
                         },
                         ..
                     } if args.len() == 2 && !append_is_static(args) && !append_has_empty_constant(args)
+                )
+            })
+        })
+}
+
+fn has_runtime_int_string(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::IntToString | Builtin::Int64ToString,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
                 )
             })
         })

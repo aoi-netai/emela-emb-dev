@@ -450,6 +450,119 @@ fn int_checked_add_returns_some_or_none_at_int_boundaries() {
 }
 
 #[test]
+fn int_to_string_uses_small_scratch_and_matches_signed_decimal_output() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "int_to_string_matches");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::INT);
+    let expected = builder.param("expected", TypeId::STRING);
+    let actual = builder.assign(
+        "actual",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::IntToString,
+            args: vec![input.into()],
+        },
+    );
+    let matches = builder.assign(
+        "matches",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![actual.into(), expected.into()],
+        },
+    );
+    builder.term(Term::Return(Some(matches.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int.to_string");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("char emela_string_buffer_0[11];"));
+    assert!(source.contains("emela_emb_int_to_string"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString min = { .data = \"-2147483648\", .length = UINT16_C(11) }; EmelaString zero = { .data = \"0\", .length = UINT16_C(1) }; EmelaString positive = { .data = \"1234567890\", .length = UINT16_C(10) }; return emela_export_int_to_string_matches_0(INT32_MIN, min) && emela_export_int_to_string_matches_0(0, zero) && emela_export_int_to_string_matches_0(INT32_C(1234567890), positive) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_int_to_string_without_runtime_scratch() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "INT_MIN_TEXT");
+    constant
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    let text = constant.assign(
+        "text",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::IntToString,
+            args: vec![Const::Int(i32::MIN).into()],
+        },
+    );
+    constant.term(Term::Return(Some(text.into())));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(constant);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate Int.to_string const");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(!source.contains("emela_emb_int_to_string"));
+    compile_and_run(
+        output,
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_INT_MIN_TEXT_0(); return value.length == UINT16_C(11) && memcmp(value.data, \"-2147483648\", 11) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn int_to_string_capacity_overflow_uses_the_board_defect_hook() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "int_to_string_overflow");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::INT);
+    let text = builder.assign(
+        "text",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::IntToString,
+            args: vec![input.into()],
+        },
+    );
+    let length = builder.assign(
+        "length",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![text.into()],
+        },
+    );
+    builder.term(Term::Return(Some(length.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_string_capacity(3))
+        .expect("emit bounded Int.to_string");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_STRING_CAPACITY && length == UINT16_C(24) && memcmp(message, \"string capacity exceeded\", length) == 0) exit(0); exit(1); }\nint main(void) { (void)emela_export_int_to_string_overflow_0(INT32_C(1234)); return 2; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");
