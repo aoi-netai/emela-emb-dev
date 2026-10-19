@@ -416,6 +416,60 @@ fn int64_conversions_preserve_sign_and_keep_the_low_32_bits() {
 }
 
 #[test]
+fn float_from_int_converts_the_full_signed_range_exactly() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "float_from_int");
+    builder.set_ret(TypeId::FLOAT).set_exported();
+    let input = builder.param("input", TypeId::INT);
+    let result = builder.assign(
+        "result",
+        TypeId::FLOAT,
+        Value::Builtin {
+            op: Builtin::FloatFromInt,
+            args: vec![input.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Float.from_int");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_float_from_int_0(INT32_MIN) == -2147483648.0 && emela_export_float_from_int_0(INT32_MAX) == 2147483647.0 && emela_export_float_from_int_0(-1) == -1.0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_float_from_int() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "FLOAT_ANSWER");
+    constant
+        .set_ret(TypeId::FLOAT)
+        .set_exported()
+        .set_constant();
+    let result = constant.assign(
+        "result",
+        TypeId::FLOAT,
+        Value::Builtin {
+            op: Builtin::FloatFromInt,
+            args: vec![Const::Int(42).into()],
+        },
+    );
+    constant.term(Term::Return(Some(result.into())));
+    let function = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate Float.from_int const");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_FLOAT_ANSWER_0() == 42.0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn int_checked_add_returns_some_or_none_at_int_boundaries() {
     let mut flow = Module::new(emela_core::Module::new());
     let option = flow.core.option_enum();

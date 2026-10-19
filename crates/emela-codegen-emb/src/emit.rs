@@ -1328,6 +1328,7 @@ fn emit_builtin(
         Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
         Builtin::Int64BitNot => (1, Type::Int64),
         Builtin::Int64ToString => (1, Type::String),
+        Builtin::FloatFromInt => (1, Type::Float),
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             (2, Type::Int64)
         }
@@ -1358,6 +1359,9 @@ fn emit_builtin(
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::IntToString => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::FloatFromInt => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::StringFromCodePoint => args
@@ -1720,6 +1724,7 @@ fn emit_builtin(
                 )
             }
         },
+        Builtin::FloatFromInt => format!("((double)({}))", expressions[0]),
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
             expressions[0], expressions[1]
