@@ -1101,6 +1101,14 @@ fn operand_is_string(layouts: &TypeLayouts<'_>, function: &Function, operand: &O
     }
 }
 
+fn operand_is_int(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::Int(_)) => true,
+        Operand::Var(variable) => matches!(layouts.types[function.vars[*variable].ty], Type::Int),
+        _ => false,
+    }
+}
+
 fn emit_builtin(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1117,6 +1125,8 @@ fn emit_builtin(
             (2, Type::Bool)
         }
         Builtin::StringTrim => (1, Type::String),
+        Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
+        Builtin::IntBitNot => (1, Type::Int),
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
     };
     if args.len() != arity {
@@ -1128,13 +1138,18 @@ fn emit_builtin(
             ),
         ));
     }
-    if !args
-        .iter()
-        .all(|operand| operand_is_string(layouts, function, operand))
-    {
+    let arguments_match = match op {
+        Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor | Builtin::IntBitNot => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        _ => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
+    };
+    if !arguments_match {
         return Err(invalid_flow_ir(
             &function.name,
-            &format!("builtin {op:?} has a non-String argument"),
+            &format!("builtin {op:?} has an argument with the wrong type"),
         ));
     }
     let Some(dst) = dst else {
@@ -1189,6 +1204,10 @@ fn emit_builtin(
             }
         }
         Builtin::StringByteSize => format!("(int32_t)(({}).length)", expressions[0]),
+        Builtin::IntBitAnd => format!("({} & {})", expressions[0], expressions[1]),
+        Builtin::IntBitOr => format!("({} | {})", expressions[0], expressions[1]),
+        Builtin::IntBitXor => format!("({} ^ {})", expressions[0], expressions[1]),
+        Builtin::IntBitNot => format!("(~{})", expressions[0]),
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
             expressions[0], expressions[1]

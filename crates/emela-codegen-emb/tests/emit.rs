@@ -216,6 +216,45 @@ fn string_byte_size_counts_utf8_bytes_from_a_view() {
 }
 
 #[test]
+fn int_bitwise_builtins_match_signed_32_bit_semantics() {
+    let mut flow = Module::new(emela_core::Module::new());
+    for (name, op) in [
+        ("int_bit_and", Builtin::IntBitAnd),
+        ("int_bit_or", Builtin::IntBitOr),
+        ("int_bit_xor", Builtin::IntBitXor),
+        ("int_bit_not", Builtin::IntBitNot),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(TypeId::INT).set_exported();
+        let lhs = builder.param("lhs", TypeId::INT);
+        let args = if op == Builtin::IntBitNot {
+            vec![lhs.into()]
+        } else {
+            vec![lhs.into(), builder.param("rhs", TypeId::INT).into()]
+        };
+        let result = builder.assign("result", TypeId::INT, Value::Builtin { op, args });
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int bitwise builtins");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains(" & "));
+    assert!(source.contains(" | "));
+    assert!(source.contains(" ^ "));
+    assert!(source.contains("~"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_int_bit_and_0(-1, INT32_C(0x12345678)) == INT32_C(0x12345678) && emela_export_int_bit_or_1(INT32_C(0x40000000), 1) == INT32_C(0x40000001) && emela_export_int_bit_xor_2(-1, -1) == 0 && emela_export_int_bit_not_3(0) == -1 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");
