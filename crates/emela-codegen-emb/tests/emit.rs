@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use emela_codegen_emb::{Options, Output, compile, compile_flow};
+use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
     BinOp, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
 };
@@ -47,6 +47,182 @@ fn emits_c_for_a_function_returning_an_int_constant() {
         output,
         "#include \"emela_embedded.h\"\nint main(void) { return emela_export_answer_0() == INT32_C(42) ? 0 : 1; }\n",
     );
+}
+
+#[test]
+fn statically_evaluates_const_arithmetic() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "ANSWER");
+    constant.set_ret(TypeId::INT).set_constant();
+    let value = constant.assign(
+        "sum",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![Const::Int(20).into(), Const::Int(22).into()],
+        },
+    );
+    constant.term(Term::Return(Some(value.into())));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    let constant_id = flow.add(constant);
+
+    let mut consumer = FnBuilder::new(&flow.core, "answer_from_const");
+    consumer.set_ret(TypeId::INT).set_exported();
+    let answer = consumer.assign(
+        "answer",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(constant_id),
+            args: Vec::new(),
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    consumer.term(Term::Return(Some(answer.into())));
+    flow.add(consumer.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate const arithmetic");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("return INT32_C(42);"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_answer_from_const_1() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn emits_a_static_string_const_as_a_view() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "GREETING");
+    constant
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    constant.term(Term::Return(Some(Const::String("a\0é".to_owned()).into())));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(constant);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String const view");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { const unsigned char expected[] = { UINT8_C(0x61), UINT8_C(0x00), UINT8_C(0xc3), UINT8_C(0xa9) }; EmelaString value = emela_export_GREETING_0(); return value.length == UINT16_C(4) && memcmp(value.data, expected, sizeof expected) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn defers_a_statically_known_const_defect_until_reference() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "BROKEN");
+    constant
+        .set_ret(TypeId::NEVER)
+        .set_exported()
+        .set_constant();
+    constant.term(Term::Defect(
+        Const::String("division by zero".to_owned()).into(),
+    ));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(constant);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit deferred const defect");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("EMELA_DEFECT_DIVISION_BY_ZERO"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char expected[] = \"while evaluating const BROKEN: division by zero\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_DIVISION_BY_ZERO && length == sizeof expected - 1 && memcmp(message, expected, length) == 0) exit(0); exit(1); }\nint main(void) { emela_export_BROKEN_0(); return 1; }\n",
+    );
+}
+
+#[test]
+fn folds_const_division_by_zero_into_a_deferred_defect() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "ZERO_DIVISION");
+    constant.set_ret(TypeId::INT).set_exported().set_constant();
+    let value = constant.assign(
+        "quotient",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Div,
+            ty: PrimTy::I32,
+            args: vec![Const::Int(1).into(), Const::Int(0).into()],
+        },
+    );
+    constant.term(Term::Return(Some(value.into())));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(constant);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit deferred division defect");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char expected[] = \"while evaluating const ZERO_DIVISION: division by zero\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_DIVISION_BY_ZERO && length == sizeof expected - 1 && memcmp(message, expected, length) == 0) exit(0); exit(1); }\nint main(void) { (void)emela_export_ZERO_DIVISION_0(); return 1; }\n",
+    );
+}
+
+#[test]
+fn ignores_an_unevaluable_unreferenced_internal_const_and_reports_its_use() {
+    let core = emela_core::Module::new();
+    let mut unused = FnBuilder::new(&core, "UNUSED");
+    unused.set_ret(TypeId::INT).set_constant();
+    let unused_value = unused.var("value", TypeId::INT);
+    unused.if_(
+        Some(unused_value),
+        Const::Bool(true),
+        |branch| branch.term(Term::Yield(Some(Const::Int(1).into()))),
+        |branch| branch.term(Term::Yield(Some(Const::Int(2).into()))),
+    );
+    unused.term(Term::Return(Some(unused_value.into())));
+    let mut unused_flow = Module::new(core.clone());
+    unused_flow.add(unused.finish());
+    compile_flow(&unused_flow, &Options::default())
+        .expect("an unused const should not block code generation");
+
+    let mut constant = FnBuilder::new(&core, "CHOICE");
+    constant.set_ret(TypeId::INT).set_constant();
+    let value = constant.var("value", TypeId::INT);
+    constant.if_(
+        Some(value),
+        Const::Bool(true),
+        |branch| branch.term(Term::Yield(Some(Const::Int(1).into()))),
+        |branch| branch.term(Term::Yield(Some(Const::Int(2).into()))),
+    );
+    constant.term(Term::Return(Some(value.into())));
+    let constant = constant.finish();
+    let mut flow = Module::new(core);
+    let constant_id = flow.add(constant);
+    let mut caller = FnBuilder::new(&flow.core, "PUBLIC_USER");
+    caller.set_ret(TypeId::INT).set_exported();
+    let result = caller.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(constant_id),
+            args: Vec::new(),
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    caller.term(Term::Return(Some(result.into())));
+    flow.add(caller.finish());
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("a referenced const must be statically evaluable");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("PUBLIC_USER"));
+    assert!(errors[0].message.contains("CHOICE"));
 }
 
 #[test]

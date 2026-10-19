@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use emela_core::{CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
@@ -6,6 +6,7 @@ use emela_lir::{
     SwitchOn, Term, Value, VarId,
 };
 
+use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
@@ -15,6 +16,42 @@ const BOARD_HEADER_FILE: &str = "emela_board.h";
 
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
     let layouts = TypeLayouts::new(flow)?;
+    let mut const_outcomes = HashMap::new();
+    let mut omitted_consts = HashSet::new();
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(_, function)| function.constant)
+    {
+        match const_eval::evaluate(function) {
+            Ok(outcome) => {
+                const_outcomes.insert(id, outcome);
+            }
+            Err(reason) => {
+                let caller = flow
+                    .functions
+                    .iter()
+                    .find_map(|(_, caller)| directly_calls(caller, id).then_some(caller));
+                if let Some(caller) = caller {
+                    return Err(unsupported(
+                        &caller.name,
+                        &format!(
+                            "const `{}` cannot be evaluated statically: {reason}",
+                            function.name
+                        ),
+                    ));
+                }
+                if function.exported {
+                    return Err(unsupported(
+                        &function.name,
+                        &format!("const value cannot be evaluated statically: {reason}"),
+                    ));
+                }
+                omitted_consts.insert(id);
+            }
+        }
+    }
+
     let mut names = HashMap::new();
     let mut public_names = HashMap::new();
     for (id, function) in flow.functions.iter() {
@@ -177,7 +214,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         emit_dynamic_defect_kind_helper(&mut source);
     }
 
-    for (id, function) in flow.functions.iter() {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, _)| !omitted_consts.contains(id))
+    {
         let name = &names[&id];
         if function.external.is_some() {
             source.line(&format!(
@@ -193,7 +234,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     source.blank();
 
-    for (id, function) in flow.functions.iter() {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, _)| !omitted_consts.contains(id))
+    {
         if function.suspends {
             return Err(unsupported(&function.name, "suspending function bodies"));
         }
@@ -223,6 +268,38 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             is_static,
             function.fails,
         ));
+        if function.constant {
+            match &const_outcomes[&id] {
+                ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
+                ConstOutcome::Value(value) => {
+                    let expression = constant_expression(&value).map_err(|kind| {
+                        unsupported(&function.name, &format!("{kind} in a const value"))
+                    })?;
+                    let Some(expression) = expression else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "non-Unit const value has no C expression",
+                        ));
+                    };
+                    source.ret(Some(&expression));
+                }
+                ConstOutcome::Defect { kind, message } => {
+                    let length = u16::try_from(message.len()).map_err(|_| {
+                        unsupported(
+                            &function.name,
+                            "a const defect message longer than the embedded C ABI supports",
+                        )
+                    })?;
+                    source.line(&format!(
+                        "emela_board_defect(EMELA_DEFECT_{kind}, {}, UINT16_C({length}));",
+                        c_string_literal(message.as_bytes())
+                    ));
+                }
+            }
+            source.end_block();
+            source.blank();
+            continue;
+        }
         if function.fails {
             source.line("*emela_error_out = (EmelaError){0};");
         }
@@ -296,6 +373,21 @@ fn emit_local_declarations(layouts: &TypeLayouts<'_>, function: &Function, write
             writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
         }
     }
+}
+
+fn directly_calls(caller: &Function, target: FnId) -> bool {
+    caller.stmts.iter().any(|(_, statement)| {
+        matches!(
+            statement,
+            Stmt::Let {
+                value: Value::Call {
+                    callee: Callee::Direct(id),
+                    ..
+                },
+                ..
+            } if *id == target
+        )
+    })
 }
 
 fn emit_statement(
