@@ -14,7 +14,16 @@ const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
-pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
+pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    if !(1..=512).contains(&options.string_capacity()) {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidOptions,
+            message: format!(
+                "string capacity must be between 1 and 512 bytes, found {}",
+                options.string_capacity()
+            ),
+        }]);
+    }
     let emitted_functions = runtime_reachable(flow);
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let mut const_outcomes = HashMap::new();
@@ -161,29 +170,30 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             outcome,
             ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
         )
-    }) || flow.functions.iter().any(|(id, function)| {
-        if !emitted_functions.contains(&id) {
-            return false;
-        }
-        if function.exported && function.fails {
-            return true;
-        }
-        !function.constant
-            && (function
-                .seqs
-                .iter()
-                .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
-                || function.stmts.iter().any(|(_, statement)| {
-                    matches!(
-                        statement,
-                        Stmt::Switch {
-                            on: SwitchOn::Tag(_),
-                            default: None,
-                            ..
-                        }
-                    )
-                }))
-    });
+    }) || has_runtime_string_append(flow, &emitted_functions)
+        || flow.functions.iter().any(|(id, function)| {
+            if !emitted_functions.contains(&id) {
+                return false;
+            }
+            if function.exported && function.fails {
+                return true;
+            }
+            !function.constant
+                && (function
+                    .seqs
+                    .iter()
+                    .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
+                    || function.stmts.iter().any(|(_, statement)| {
+                        matches!(
+                            statement,
+                            Stmt::Switch {
+                                on: SwitchOn::Tag(_),
+                                default: None,
+                                ..
+                            }
+                        )
+                    }))
+        });
     if needs_defect_hook {
         board_header.line(
             "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
@@ -264,6 +274,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
         emit_string_trim_helper(&mut source);
+    }
+    if has_runtime_string_append(flow, &emitted_functions) {
+        emit_string_append_helper(&mut source);
     }
 
     for (id, function) in flow
@@ -367,7 +380,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         if function.fails {
             source.line("*emela_error_out = (EmelaError){0};");
         }
-        emit_local_declarations(&layouts, function, &mut source);
+        let string_buffers = StringBufferPlan::new(&layouts, function, options.string_capacity());
+        if !string_buffers.declarations.is_empty()
+            && (type_contains_string(&layouts, function.ret, &mut HashSet::new())
+                || failure_value_contains_string(&layouts, function))
+        {
+            return Err(unsupported(
+                &function.name,
+                "a String append buffer that could outlive its function stack frame",
+            ));
+        }
+        emit_local_declarations(&layouts, function, &string_buffers, &mut source);
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
         let mut protects = Vec::new();
@@ -380,6 +403,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                 &function.stmts[statement],
                 &mut source,
                 &names,
+                &string_buffers,
                 &mut loops,
                 &mut blocks,
                 &mut protects,
@@ -435,11 +459,284 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     })
 }
 
-fn emit_local_declarations(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
+fn emit_local_declarations(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
             writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
         }
+    }
+    for (name, capacity) in &string_buffers.declarations {
+        writer.line(&format!("char {name}[{capacity}];"));
+    }
+}
+
+struct StringBufferPlan {
+    buffers: HashMap<VarId, (VarId, u16)>,
+    declarations: Vec<(String, usize)>,
+}
+
+impl StringBufferPlan {
+    fn new(layouts: &TypeLayouts<'_>, function: &Function, capacity: u16) -> Self {
+        let mut append_args = HashMap::new();
+        for (_, statement) in function.stmts.iter() {
+            let Stmt::Let {
+                dst: Some(dst),
+                value:
+                    Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    },
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            if args.len() == 2
+                && !append_is_static(args)
+                && !append_has_empty_constant(args)
+                && matches!(layouts.types[function.vars[*dst].ty], Type::String)
+            {
+                append_args.insert(*dst, args.clone());
+            }
+        }
+
+        let mut uses = HashMap::new();
+        let mut count = |variable| *uses.entry(variable).or_insert(0usize) += 1;
+        for (_, statement) in function.stmts.iter() {
+            match statement {
+                Stmt::Let { value, .. } => value.for_each_var(&mut count),
+                Stmt::If { cond, .. } => count_operand(cond, &mut count),
+                Stmt::Switch { on, .. } => match on {
+                    SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => count(*variable),
+                },
+                Stmt::Loop { inits, .. } => {
+                    for operand in inits {
+                        count_operand(operand, &mut count);
+                    }
+                }
+                Stmt::Dup(variable) | Stmt::Drop(variable) => count(*variable),
+                Stmt::Block { .. } | Stmt::Protect { .. } => {}
+            }
+        }
+        for (_, sequence) in function.seqs.iter() {
+            match &sequence.term {
+                Term::Yield(Some(operand))
+                | Term::Return(Some(operand))
+                | Term::Fail(operand)
+                | Term::Defect(operand) => count_operand(operand, &mut count),
+                Term::Yield(None) | Term::Return(None) => {}
+                Term::Break { value, .. } => {
+                    if let Some(value) = value {
+                        count_operand(value, &mut count);
+                    }
+                }
+                Term::Recur(args) => {
+                    for operand in args {
+                        count_operand(operand, &mut count);
+                    }
+                }
+                Term::Unreachable | Term::Unwind => {}
+            }
+        }
+        drop(count);
+
+        let mut bounds: HashMap<VarId, usize> = function
+            .vars
+            .iter()
+            .filter_map(|(id, variable)| {
+                matches!(layouts.types[variable.ty], Type::String)
+                    .then_some((id, usize::from(capacity)))
+            })
+            .collect();
+        for _ in 0..=function.vars.len() {
+            let mut changed = false;
+            for (_, statement) in function.stmts.iter() {
+                let Stmt::Let {
+                    dst: Some(dst),
+                    value,
+                    ..
+                } = statement
+                else {
+                    continue;
+                };
+                if !matches!(layouts.types[function.vars[*dst].ty], Type::String) {
+                    continue;
+                }
+                let bound = match value {
+                    Value::Const(Const::String(value)) => value.len(),
+                    Value::Builtin {
+                        op: Builtin::StringTrim,
+                        args,
+                    } if args.len() == 1 => operand_string_bound(&args[0], &bounds, capacity),
+                    Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    } if args.len() == 2 => {
+                        let left = operand_string_bound(&args[0], &bounds, capacity);
+                        let right = operand_string_bound(&args[1], &bounds, capacity);
+                        if append_is_static(args) {
+                            left.saturating_add(right)
+                        } else if append_has_empty_constant(args) {
+                            left.max(right)
+                        } else {
+                            left.saturating_add(right).min(usize::from(capacity))
+                        }
+                    }
+                    _ => usize::from(capacity),
+                };
+                if bounds.get(dst).copied() != Some(bound) {
+                    bounds.insert(*dst, bound);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut roots: HashMap<VarId, VarId> = append_args.keys().map(|&id| (id, id)).collect();
+        for _ in 0..=append_args.len() {
+            let mut changed = false;
+            for (&dst, args) in &append_args {
+                let Some(Operand::Var(left)) = args.first() else {
+                    continue;
+                };
+                if uses.get(left).copied() != Some(1) || !append_args.contains_key(left) {
+                    continue;
+                }
+                let root = roots[left];
+                if roots.get(&dst).copied() != Some(root) {
+                    roots.insert(dst, root);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut root_capacities: HashMap<VarId, usize> = HashMap::new();
+        for (&variable, &root) in &roots {
+            let bound = bounds
+                .get(&variable)
+                .copied()
+                .unwrap_or(usize::from(capacity))
+                .min(usize::from(capacity));
+            root_capacities
+                .entry(root)
+                .and_modify(|current| *current = (*current).max(bound))
+                .or_insert(bound);
+        }
+        let mut declarations: Vec<_> = root_capacities
+            .iter()
+            .map(|(&root, &size)| (string_buffer_name(root), size.max(1)))
+            .collect();
+        declarations.sort_by_key(|(name, _)| name.clone());
+        let buffers = roots
+            .into_iter()
+            .map(|(variable, root)| {
+                let buffer_capacity = root_capacities[&root] as u16;
+                (variable, (root, buffer_capacity))
+            })
+            .collect();
+        Self {
+            buffers,
+            declarations,
+        }
+    }
+
+    fn buffer(&self, variable: VarId) -> Option<(String, u16)> {
+        self.buffers
+            .get(&variable)
+            .map(|(root, capacity)| (string_buffer_name(*root), *capacity))
+    }
+}
+
+fn count_operand(operand: &Operand, count: &mut impl FnMut(VarId)) {
+    if let Operand::Var(variable) = operand {
+        count(*variable);
+    }
+}
+
+fn operand_string_bound(operand: &Operand, bounds: &HashMap<VarId, usize>, fallback: u16) -> usize {
+    match operand {
+        Operand::Const(Const::String(value)) => value.len(),
+        Operand::Var(variable) => bounds
+            .get(variable)
+            .copied()
+            .unwrap_or(usize::from(fallback)),
+        _ => usize::from(fallback),
+    }
+}
+
+fn append_is_static(args: &[Operand]) -> bool {
+    matches!(
+        args,
+        [
+            Operand::Const(Const::String(_)),
+            Operand::Const(Const::String(_))
+        ]
+    )
+}
+
+fn append_has_empty_constant(args: &[Operand]) -> bool {
+    matches!(args.first(), Some(Operand::Const(Const::String(value))) if value.is_empty())
+        || matches!(args.get(1), Some(Operand::Const(Const::String(value))) if value.is_empty())
+}
+
+fn string_buffer_name(root: VarId) -> String {
+    format!("emela_string_buffer_{}", variable_name(root))
+}
+
+fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+    let mut types = layouts.types.clone();
+    type_contains_string_with_types(layouts, &mut types, ty, seen)
+}
+
+fn failure_value_contains_string(layouts: &TypeLayouts<'_>, function: &Function) -> bool {
+    function.seqs.iter().any(|(_, sequence)| {
+        let Term::Fail(operand) = &sequence.term else {
+            return false;
+        };
+        match operand {
+            Operand::Var(variable) => {
+                type_contains_string(layouts, function.vars[*variable].ty, &mut HashSet::new())
+            }
+            Operand::Const(Const::String(_)) => true,
+            Operand::Const(_) => false,
+        }
+    })
+}
+
+fn type_contains_string_with_types(
+    layouts: &TypeLayouts<'_>,
+    types: &mut TypeTable,
+    ty: TypeId,
+    seen: &mut HashSet<TypeId>,
+) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types[ty].clone() {
+        Type::String | Type::Any => true,
+        Type::Tuple(fields) => fields
+            .into_iter()
+            .any(|field| type_contains_string_with_types(layouts, types, field, seen)),
+        Type::List(element) | Type::Cell(element) => {
+            type_contains_string_with_types(layouts, types, element, seen)
+        }
+        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
+            variant.tys.iter().any(|&field| {
+                let field = types.subst(field, &args);
+                type_contains_string_with_types(layouts, types, field, seen)
+            })
+        }),
+        _ => false,
     }
 }
 
@@ -514,9 +811,11 @@ fn emit_builtin(
     dst: Option<VarId>,
     op: Builtin,
     args: &[Operand],
+    string_buffers: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let (arity, result_type) = match op {
+        Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
         Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
             (2, Type::Bool)
@@ -561,6 +860,38 @@ fn emit_builtin(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
     let expression = match op {
+        Builtin::StringAppend => {
+            if let [
+                Operand::Const(Const::String(left)),
+                Operand::Const(Const::String(right)),
+            ] = args
+            {
+                constant_expression(&Const::String(format!("{left}{right}")))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .ok_or_else(|| {
+                        invalid_flow_ir(&function.name, "String append has no C expression")
+                    })?
+            } else if let [Operand::Const(Const::String(value)), other] = args
+                && value.is_empty()
+            {
+                operand_expression(other).map_err(|variant| unsupported(&function.name, variant))?
+            } else if let [other, Operand::Const(Const::String(value))] = args
+                && value.is_empty()
+            {
+                operand_expression(other).map_err(|variant| unsupported(&function.name, variant))?
+            } else {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic String append has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_string_append({}, {}, {buffer}, UINT16_C({capacity}))",
+                    expressions[0], expressions[1]
+                )
+            }
+        }
         Builtin::StringByteSize => format!("(int32_t)(({}).length)", expressions[0]),
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
@@ -636,6 +967,38 @@ fn emit_string_ends_with_helper(writer: &mut Writer) {
     writer.end_block();
     writer.line("uint32_t offset = (uint32_t)value.length - suffix.length;");
     writer.line("return emela_emb_string_matches_at(value, suffix, offset);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_append_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity)",
+    );
+    writer.begin_block("if (left.length == UINT16_C(0))");
+    writer.line("return right;");
+    writer.end_block();
+    writer.begin_block("if (right.length == UINT16_C(0))");
+    writer.line("return left;");
+    writer.end_block();
+    writer.begin_block(
+        "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",
+    );
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.begin_block("if (left.data != buffer)");
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)left.length; ++i)");
+    writer.line("buffer[i] = left.data[i];");
+    writer.end_block();
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)right.length; ++i)");
+    writer.line("buffer[(uint32_t)left.length + i] = right.data[i];");
+    writer.end_block();
+    writer.line(
+        "return (EmelaString){ .data = buffer, .length = (uint16_t)(left.length + right.length) };",
+    );
     writer.end_block();
     writer.blank();
 }
@@ -753,6 +1116,7 @@ fn emit_statement(
     statement: &Stmt,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -805,7 +1169,7 @@ fn emit_statement(
                     }
                 }
                 Value::Builtin { op, args } => {
-                    emit_builtin(layouts, function, *dst, *op, args, writer)?;
+                    emit_builtin(layouts, function, *dst, *op, args, string_buffers, writer)?;
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
@@ -841,6 +1205,7 @@ fn emit_statement(
                             &error_name,
                             writer,
                             names,
+                            string_buffers,
                             loops,
                             blocks,
                             protects,
@@ -946,13 +1311,33 @@ fn emit_statement(
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
             writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
             emit_compound_sequence(
-                layouts, function, *then, *dst, writer, names, loops, blocks, protects, next_temp,
+                layouts,
+                function,
+                *then,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
                 next_label,
             )?;
             writer.end_block();
             writer.begin_block("else");
             emit_compound_sequence(
-                layouts, function, *else_, *dst, writer, names, loops, blocks, protects, next_temp,
+                layouts,
+                function,
+                *else_,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
                 next_label,
             )?;
             writer.end_block();
@@ -964,8 +1349,20 @@ fn emit_statement(
             cases,
             default,
         } => emit_switch(
-            layouts, function, *dst, *on, cases, *default, writer, names, loops, blocks, protects,
-            next_temp, next_label,
+            layouts,
+            function,
+            *dst,
+            *on,
+            cases,
+            *default,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         ),
         Stmt::Loop {
             dst,
@@ -973,8 +1370,20 @@ fn emit_statement(
             inits,
             body,
         } => emit_loop(
-            layouts, function, *dst, vars, inits, *body, writer, names, loops, blocks, protects,
-            next_temp, next_label,
+            layouts,
+            function,
+            *dst,
+            vars,
+            inits,
+            *body,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         ),
         Stmt::Block { dst, label, body } => {
             let exit = format!("emela_block_exit_{}", *next_label);
@@ -988,7 +1397,17 @@ fn emit_statement(
                 protect_depth: protects.len(),
             });
             let result = emit_compound_sequence(
-                layouts, function, *body, *dst, writer, names, loops, blocks, protects, next_temp,
+                layouts,
+                function,
+                *body,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
                 next_label,
             );
             let block = blocks.pop().expect("block target stack underflow");
@@ -999,8 +1418,19 @@ fn emit_statement(
             result
         }
         Stmt::Protect { dst, body, cleanup } => emit_protect(
-            layouts, function, *dst, *body, *cleanup, writer, names, loops, blocks, protects,
-            next_temp, next_label,
+            layouts,
+            function,
+            *dst,
+            *body,
+            *cleanup,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         ),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
@@ -1015,6 +1445,7 @@ fn emit_switch(
     default: Option<emela_lir::SeqId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1098,7 +1529,17 @@ fn emit_switch(
         };
         writer.begin_block(&format!("case {label}:"));
         emit_compound_sequence(
-            layouts, function, case.body, dst, writer, names, loops, blocks, protects, next_temp,
+            layouts,
+            function,
+            case.body,
+            dst,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
             next_label,
         )?;
         writer.line("break;");
@@ -1108,7 +1549,17 @@ fn emit_switch(
     if let Some(default) = default {
         writer.begin_block("default:");
         emit_compound_sequence(
-            layouts, function, default, dst, writer, names, loops, blocks, protects, next_temp,
+            layouts,
+            function,
+            default,
+            dst,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
             next_label,
         )?;
         writer.line("break;");
@@ -1138,6 +1589,7 @@ fn emit_loop(
     body: emela_lir::SeqId,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1158,7 +1610,18 @@ fn emit_loop(
     writer.begin_block("for (;;)");
     loops.push(vars.to_vec());
     let result = emit_compound_sequence(
-        layouts, function, body, dst, writer, names, loops, blocks, protects, next_temp, next_label,
+        layouts,
+        function,
+        body,
+        dst,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
     );
     loops.pop();
     result?;
@@ -1174,6 +1637,7 @@ fn emit_compound_sequence(
     dst: Option<VarId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1188,6 +1652,7 @@ fn emit_compound_sequence(
             &function.stmts[statement],
             writer,
             names,
+            string_buffers,
             loops,
             blocks,
             protects,
@@ -1242,6 +1707,7 @@ fn emit_compound_sequence(
                 protect_depth,
                 writer,
                 names,
+                string_buffers,
                 loops,
                 blocks,
                 protects,
@@ -1253,7 +1719,17 @@ fn emit_compound_sequence(
         }
         Term::Return(_) => {
             emit_pending_cleanups(
-                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             )?;
             emit_return(layouts, function, &sequence.term, writer)?;
         }
@@ -1265,7 +1741,17 @@ fn emit_compound_sequence(
                 ));
             }
             emit_pending_cleanups(
-                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             )?;
             emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
@@ -1337,6 +1823,7 @@ fn emit_call_failure_edge(
     error_name: &str,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1372,6 +1859,7 @@ fn emit_call_failure_edge(
                 protect_depth,
                 writer,
                 names,
+                string_buffers,
                 loops,
                 blocks,
                 protects,
@@ -1390,7 +1878,17 @@ fn emit_call_failure_edge(
                 ));
             }
             emit_pending_cleanups(
-                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             )?;
             writer.assign("*emela_error_out", error_name);
             emit_failure_return(layouts, function, writer);
@@ -1558,6 +2056,7 @@ fn emit_protect(
     cleanup: emela_lir::SeqId,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1568,12 +2067,33 @@ fn emit_protect(
     writer.begin_block("");
     protects.push(ProtectTarget { cleanup });
     let body_result = emit_compound_sequence(
-        layouts, function, body, dst, writer, names, loops, blocks, protects, next_temp, next_label,
+        layouts,
+        function,
+        body,
+        dst,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
     );
     protects.pop();
     let cleanup_result = if body_result.is_ok() && body_yields {
         emit_compound_sequence(
-            layouts, function, cleanup, None, writer, names, loops, blocks, protects, next_temp,
+            layouts,
+            function,
+            cleanup,
+            None,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
             next_label,
         )
     } else {
@@ -1590,6 +2110,7 @@ fn emit_pending_cleanups(
     keep_depth: usize,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
     protects: &mut Vec<ProtectTarget>,
@@ -1612,6 +2133,7 @@ fn emit_pending_cleanups(
             None,
             writer,
             names,
+            string_buffers,
             loops,
             blocks,
             protects,
@@ -2205,6 +2727,26 @@ fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin
                 )
             })
     })
+}
+
+fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::StringAppend,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 2 && !append_is_static(args) && !append_has_empty_constant(args)
+                )
+            })
+        })
 }
 
 fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'static str> {

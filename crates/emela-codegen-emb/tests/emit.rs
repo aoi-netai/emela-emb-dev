@@ -216,6 +216,189 @@ fn string_byte_size_counts_utf8_bytes_from_a_view() {
 }
 
 #[test]
+fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_append_contains");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let first = builder.assign(
+        "first",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("X".to_owned()).into()],
+        },
+    );
+    let second = builder.assign(
+        "second",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![first.into(), Const::String("Y".to_owned()).into()],
+        },
+    );
+    let result = builder.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![second.into(), Const::String("éXY".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit dynamic String.append");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert_eq!(source.matches("char emela_string_buffer_").count(), 1);
+    assert!(source.contains("[256];"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"a\\xc3\\xa9\", .length = UINT16_C(3) }; return emela_export_string_append_contains_0(input) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn string_append_capacity_overflow_uses_the_board_defect_hook() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "append_one");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let appended = builder.assign(
+        "appended",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("d".to_owned()).into()],
+        },
+    );
+    let size = builder.assign(
+        "size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![appended.into()],
+        },
+    );
+    builder.term(Term::Return(Some(size.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_string_capacity(3))
+        .expect("emit String.append capacity check");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_STRING_CAPACITY && length == UINT16_C(24) && memcmp(message, \"string capacity exceeded\", length) == 0) exit(0); exit(1); }\nint main(void) { EmelaString input = { .data = \"abc\", .length = UINT16_C(3) }; (void)emela_export_append_one_0(input); return 2; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_string_append_in_const_functions() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "CONCATENATED");
+    builder
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    let appended = builder.assign(
+        "appended",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![
+                Const::String("a".to_owned()).into(),
+                Const::String("é".to_owned()).into(),
+            ],
+        },
+    );
+    builder.term(Term::Return(Some(appended.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate const String.append");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(!source.contains("emela_emb_string_append"));
+    compile_and_run(
+        output,
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_CONCATENATED_0(); return value.length == UINT16_C(3) && memcmp(value.data, \"a\\xc3\\xa9\", 3) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn rejects_dynamic_string_append_that_returns_its_stack_buffer() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "return_appended");
+    builder.set_ret(TypeId::STRING).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let appended = builder.assign(
+        "appended",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("x".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(appended.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default()).expect_err("reject an escaping buffer");
+    assert!(errors.iter().any(|error| {
+        error.kind == ErrorKind::Unsupported && error.message.contains("outlive its function stack")
+    }));
+}
+
+#[test]
+fn allows_a_local_string_buffer_in_a_scalar_fallible_function() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "append_size_fallible");
+    builder.set_ret(TypeId::INT).set_exported().set_fails();
+    let input = builder.param("input", TypeId::STRING);
+    let appended = builder.assign(
+        "appended",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("x".to_owned()).into()],
+        },
+    );
+    let size = builder.assign(
+        "size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![appended.into()],
+        },
+    );
+    builder.term(Term::Return(Some(size.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default())
+        .expect("emit a non-escaping buffer in a fallible function");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"abc\", .length = UINT16_C(3) }; return emela_export_append_size_fallible_0(input) == INT32_C(4) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn string_search_predicates_match_utf8_substrings_without_copying() {
     let core = emela_core::Module::new();
     let mut contains = FnBuilder::new(&core, "string_contains");

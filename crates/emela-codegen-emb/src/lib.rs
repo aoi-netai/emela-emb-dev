@@ -9,11 +9,36 @@ mod writer;
 
 /// Configuration for embedded C generation.
 ///
-/// The initial Flow IR handoff does not need target-specific settings yet. This type is kept
-/// non-exhaustive so board and resource options can be added without requiring struct literals.
-#[derive(Debug, Clone, Default)]
+/// Configuration for board-independent generation and fixed embedded resource limits.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct Options {}
+pub struct Options {
+    string_capacity: u16,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            string_capacity: 256,
+        }
+    }
+}
+
+impl Options {
+    /// Sets the maximum size in bytes for a dynamically generated String buffer.
+    ///
+    /// Values from 1 through 512 are accepted. The generated code reports a String capacity
+    /// defect if an operation exceeds this limit.
+    pub fn with_string_capacity(mut self, bytes: u16) -> Self {
+        self.string_capacity = bytes;
+        self
+    }
+
+    /// Returns the maximum configured size in bytes for a dynamically generated String buffer.
+    pub fn string_capacity(&self) -> u16 {
+        self.string_capacity
+    }
+}
 
 /// Generated files returned by the backend.
 ///
@@ -34,7 +59,7 @@ pub struct GeneratedFile {
     pub contents: String,
 }
 
-/// The stage that failed while preparing Flow IR for embedded code generation.
+/// The stage that failed while compiling Flow IR to embedded C.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
     /// The Core module could not be verified after monomorphization.
@@ -45,6 +70,8 @@ pub enum ErrorKind {
     InvalidFlowIr,
     /// A valid Flow IR construct is not implemented by this backend yet.
     Unsupported,
+    /// Backend options are outside their documented range.
+    InvalidOptions,
 }
 
 /// An error encountered while preparing a module for embedded code generation.

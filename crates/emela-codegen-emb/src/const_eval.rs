@@ -167,6 +167,9 @@ fn evaluate_value(
 
 fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str> {
     match (op, args.as_slice()) {
+        (Builtin::StringAppend, [Const::String(left), Const::String(right)]) => {
+            Ok(Const::String(format!("{left}{right}")))
+        }
         (Builtin::StringByteSize, [Const::String(value)]) => i32::try_from(value.len())
             .map(Const::Int)
             .map_err(|_| "String byte size exceeds Int range"),
