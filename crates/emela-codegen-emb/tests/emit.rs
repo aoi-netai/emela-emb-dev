@@ -285,6 +285,73 @@ fn reads_generic_enum_fields_from_inline_values() {
 }
 
 #[test]
+fn reads_tags_from_payload_and_nullary_enums() {
+    let mut core = emela_core::Module::new();
+    let payload_id = core.add_enum(EnumDef {
+        name: "Maybe".to_owned(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![TypeId::INT64]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let payload_ty = core.enum_type(payload_id, Vec::new());
+    let nullary_id = core.add_enum(EnumDef {
+        name: "Color".to_owned(),
+        params: 0,
+        variants: vec![VariantDef::unit("Red"), VariantDef::unit("Blue")],
+        error: false,
+        external: false,
+    });
+    let nullary_ty = core.enum_type(nullary_id, Vec::new());
+
+    let mut payload_builder = FnBuilder::new(&core, "payload_tag");
+    payload_builder.set_ret(TypeId::INT).set_exported();
+    let payload = payload_builder.assign(
+        "payload",
+        payload_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: payload_id,
+                variant: 1,
+            },
+            args: Vec::new(),
+        },
+    );
+    let payload_tag = payload_builder.assign("tag", TypeId::INT, Value::Tag(payload));
+    payload_builder.term(Term::Return(Some(Operand::Var(payload_tag))));
+    let payload_function = payload_builder.finish();
+
+    let mut nullary_builder = FnBuilder::new(&core, "nullary_tag");
+    nullary_builder.set_ret(TypeId::INT).set_exported();
+    let nullary = nullary_builder.assign(
+        "nullary",
+        nullary_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: nullary_id,
+                variant: 1,
+            },
+            args: Vec::new(),
+        },
+    );
+    let nullary_tag = nullary_builder.assign("tag", TypeId::INT, Value::Tag(nullary));
+    nullary_builder.term(Term::Return(Some(Operand::Var(nullary_tag))));
+    let nullary_function = nullary_builder.finish();
+
+    let mut flow = Module::new(core);
+    flow.add(payload_function);
+    flow.add(nullary_function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit enum tags");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_payload_tag_0() == INT32_C(1) && emela_export_nullary_tag_1() == INT32_C(1) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
