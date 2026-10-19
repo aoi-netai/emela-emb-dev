@@ -332,6 +332,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_int_string(flow, &emitted_functions) {
         emit_int_to_string_helper(&mut source);
     }
+    if has_runtime_int_parse(flow, &emitted_functions) {
+        emit_int_parse_helper(&mut source);
+    }
 
     for (id, function) in flow
         .functions
@@ -1289,6 +1292,7 @@ fn emit_builtin(
         }
         Builtin::StringTrim => (1, Type::String),
         Builtin::IntToString => (1, Type::String),
+        Builtin::IntParse => (1, Type::Int),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
         Builtin::IntBitNot => (1, Type::Int),
         Builtin::IntCheckedAdd => (2, Type::Int),
@@ -1330,6 +1334,9 @@ fn emit_builtin(
         Builtin::IntToString => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntParse => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             operand_is_int64(layouts, function, &args[0])
                 && operand_is_int(layouts, function, &args[1])
@@ -1361,7 +1368,7 @@ fn emit_builtin(
             &format!("builtin {op:?} has no result destination"),
         ));
     };
-    let result_matches = if op == Builtin::IntCheckedAdd {
+    let result_matches = if matches!(op, Builtin::IntCheckedAdd | Builtin::IntParse) {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::Int))
     } else {
@@ -1406,6 +1413,37 @@ fn emit_builtin(
         writer.begin_block("else");
         writer.assign(&variable_name(dst), &some);
         writer.end_block();
+        return Ok(());
+    }
+    if op == Builtin::IntParse {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        let parsed_name = format!("{}_parsed", variable_name(dst));
+        let some = option_variant_expression(layouts, function, ty, "Some", Some(&parsed_name))?;
+        if let Operand::Const(Const::String(value)) = &args[0] {
+            let expression = match value.parse::<i32>() {
+                Ok(parsed) => option_variant_expression(
+                    layouts,
+                    function,
+                    ty,
+                    "Some",
+                    Some(&int32_literal(parsed)),
+                )?,
+                Err(_) => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            writer.decl("int32_t", &parsed_name, None);
+            writer.begin_block(&format!(
+                "if (emela_emb_int_parse({}, &{parsed_name}))",
+                expressions[0]
+            ));
+            writer.assign(&variable_name(dst), &some);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+        }
         return Ok(());
     }
     if matches!(
@@ -1760,6 +1798,50 @@ fn emit_int_to_string_helper(writer: &mut Writer) {
     writer.line("buffer[0] = '-';");
     writer.end_block();
     writer.line("return (EmelaString){ .data = buffer, .length = (uint16_t)length };");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_int_parse_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int emela_emb_int_parse(EmelaString value, int32_t *result)");
+    writer.begin_block("if (value.length == UINT16_C(0))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("uint32_t index = UINT32_C(0);");
+    writer.line("int negative = 0;");
+    writer.line("const uint8_t first = (uint8_t)value.data[index];");
+    writer.begin_block("if (first == UINT8_C(0x2b) || first == UINT8_C(0x2d))");
+    writer.line("negative = first == UINT8_C(0x2d);");
+    writer.line("++index;");
+    writer.end_block();
+    writer.begin_block("if (index >= (uint32_t)value.length)");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("uint64_t limit = negative ? UINT64_C(2147483648) : UINT64_C(2147483647);");
+    writer.line("uint64_t magnitude = UINT64_C(0);");
+    writer.begin_block("for (; index < (uint32_t)value.length; ++index)");
+    writer.line("const uint8_t byte = (uint8_t)value.data[index];");
+    writer.begin_block("if (byte < UINT8_C(0x30) || byte > UINT8_C(0x39))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("const uint64_t digit = (uint64_t)(byte - UINT8_C(0x30));");
+    writer.begin_block("if (magnitude > (limit - digit) / UINT64_C(10))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("magnitude = magnitude * UINT64_C(10) + digit;");
+    writer.end_block();
+    writer.begin_block("if (negative && magnitude == UINT64_C(2147483648))");
+    writer.line("*result = INT32_MIN;");
+    writer.end_block();
+    writer.line("else if (negative)");
+    writer.begin_block("");
+    writer.line("*result = -(int32_t)magnitude;");
+    writer.end_block();
+    writer.line("else");
+    writer.begin_block("");
+    writer.line("*result = (int32_t)magnitude;");
+    writer.end_block();
+    writer.line("return 1;");
     writer.end_block();
     writer.blank();
 }
@@ -3677,6 +3759,26 @@ fn has_runtime_int_string(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> 
                     Stmt::Let {
                         value: Value::Builtin {
                             op: Builtin::IntToString | Builtin::Int64ToString,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_int_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::IntParse,
                             args,
                         },
                         ..

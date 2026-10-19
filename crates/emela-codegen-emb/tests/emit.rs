@@ -450,6 +450,39 @@ fn int_checked_add_returns_some_or_none_at_int_boundaries() {
 }
 
 #[test]
+fn int_parse_accepts_decimal_signs_and_rejects_invalid_or_overflowing_text() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let option = flow.core.option_enum();
+    let option_int = flow.core.enum_type(option, vec![TypeId::INT]);
+    let mut builder = FnBuilder::new(&flow.core, "int_parse");
+    builder.set_ret(option_int).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let result = builder.assign(
+        "result",
+        option_int,
+        Value::Builtin {
+            op: Builtin::IntParse,
+            args: vec![input.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int.parse");
+    let c_type = format!("emela_type_{}", option_int.index());
+    let harness = format!(
+        "#include \"emela_embedded.h\"\nstatic EmelaString text(const char *data, uint16_t length) {{ return (EmelaString){{ .data = data, .length = length }}; }}\nint main(void) {{ {c_type} value = emela_export_int_parse_0(text(\"+2147483647\", 11)); if (value.tag != 0 || value.payload.v0.f0 != INT32_MAX) return 1; value = emela_export_int_parse_0(text(\"-2147483648\", 11)); if (value.tag != 0 || value.payload.v0.f0 != INT32_MIN) return 2; value = emela_export_int_parse_0(text(\"2147483648\", 10)); if (value.tag != INT32_C({})) return 3; value = emela_export_int_parse_0(text(\" 1\", 2)); if (value.tag != INT32_C({})) return 4; value = emela_export_int_parse_0(text(\"+\", 1)); if (value.tag != INT32_C({})) return 5; value = emela_export_int_parse_0(text(\"12x\", 3)); if (value.tag != INT32_C({})) return 6; value = emela_export_int_parse_0(text(\"\", 0)); if (value.tag != INT32_C({})) return 7; return 0; }}\n",
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_NONE,
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
 fn int_to_string_uses_small_scratch_and_matches_signed_decimal_output() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "int_to_string_matches");
