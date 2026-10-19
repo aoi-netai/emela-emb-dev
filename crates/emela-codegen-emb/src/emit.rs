@@ -369,6 +369,12 @@ fn emit_statement(
             cases,
             default,
         } => emit_switch(layouts, function, *dst, *on, cases, *default, writer, names),
+        Stmt::Loop {
+            dst,
+            vars,
+            inits,
+            body,
+        } => emit_loop(layouts, function, *dst, vars, inits, *body, writer, names),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
 }
@@ -483,6 +489,34 @@ fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
         kind: ErrorKind::InvalidFlowIr,
         message: format!("invalid Flow IR in function `{function}`: {reason}"),
     }]
+}
+
+fn emit_loop(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    vars: &[VarId],
+    inits: &[Operand],
+    body: emela_lir::SeqId,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+) -> Result<(), Vec<Error>> {
+    if vars.len() != inits.len() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "loop variable and initializer counts differ",
+        ));
+    }
+    for (&variable, initial) in vars.iter().zip(inits) {
+        let expression =
+            operand_expression(initial).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.assign(&variable_name(variable), &expression);
+    }
+    writer.begin_block("for (;;)");
+    emit_compound_sequence(layouts, function, body, dst, writer, names)?;
+    writer.line("break;");
+    writer.end_block();
+    Ok(())
 }
 
 fn emit_compound_sequence(

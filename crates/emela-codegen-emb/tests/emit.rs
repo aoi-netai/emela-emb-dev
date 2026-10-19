@@ -565,6 +565,31 @@ fn emits_and_runs_switches_on_nullary_enum_representations() {
 }
 
 #[test]
+fn emits_and_runs_a_loop_with_an_initial_value_and_yield() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "loop_value");
+    builder.set_ret(TypeId::INT).set_exported();
+    let state = builder.var("state", TypeId::INT);
+    let result = builder.var("result", TypeId::INT);
+    builder.loop_(
+        Some(result),
+        vec![(state, Operand::Const(Const::Int(97)))],
+        |builder| {
+            builder.term(Term::Yield(Some(Operand::Var(state))));
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit a value-yielding loop");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_loop_value_0() == INT32_C(97) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
