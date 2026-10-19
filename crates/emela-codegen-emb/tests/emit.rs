@@ -255,6 +255,45 @@ fn int_bitwise_builtins_match_signed_32_bit_semantics() {
 }
 
 #[test]
+fn int64_bitwise_builtins_match_signed_64_bit_semantics() {
+    let mut flow = Module::new(emela_core::Module::new());
+    for (name, op) in [
+        ("int64_bit_and", Builtin::Int64BitAnd),
+        ("int64_bit_or", Builtin::Int64BitOr),
+        ("int64_bit_xor", Builtin::Int64BitXor),
+        ("int64_bit_not", Builtin::Int64BitNot),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(TypeId::INT64).set_exported();
+        let lhs = builder.param("lhs", TypeId::INT64);
+        let args = if op == Builtin::Int64BitNot {
+            vec![lhs.into()]
+        } else {
+            vec![lhs.into(), builder.param("rhs", TypeId::INT64).into()]
+        };
+        let result = builder.assign("result", TypeId::INT64, Value::Builtin { op, args });
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int64 bitwise builtins");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains(" & "));
+    assert!(source.contains(" | "));
+    assert!(source.contains(" ^ "));
+    assert!(source.contains("~"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_int64_bit_and_0(INT64_C(-1), INT64_C(0x123456789)) == INT64_C(0x123456789) && emela_export_int64_bit_or_1(INT64_C(0x4000000000000000), INT64_C(1)) == INT64_C(0x4000000000000001) && emela_export_int64_bit_xor_2(INT64_C(-1), INT64_C(-1)) == INT64_C(0) && emela_export_int64_bit_not_3(INT64_C(0)) == INT64_C(-1) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");

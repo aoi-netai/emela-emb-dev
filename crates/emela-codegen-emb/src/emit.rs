@@ -1109,6 +1109,16 @@ fn operand_is_int(layouts: &TypeLayouts<'_>, function: &Function, operand: &Oper
     }
 }
 
+fn operand_is_int64(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::Int64(_)) => true,
+        Operand::Var(variable) => {
+            matches!(layouts.types[function.vars[*variable].ty], Type::Int64)
+        }
+        _ => false,
+    }
+}
+
 fn emit_builtin(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1127,6 +1137,8 @@ fn emit_builtin(
         Builtin::StringTrim => (1, Type::String),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
         Builtin::IntBitNot => (1, Type::Int),
+        Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
+        Builtin::Int64BitNot => (1, Type::Int64),
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
     };
     if args.len() != arity {
@@ -1142,6 +1154,12 @@ fn emit_builtin(
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor | Builtin::IntBitNot => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::Int64BitAnd
+        | Builtin::Int64BitOr
+        | Builtin::Int64BitXor
+        | Builtin::Int64BitNot => args
+            .iter()
+            .all(|operand| operand_is_int64(layouts, function, operand)),
         _ => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1208,6 +1226,10 @@ fn emit_builtin(
         Builtin::IntBitOr => format!("({} | {})", expressions[0], expressions[1]),
         Builtin::IntBitXor => format!("({} ^ {})", expressions[0], expressions[1]),
         Builtin::IntBitNot => format!("(~{})", expressions[0]),
+        Builtin::Int64BitAnd => format!("({} & {})", expressions[0], expressions[1]),
+        Builtin::Int64BitOr => format!("({} | {})", expressions[0], expressions[1]),
+        Builtin::Int64BitXor => format!("({} ^ {})", expressions[0], expressions[1]),
+        Builtin::Int64BitNot => format!("(~{})", expressions[0]),
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
             expressions[0], expressions[1]
