@@ -92,6 +92,34 @@ fn emits_empty_list_and_checks_list_emptiness() {
 }
 
 #[test]
+fn requires_fixed_heap_capacity_for_nonempty_list_values() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "first_item");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default()).expect_err("require a configured heap");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+    assert_eq!(Options::default().with_heap_bytes(512).heap_bytes(), 512);
+}
+
+#[test]
 fn statically_evaluates_const_arithmetic() {
     let core = emela_core::Module::new();
     let mut constant = FnBuilder::new(&core, "ANSWER");

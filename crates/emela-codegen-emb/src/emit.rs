@@ -25,6 +25,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     let emitted_functions = runtime_reachable(flow);
+    if options.heap_bytes() == 0
+        && let Some((_, function)) = flow.functions.iter().find(|(id, function)| {
+            emitted_functions.contains(id) && function_needs_list_heap(function)
+        })
+    {
+        return Err(unsupported(
+            &function.name,
+            "heap-backed List operations with heap_bytes = 0; configure Options::with_heap_bytes",
+        ));
+    }
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let mut const_outcomes = HashMap::new();
     for (id, function) in flow
@@ -1201,6 +1211,24 @@ fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
         }
     }
     reachable
+}
+
+fn function_needs_list_heap(function: &Function) -> bool {
+    function.stmts.iter().any(|(_, statement)| match statement {
+        Stmt::Let {
+            value: Value::List { tail: Some(_), .. },
+            ..
+        } => true,
+        Stmt::Let {
+            value: Value::List { elems, tail: None },
+            ..
+        } => !elems.is_empty(),
+        Stmt::Let {
+            value: Value::ListHead(_) | Value::ListTail(_),
+            ..
+        } => true,
+        _ => false,
+    })
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {

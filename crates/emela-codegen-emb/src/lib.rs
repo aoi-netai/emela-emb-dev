@@ -14,12 +14,14 @@ mod writer;
 #[non_exhaustive]
 pub struct Options {
     string_capacity: u16,
+    heap_bytes: u32,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             string_capacity: 256,
+            heap_bytes: 0,
         }
     }
 }
@@ -37,6 +39,19 @@ impl Options {
     /// Returns the maximum configured size in bytes for a dynamically generated String buffer.
     pub fn string_capacity(&self) -> u16 {
         self.string_capacity
+    }
+
+    /// Sets the total byte capacity reserved for the generated fixed heap.
+    ///
+    /// A capacity of zero disables heap-backed values. The default is zero.
+    pub fn with_heap_bytes(mut self, bytes: u32) -> Self {
+        self.heap_bytes = bytes;
+        self
+    }
+
+    /// Returns the configured byte capacity for the generated fixed heap.
+    pub fn heap_bytes(&self) -> u32 {
+        self.heap_bytes
     }
 }
 
