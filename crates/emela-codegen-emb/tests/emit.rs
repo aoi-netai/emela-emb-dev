@@ -869,6 +869,99 @@ fn allocates_and_releases_lists_in_the_fixed_heap() {
 }
 
 #[test]
+fn string_code_points_builds_and_releases_a_list_in_code_point_order() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let code_points = {
+        let mut builder = FnBuilder::new(&core, "string_code_points");
+        builder.set_ret(TypeId::INT).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let points = builder.assign(
+            "points",
+            list_int,
+            Value::Builtin {
+                op: Builtin::StringCodePoints,
+                args: vec![input.into()],
+            },
+        );
+        let first = builder.assign("first", TypeId::INT, Value::ListHead(points));
+        let rest = builder.assign("rest", list_int, Value::ListTail(points));
+        let second = builder.assign("second", TypeId::INT, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_int, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::INT, Value::ListHead(rest));
+
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first.into(), Const::Int(1_000_000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second.into(), Const::Int(100).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let packed = builder.assign(
+            "packed",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), third.into()],
+            },
+        );
+        builder.term(Term::Return(Some(packed.into())));
+        builder.finish()
+    };
+    let empty_code_points = {
+        let mut builder = FnBuilder::new(&core, "empty_code_points");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let points = builder.assign(
+            "points",
+            list_int,
+            Value::Builtin {
+                op: Builtin::StringCodePoints,
+                args: vec![input.into()],
+            },
+        );
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(points));
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(code_points);
+    flow.add(empty_code_points);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit String.code_points");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == UINT16_C(20) && message[0] == 'i' ? 0 : 3); }\nint main(void) { EmelaString value = { .data = \"A\\xe2\\x82\\xac\\xf0\\x90\\x80\\x80\", .length = UINT16_C(8) }; for (int i = 0; i < 1000; ++i) if (emela_export_string_code_points_0(value) != INT32_C(65901936)) return 1; EmelaString empty = { .data = 0, .length = UINT16_C(0) }; if (emela_export_empty_code_points_1(empty) != INT32_C(1)) return 2; EmelaString malformed = { .data = \"\\xff\", .length = UINT16_C(1) }; (void)emela_export_string_code_points_0(malformed); return 4; }\n",
+    );
+}
+
+#[test]
 fn fixed_heap_exhaustion_calls_the_board_defect_hook() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));

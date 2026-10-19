@@ -385,6 +385,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
         emit_string_ends_with_helper(&mut source);
     }
+    if has_builtin(
+        flow,
+        &emitted_functions,
+        &[Builtin::StringTrim, Builtin::StringCodePoints],
+    ) {
+        emit_utf8_decode_helper(&mut source);
+    }
     if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
         emit_string_trim_helper(&mut source);
     }
@@ -1657,6 +1664,7 @@ fn emit_builtin(
     let (arity, result_type) = match op {
         Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
+        Builtin::StringCodePoints => (1, Type::List(TypeId::INT)),
         Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
             (2, Type::Bool)
         }
@@ -1722,6 +1730,7 @@ fn emit_builtin(
         Builtin::StringFromCodePoint => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::StringCodePoints => operand_is_string(layouts, function, &args[0]),
         Builtin::IntParse => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1765,6 +1774,11 @@ fn emit_builtin(
     } else if op == Builtin::StringFromCodePoint {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::String))
+    } else if op == Builtin::StringCodePoints {
+        matches!(
+            layouts.types[function.vars[dst].ty],
+            Type::List(TypeId::INT)
+        )
     } else {
         layouts.types[function.vars[dst].ty] == result_type
     };
@@ -1780,6 +1794,10 @@ fn emit_builtin(
         .map(operand_expression)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
+    if op == Builtin::StringCodePoints {
+        emit_string_code_points(layouts, function, dst, &expressions[0], writer)?;
+        return Ok(());
+    }
     if op == Builtin::IntCheckedAdd {
         let ty = function.vars[dst].ty;
         let sum_name = format!("{}_checked_sum", variable_name(dst));
@@ -2460,7 +2478,7 @@ fn emit_string_show_helpers(writer: &mut Writer) {
     writer.blank();
 }
 
-fn emit_string_trim_helper(writer: &mut Writer) {
+fn emit_utf8_decode_helper(writer: &mut Writer) {
     writer.begin_block(
         "static inline int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
     );
@@ -2518,7 +2536,9 @@ fn emit_string_trim_helper(writer: &mut Writer) {
     writer.line("return INT32_C(1);");
     writer.end_block();
     writer.blank();
+}
 
+fn emit_string_trim_helper(writer: &mut Writer) {
     writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
     writer.line(
         "return (code_point >= UINT32_C(0x0009) && code_point <= UINT32_C(0x000d)) || code_point == UINT32_C(0x0020) || code_point == UINT32_C(0x0085) || code_point == UINT32_C(0x00a0) || code_point == UINT32_C(0x1680) || (code_point >= UINT32_C(0x2000) && code_point <= UINT32_C(0x200a)) || code_point == UINT32_C(0x2028) || code_point == UINT32_C(0x2029) || code_point == UINT32_C(0x202f) || code_point == UINT32_C(0x205f) || code_point == UINT32_C(0x3000);",
@@ -3204,6 +3224,70 @@ fn emit_list_value(
         writer.assign(&temp, &node_temp);
     }
     writer.assign(&variable_name(dst), &temp);
+    Ok(())
+}
+
+fn emit_string_code_points(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::INT)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringCodePoints destination is not List[Int]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_code_points_input_{suffix}");
+    let offset_name = format!("emela_code_points_offset_{suffix}");
+    let code_point_name = format!("emela_code_points_value_{suffix}");
+    let width_name = format!("emela_code_points_width_{suffix}");
+    let head_name = format!("emela_code_points_head_{suffix}");
+    let last_name = format!("emela_code_points_last_{suffix}");
+    let node_name = format!("emela_code_points_node_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &code_point_name, None);
+    writer.decl("uint32_t", &width_name, None);
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_utf8_decode({input_name}, {offset_name}, &{code_point_name}, &{width_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(
+        &node_name,
+        &format!("({list_node} *)emela_heap_allocate(sizeof({list_node}), UINT32_C({list_kind}))"),
+    );
+    writer.assign(
+        &format!("{node_name}->head"),
+        &format!("(int32_t){code_point_name}"),
+    );
+    writer.assign(&format!("{node_name}->tail"), "NULL");
+    writer.begin_block(&format!("if ({last_name} == NULL)"));
+    writer.assign(&head_name, &node_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.assign(&format!("{last_name}->tail"), &node_name);
+    writer.end_block();
+    writer.assign(&last_name, &node_name);
+    writer.line(&format!("{offset_name} += {width_name};"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
     Ok(())
 }
 
