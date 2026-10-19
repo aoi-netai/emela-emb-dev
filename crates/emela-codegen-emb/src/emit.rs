@@ -25,11 +25,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     let emitted_functions = runtime_reachable(flow);
-    if options.heap_bytes() == 0
-        && let Some((_, function)) = flow.functions.iter().find(|(id, function)| {
-            emitted_functions.contains(id) && function_needs_list_heap(function)
-        })
-    {
+    let heap_required = flow.functions.iter().any(|(id, function)| {
+        emitted_functions.contains(&id) && function_needs_list_heap(function, &flow.core.types)
+    });
+    if options.heap_bytes() == 0 && heap_required {
+        let (_, function) = flow
+            .functions
+            .iter()
+            .find(|(id, function)| {
+                emitted_functions.contains(id)
+                    && function_needs_list_heap(function, &flow.core.types)
+            })
+            .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
             "heap-backed List operations with heap_bytes = 0; configure Options::with_heap_bytes",
@@ -133,6 +140,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if main_entry.is_some() {
         header.line("void emela_embedded_start(void);");
     }
+    if heap_required {
+        header.line("/* Releases an owned List value returned by this module. */");
+        header.line("void emela_embedded_release(void *value);");
+    }
 
     header.blank();
     header.line("#endif");
@@ -165,22 +176,26 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_prim(
-        flow,
-        &emitted_functions,
-        PrimTy::I32,
-        &[PrimOp::Div, PrimOp::Rem],
-    ) || has_prim(
-        flow,
-        &emitted_functions,
-        PrimTy::I64,
-        &[PrimOp::Div, PrimOp::Rem],
-    ) || const_outcomes.values().any(|outcome| {
-        matches!(
-            outcome,
-            ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+    let needs_defect_hook = heap_required
+        || has_prim(
+            flow,
+            &emitted_functions,
+            PrimTy::I32,
+            &[PrimOp::Div, PrimOp::Rem],
         )
-    }) || has_runtime_string_append(flow, &emitted_functions)
+        || has_prim(
+            flow,
+            &emitted_functions,
+            PrimTy::I64,
+            &[PrimOp::Div, PrimOp::Rem],
+        )
+        || const_outcomes.values().any(|outcome| {
+            matches!(
+                outcome,
+                ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+            )
+        })
+        || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
         || has_runtime_int_string(flow, &emitted_functions)
         || has_runtime_string_from_code_point(flow, &emitted_functions)
@@ -250,6 +265,21 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
     source.blank();
+    if heap_required {
+        layouts.emit_list_node_declarations(&mut source);
+        crate::heap::emit_runtime(&mut source, options.heap_bytes());
+        let list_kinds = layouts
+            .list_types
+            .iter()
+            .map(|&ty| (layouts.list_node_name(ty), layouts.list_index(ty)))
+            .collect::<Vec<_>>();
+        crate::heap::emit_destroy_switch(&mut source, &list_kinds);
+        crate::heap::emit_public_release(&mut source);
+    } else {
+        source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
+        source.line("static inline void emela_heap_release(void *value) { (void)value; }");
+        source.blank();
+    }
     let has_int_shift = has_builtin(
         flow,
         &emitted_functions,
@@ -558,11 +588,68 @@ fn emit_local_declarations(
 ) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
-            writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
+            if layouts.is_managed_list(variable.ty) {
+                writer.decl(
+                    &layouts.c_type(variable.ty),
+                    &variable_name(id),
+                    Some("NULL"),
+                );
+                writer.decl("int", &owned_variable_name(id), Some("INT32_C(0)"));
+            } else {
+                writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
+            }
         }
     }
     for (name, capacity) in &string_buffers.declarations {
         writer.line(&format!("char {name}[{capacity}];"));
+    }
+}
+
+fn emit_release_if_owned(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    variable: VarId,
+    writer: &mut Writer,
+) {
+    if !layouts.is_managed_list(function.vars[variable].ty) {
+        return;
+    }
+    writer.begin_block(&format!(
+        "if ({} != INT32_C(0))",
+        owned_variable_name(variable)
+    ));
+    writer.line(&format!("emela_heap_release({});", variable_name(variable)));
+    writer.end_block();
+    writer.assign(&owned_variable_name(variable), "INT32_C(0)");
+}
+
+fn emit_retain_operand(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    operand: &Operand,
+    writer: &mut Writer,
+) {
+    if let Operand::Var(variable) = operand
+        && layouts.is_managed_list(function.vars[*variable].ty)
+    {
+        writer.line(&format!("emela_heap_retain({});", variable_name(*variable)));
+    }
+}
+
+fn emit_owned_cleanup(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    except: Option<VarId>,
+    writer: &mut Writer,
+) {
+    for (variable, data) in function.vars.iter() {
+        if except == Some(variable)
+            || function.params.contains(&variable)
+            || !layouts.is_managed_list(data.ty)
+        {
+            continue;
+        }
+        emit_release_if_owned(layouts, function, variable, writer);
     }
 }
 
@@ -1213,22 +1300,60 @@ fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     reachable
 }
 
-fn function_needs_list_heap(function: &Function) -> bool {
-    function.stmts.iter().any(|(_, statement)| match statement {
-        Stmt::Let {
-            value: Value::List { tail: Some(_), .. },
+fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {
+    let mut known_empty = HashSet::new();
+    for (_, statement) in function.stmts.iter() {
+        let Stmt::Let {
+            dst: Some(dst),
+            value: Value::List { elems, tail },
             ..
-        } => true,
+        } = statement
+        else {
+            continue;
+        };
+        if !elems.is_empty() {
+            continue;
+        }
+        match tail {
+            None => {
+                known_empty.insert(*dst);
+            }
+            Some(Operand::Var(tail)) if known_empty.contains(tail) => {
+                known_empty.insert(*dst);
+            }
+            _ => {}
+        }
+    }
+
+    let statement_needs_heap = function.stmts.iter().any(|(_, statement)| match statement {
+        Stmt::Let {
+            value:
+                Value::List {
+                    elems,
+                    tail: Some(tail),
+                },
+            ..
+        } if !elems.is_empty()
+            || !matches!(tail, Operand::Var(variable) if known_empty.contains(variable)) =>
+        {
+            true
+        }
         Stmt::Let {
             value: Value::List { elems, tail: None },
             ..
         } => !elems.is_empty(),
-        Stmt::Let {
-            value: Value::ListHead(_) | Value::ListTail(_),
-            ..
-        } => true,
         _ => false,
-    })
+    });
+    let returns_managed_alias = matches!(types[function.ret], Type::List(_))
+        && function.seqs.iter().any(|(_, sequence)| {
+            matches!(
+                sequence.term,
+                Term::Return(Some(Operand::Var(variable)))
+                    if function.vars[variable].ty == function.ret
+                        && !known_empty.contains(&variable)
+            )
+        });
+    statement_needs_heap || returns_managed_alias
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -2303,6 +2428,57 @@ fn emit_statement(
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
+    let managed_dst = statement
+        .dst()
+        .filter(|&dst| layouts.is_managed_list(function.vars[dst].ty));
+    if let Some(dst) = managed_dst {
+        emit_release_if_owned(layouts, function, dst, writer);
+    }
+    let retain_result = match statement {
+        Stmt::Let {
+            value: Value::List {
+                elems,
+                tail: Some(_),
+            },
+            ..
+        } => elems.is_empty(),
+        _ => false,
+    };
+    emit_statement_inner(
+        layouts,
+        function,
+        statement,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
+    )?;
+    if let Some(dst) = managed_dst {
+        if retain_result {
+            writer.line(&format!("emela_heap_retain({});", variable_name(dst)));
+        }
+        writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+    }
+    Ok(())
+}
+
+fn emit_statement_inner(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    statement: &Stmt,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
     match statement {
         Stmt::Let {
             dst,
@@ -2424,18 +2600,15 @@ fn emit_statement(
                 Value::TupleGet { base, index } => {
                     emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
                 }
-                Value::List { elems, tail: None } if elems.is_empty() => {
-                    let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "empty List value has no destination",
-                        ));
-                    };
-                    writer.assign(&variable_name(*dst), "NULL");
-                }
-                Value::List { .. } => {
-                    return Err(unsupported(&function.name, "non-empty Value::List"));
-                }
+                Value::List { elems, tail } => emit_list_value(
+                    layouts,
+                    function,
+                    *dst,
+                    elems,
+                    tail.as_ref(),
+                    writer,
+                    next_temp,
+                )?,
                 Value::ListIsEmpty(list) => {
                     let Some(dst) = dst else {
                         return Err(invalid_flow_ir(
@@ -2790,6 +2963,80 @@ fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
     }]
 }
 
+fn emit_list_value(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    elems: &[Operand],
+    tail: Option<&Operand>,
+    writer: &mut Writer,
+    next_temp: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Value::List has no destination",
+        ));
+    };
+    let list_ty = function.vars[dst].ty;
+    let Type::List(element_ty) = layouts.types[list_ty].clone() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Value::List destination is not a List",
+        ));
+    };
+    if elems.is_empty() {
+        let expression = match tail {
+            Some(tail) => {
+                operand_expression(tail).map_err(|variant| unsupported(&function.name, variant))?
+            }
+            None => "NULL".to_owned(),
+        };
+        writer.assign(&variable_name(dst), &expression);
+        return Ok(());
+    }
+
+    let list_name = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let temp = format!("emela_list_build_{}", *next_temp);
+    *next_temp += 1;
+    let node_temp = format!("emela_list_node_tmp_{}", *next_temp);
+    *next_temp += 1;
+    let initial_tail = match tail {
+        Some(tail) => {
+            operand_expression(tail).map_err(|variant| unsupported(&function.name, variant))?
+        }
+        None => "NULL".to_owned(),
+    };
+    writer.decl("void *", &temp, Some(&initial_tail));
+    writer.decl("void *", &node_temp, None);
+    if tail.is_some() {
+        writer.line(&format!("emela_heap_retain({temp});"));
+    }
+    for elem in elems.iter().rev() {
+        writer.assign(
+            &node_temp,
+            &format!(
+                "({list_name} *)emela_heap_allocate(sizeof({list_name}), UINT32_C({list_kind}))"
+            ),
+        );
+        if layouts.type_repr(element_ty) == Repr::Void {
+            writer.assign(
+                &format!("(({list_name} *){node_temp})->_unit"),
+                "UINT8_C(0)",
+            );
+        } else {
+            let expression =
+                operand_expression(elem).map_err(|variant| unsupported(&function.name, variant))?;
+            writer.assign(&format!("(({list_name} *){node_temp})->head"), &expression);
+        }
+        writer.assign(&format!("(({list_name} *){node_temp})->tail"), &temp);
+        writer.assign(&temp, &node_temp);
+    }
+    writer.assign(&variable_name(dst), &temp);
+    Ok(())
+}
+
 fn emit_loop(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -2815,7 +3062,12 @@ fn emit_loop(
     for (&variable, initial) in vars.iter().zip(inits) {
         let expression =
             operand_expression(initial).map_err(|variant| unsupported(&function.name, variant))?;
+        emit_retain_operand(layouts, function, initial, writer);
+        emit_release_if_owned(layouts, function, variable, writer);
         writer.assign(&variable_name(variable), &expression);
+        if layouts.is_managed_list(function.vars[variable].ty) {
+            writer.assign(&owned_variable_name(variable), "INT32_C(1)");
+        }
     }
     writer.begin_block("for (;;)");
     loops.push(vars.to_vec());
@@ -2873,6 +3125,7 @@ fn emit_compound_sequence(
     match &sequence.term {
         Term::Yield(value) => match (dst, value) {
             (Some(dst), Some(value)) => {
+                emit_retain_operand(layouts, function, value, writer);
                 let expression = operand_expression(value)
                     .map_err(|variant| unsupported(&function.name, variant))?;
                 writer.assign(&variable_name(dst), &expression);
@@ -2899,6 +3152,7 @@ fn emit_compound_sequence(
             let protect_depth = blocks[target_index].protect_depth;
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
+                    emit_retain_operand(layouts, function, value, writer);
                     let expression = operand_expression(value)
                         .map_err(|variant| unsupported(&function.name, variant))?;
                     writer.assign(&variable_name(dst), &expression);
@@ -3019,8 +3273,19 @@ fn emit_recur(
         );
         temporaries.push(temporary);
     }
+    for (&variable, temporary) in vars.iter().zip(&temporaries) {
+        if layouts.is_managed_list(function.vars[variable].ty) {
+            writer.line(&format!("emela_heap_retain({temporary});"));
+        }
+    }
+    for &variable in vars {
+        emit_release_if_owned(layouts, function, variable, writer);
+    }
     for (&variable, temporary) in vars.iter().zip(temporaries) {
         writer.assign(&variable_name(variable), &temporary);
+        if layouts.is_managed_list(function.vars[variable].ty) {
+            writer.assign(&owned_variable_name(variable), "INT32_C(1)");
+        }
     }
     writer.line("continue;");
     Ok(())
@@ -3154,6 +3419,7 @@ fn emit_error_assignment(
 }
 
 fn emit_failure_return(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
+    emit_owned_cleanup(layouts, function, None, writer);
     if layouts.type_repr(function.ret) == Repr::Void {
         writer.ret(None);
     } else {
@@ -4192,10 +4458,25 @@ fn emit_return(
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     match term {
-        Term::Return(None) => writer.ret(None),
+        Term::Return(None) => {
+            emit_owned_cleanup(layouts, function, None, writer);
+            writer.ret(None);
+        }
         Term::Return(Some(operand)) => {
             let expression = operand_expression(operand)
                 .map_err(|variant| unsupported(&function.name, variant))?;
+            let mut moved = None;
+            if layouts.is_managed_list(function.ret)
+                && let Operand::Var(variable) = operand
+            {
+                if function.params.contains(variable) {
+                    emit_retain_operand(layouts, function, operand, writer);
+                } else {
+                    writer.assign(&owned_variable_name(*variable), "INT32_C(0)");
+                    moved = Some(*variable);
+                }
+            }
+            emit_owned_cleanup(layouts, function, moved, writer);
             writer.ret(Some(&expression));
         }
         Term::Fail(error) => {
@@ -4375,6 +4656,8 @@ struct TypeLayouts<'a> {
     types: TypeTable,
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
+    list_types: Vec<TypeId>,
+    list_ids: HashMap<TypeId, usize>,
     error_types: Vec<(EnumId, TypeId)>,
     has_error_abi: bool,
 }
@@ -4386,6 +4669,8 @@ impl<'a> TypeLayouts<'a> {
             types: flow.core.types.clone(),
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
+            list_types: Vec::new(),
+            list_ids: HashMap::new(),
             error_types: Vec::new(),
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
@@ -4427,6 +4712,51 @@ impl<'a> TypeLayouts<'a> {
                 layouts.collect(variable.ty, &function.name, &mut states)?;
             }
         }
+        let mut index = 0;
+        while index < layouts.list_types.len() {
+            let list_ty = layouts.list_types[index];
+            let Type::List(element) = layouts.types[list_ty].clone() else {
+                unreachable!("list layout has a non-List type")
+            };
+            layouts.collect(element, "List element", &mut states)?;
+            index += 1;
+        }
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
+            let mut types = function
+                .vars
+                .iter()
+                .map(|(_, variable)| variable.ty)
+                .collect::<Vec<_>>();
+            types.push(function.ret);
+            for ty in types {
+                if !layouts.contains_list_ref(ty, &mut HashSet::new()) {
+                    continue;
+                }
+                match layouts.types[ty].clone() {
+                    Type::List(element)
+                        if !layouts.contains_list_ref(element, &mut HashSet::new())
+                            && !type_contains_string(&layouts, element, &mut HashSet::new()) =>
+                    {
+                        // Scalar and inline element layouts have no nested owner to retain.
+                    }
+                    Type::List(_) => {
+                        return Err(unsupported(
+                            &function.name,
+                            "List elements that contain a List reference or String view",
+                        ));
+                    }
+                    _ => {
+                        return Err(unsupported(
+                            &function.name,
+                            "inline aggregate values that contain a List reference",
+                        ));
+                    }
+                }
+            }
+        }
         Ok(layouts)
     }
 
@@ -4436,6 +4766,14 @@ impl<'a> TypeLayouts<'a> {
         function: &str,
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>> {
+        if matches!(self.types[ty], Type::List(_)) {
+            if !self.list_ids.contains_key(&ty) {
+                let index = self.list_types.len();
+                self.list_types.push(ty);
+                self.list_ids.insert(ty, index);
+            }
+            return Ok(());
+        }
         let kind = match self.types[ty].clone() {
             Type::Tuple(fields) => Some(AggregateKind::Tuple(fields)),
             Type::Enum(id, args) if self.enum_layout_required(id) => {
@@ -4547,6 +4885,73 @@ impl<'a> TypeLayouts<'a> {
         match &self.aggregates[index].kind {
             AggregateKind::Enum(variants) => Some(variants),
             AggregateKind::Tuple(_) => None,
+        }
+    }
+
+    fn list_node_name(&self, ty: TypeId) -> String {
+        format!("emela_list_node_{}", self.list_ids[&ty])
+    }
+
+    fn list_index(&self, ty: TypeId) -> u32 {
+        u32::try_from(self.list_ids[&ty]).expect("too many concrete List layouts")
+    }
+
+    fn is_managed_list(&self, ty: TypeId) -> bool {
+        matches!(self.types[ty], Type::List(_))
+    }
+
+    fn contains_list_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        let mut types = self.types.clone();
+        self.contains_list_ref_with_types(&mut types, ty, seen)
+    }
+
+    fn contains_list_ref_with_types(
+        &self,
+        types: &mut TypeTable,
+        ty: TypeId,
+        seen: &mut HashSet<TypeId>,
+    ) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        match types[ty].clone() {
+            Type::List(_) => true,
+            Type::Tuple(fields) => fields
+                .into_iter()
+                .any(|field| self.contains_list_ref_with_types(types, field, seen)),
+            Type::Enum(enum_id, args) => self.core.enums[enum_id].variants.iter().any(|variant| {
+                variant.tys.iter().any(|&field| {
+                    let field = types.subst(field, &args);
+                    self.contains_list_ref_with_types(types, field, seen)
+                })
+            }),
+            Type::Any => self.core.enums.iter().any(|(_, enum_def)| {
+                enum_def.error
+                    && enum_def.variants.iter().any(|variant| {
+                        variant
+                            .tys
+                            .iter()
+                            .any(|&field| self.contains_list_ref_with_types(types, field, seen))
+                    })
+            }),
+            _ => false,
+        }
+    }
+
+    fn emit_list_node_declarations(&self, writer: &mut Writer) {
+        for &ty in &self.list_types {
+            let Type::List(element) = self.types[ty].clone() else {
+                unreachable!("list layout has a non-List type")
+            };
+            writer.line(&format!("typedef struct {} {{", self.list_node_name(ty)));
+            if self.type_repr(element) == Repr::Void {
+                writer.line("  uint8_t _unit;");
+            } else {
+                writer.line(&format!("  {} head;", self.c_type(element)));
+            }
+            writer.line("  void *tail;");
+            writer.line(&format!("}} {};", self.list_node_name(ty)));
+            writer.blank();
         }
     }
 
@@ -4670,6 +5075,10 @@ fn c_identifier(name: &str) -> String {
 
 fn variable_name(id: VarId) -> String {
     format!("emela_v_{}", u32::from(id.into_raw()))
+}
+
+fn owned_variable_name(id: VarId) -> String {
+    format!("emela_owned_v_{}", u32::from(id.into_raw()))
 }
 
 fn statement_name(statement: &emela_lir::Stmt) -> &'static str {

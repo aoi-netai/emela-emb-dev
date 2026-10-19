@@ -5,6 +5,7 @@
 
 mod const_eval;
 mod emit;
+mod heap;
 mod writer;
 
 /// Configuration for embedded C generation.

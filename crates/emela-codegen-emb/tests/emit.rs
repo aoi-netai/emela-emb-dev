@@ -80,14 +80,30 @@ fn emits_empty_list_and_checks_list_emptiness() {
         builder.finish()
     };
 
+    let empty_value_function = {
+        let mut builder = FnBuilder::new(&core, "empty_value");
+        builder.set_ret(list_int).set_exported();
+        let empty = builder.assign(
+            "empty",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+
     let mut flow = Module::new(core);
     flow.add(empty_function);
     flow.add(check_function);
+    flow.add(empty_value_function);
 
     let output = compile_flow(&flow, &Options::default()).expect("emit empty List operations");
     compile_and_run(
         output,
-        "#include \"emela_embedded.h\"\nint main(void) { int value = 0; return emela_export_empty_list_0() == INT32_C(1) && emela_export_check_list_1((void *)0) == INT32_C(1) && emela_export_check_list_1(&value) == INT32_C(0) ? 0 : 1; }\n",
+        "#include \"emela_embedded.h\"\nint main(void) { int value = 0; return emela_export_empty_list_0() == INT32_C(1) && emela_export_check_list_1((void *)0) == INT32_C(1) && emela_export_check_list_1(&value) == INT32_C(0) && emela_export_empty_value_2() == (void *)0 ? 0 : 1; }\n",
     );
 }
 
@@ -117,6 +133,112 @@ fn requires_fixed_heap_capacity_for_nonempty_list_values() {
     assert_eq!(errors[0].kind, ErrorKind::Unsupported);
     assert!(errors[0].message.contains("heap_bytes = 0"));
     assert_eq!(Options::default().with_heap_bytes(512).heap_bytes(), 512);
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_returned_list_aliases() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "identity_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("returning a borrowed List requires reference management");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_a_list_tail_alias() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "alias_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        let alias = builder.assign(
+            "alias",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: Some(list.into()),
+            },
+        );
+        builder.term(Term::Return(Some(alias.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("a List alias needs retain/release support");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn allocates_and_releases_lists_in_the_fixed_heap() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let make_list = {
+        let mut builder = FnBuilder::new(&core, "make_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(4).into(), Const::Int(5).into()],
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(make_list);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit fixed-heap List construction");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 2 : 3); }\nint main(void) { for (int i = 0; i < 1000; i++) emela_embedded_release(emela_export_make_list_0()); return 0; }\n",
+    );
+}
+
+#[test]
+fn fixed_heap_exhaustion_calls_the_board_defect_hook() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "make_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1))
+        .expect("emit a List with an undersized fixed heap");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 1); }\nint main(void) { (void)emela_export_make_list_0(); return 2; }\n",
+    );
 }
 
 #[test]
