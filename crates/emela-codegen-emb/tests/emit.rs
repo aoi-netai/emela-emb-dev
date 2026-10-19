@@ -300,6 +300,48 @@ fn compiles_direct_calls_to_internal_and_external_c_functions() {
     );
 }
 
+#[test]
+fn compiles_if_statements_and_boolean_short_circuiting() {
+    let if_expr = emela_core::build::if_(
+        emela_core::build::bin(
+            BinOp::Lt,
+            OpTy::Int,
+            emela_core::build::int(1),
+            emela_core::build::int(2),
+        ),
+        emela_core::build::int(42),
+        emela_core::build::int(7),
+    );
+    compile_core_main_and_expect(if_expr, TypeId::INT, "INT32_C(42)");
+
+    let and_expr = emela_core::build::bin(
+        BinOp::And,
+        OpTy::Bool,
+        emela_core::build::bool(false),
+        emela_core::build::bool(true),
+    );
+    compile_core_main_and_expect(and_expr, TypeId::BOOL, "INT32_C(0)");
+
+    let or_expr = emela_core::build::bin(
+        BinOp::Or,
+        OpTy::Bool,
+        emela_core::build::bool(false),
+        emela_core::build::bool(true),
+    );
+    compile_core_main_and_expect(or_expr, TypeId::BOOL, "INT32_C(1)");
+}
+
+fn compile_core_main_and_expect(expression: emela_core::Expr, result_type: TypeId, expected: &str) {
+    let mut core = emela_core::Module::new();
+    let main = core.declare("main", true);
+    core.define(main, Vec::new(), result_type, expression);
+    let output = compile(&core, &Options::default()).expect("compile Core control flow");
+    let harness = format!(
+        "#include \"emela_embedded.h\"\nint main(void) {{ return emela_export_main_0() == {expected} ? 0 : 1; }}\n"
+    );
+    compile_and_run(output, &harness);
+}
+
 fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "probe");

@@ -243,12 +243,68 @@ fn emit_statement(
                         writer.line(&format!("{expression};"));
                     }
                 }
+                Value::Call { .. } => {
+                    return Err(unsupported(
+                        &function.name,
+                        "indirect, failing, or suspending calls",
+                    ));
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
         }
+        Stmt::If {
+            dst,
+            cond,
+            then,
+            else_,
+        } => {
+            let condition =
+                operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
+            writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
+            emit_compound_sequence(function, *then, *dst, writer, names)?;
+            writer.end_block();
+            writer.begin_block("else");
+            emit_compound_sequence(function, *else_, *dst, writer, names)?;
+            writer.end_block();
+            Ok(())
+        }
         other => Err(unsupported(&function.name, statement_name(other))),
     }
+}
+
+fn emit_compound_sequence(
+    function: &Function,
+    sequence: emela_lir::SeqId,
+    dst: Option<VarId>,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+) -> Result<(), Vec<Error>> {
+    let sequence = &function.seqs[sequence];
+    for &statement in &sequence.stmts {
+        emit_statement(function, &function.stmts[statement], writer, names)?;
+    }
+    let Term::Yield(value) = &sequence.term else {
+        return Err(unsupported(&function.name, term_name(&sequence.term)));
+    };
+    match (dst, value) {
+        (Some(dst), Some(value)) => {
+            let expression = operand_expression(value)
+                .map_err(|variant| unsupported(&function.name, variant))?;
+            writer.assign(&variable_name(dst), &expression);
+        }
+        (Some(_), None) => {
+            return Err(vec![Error {
+                kind: ErrorKind::InvalidFlowIr,
+                message: format!(
+                    "invalid Flow IR in function `{}`: If destination has a valueless arm",
+                    function.name
+                ),
+            }]);
+        }
+        (None, _) => {}
+    }
+    Ok(())
 }
 
 fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<String, Vec<Error>> {
