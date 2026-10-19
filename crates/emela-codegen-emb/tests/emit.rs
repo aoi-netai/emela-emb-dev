@@ -4,9 +4,12 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
-use emela_core::{BinOp, CtorRef, EnumDef, OpTy, TypeId, VariantDef};
+use emela_core::{
+    BinOp, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
+};
 use emela_lir::{
-    Callee, CaseKey, Const, FnBuilder, Module, Operand, PrimOp, PrimTy, SwitchOn, Term, Value,
+    Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, SwitchOn, Term,
+    Value,
 };
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -771,6 +774,175 @@ fn runs_protect_cleanup_on_yield_break_and_return() {
     compile_and_run(
         output,
         "#include <stdint.h>\n#include \"emela_embedded.h\"\nstatic int cleanup_calls;\nvoid fixture_cleanup(void) { cleanup_calls += 1; }\nint main(void) { if (emela_export_protect_yield_1() != INT32_C(42) || cleanup_calls != 1) return 1; cleanup_calls = 0; if (emela_export_protect_return_2() != INT32_C(58) || cleanup_calls != 1) return 2; cleanup_calls = 0; if (emela_export_protect_break_3() != INT32_C(61) || cleanup_calls != 1) return 3; return 0; }\n",
+    );
+}
+
+#[test]
+fn propagates_catches_and_reports_fallible_calls() {
+    let mut core = emela_core::Module::new();
+    let error_enum = core.add_enum(EnumDef {
+        name: "ProbeError".to_owned(),
+        params: 0,
+        variants: vec![VariantDef::positional("ProbeError", vec![TypeId::INT])],
+        error: true,
+        external: false,
+    });
+    let error_ty = core.enum_type(error_enum, Vec::new());
+
+    let mut failure = FnBuilder::new(&core, "fail_or_return_probe_error");
+    let input = failure.param("input", TypeId::INT);
+    failure.set_ret(TypeId::INT).set_fails();
+    let is_zero = failure.assign(
+        "is_zero",
+        TypeId::BOOL,
+        Value::Prim {
+            op: PrimOp::Eq,
+            ty: PrimTy::I32,
+            args: vec![Operand::Var(input), Operand::Const(Const::Int(0))],
+        },
+    );
+    let result = failure.var("result", TypeId::INT);
+    failure.if_(
+        Some(result),
+        Operand::Var(is_zero),
+        |builder| {
+            let error = builder.assign(
+                "error",
+                error_ty,
+                Value::Make {
+                    ctor: CtorRef {
+                        enum_id: error_enum,
+                        variant: 0,
+                    },
+                    args: vec![Operand::Const(Const::Int(73))],
+                },
+            );
+            builder.term(Term::Fail(Operand::Var(error)));
+        },
+        |builder| builder.term(Term::Yield(Some(Operand::Var(input)))),
+    );
+    failure.term(Term::Return(Some(Operand::Var(result))));
+    let failure = failure.finish();
+    let mut flow = Module::new(core);
+    let failure_id = flow.add(failure);
+    let mut cleanup = FnBuilder::new(&flow.core, "cleanup_probe");
+    cleanup.set_ret(TypeId::UNIT);
+    let cleanup_id = flow.add(cleanup.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".to_owned(),
+            host: HostRef::Global("fixture_cleanup".to_owned()),
+        }],
+    }));
+
+    let mut caught = FnBuilder::new(&flow.core, "catch_probe_error");
+    let input = caught.param("input", TypeId::INT);
+    caught.set_ret(TypeId::INT).set_exported();
+    let result = caught.var("result", TypeId::INT);
+    let caught_error = caught.var("caught_error", TypeId::ANY);
+    caught.block(Some(result), "done", |builder, done_label| {
+        builder.block(Some(caught_error), "caught", |builder, caught_label| {
+            let call_result = builder.var("call_result", TypeId::INT);
+            builder.protect(
+                Some(call_result),
+                |builder| {
+                    let call_value = builder.assign(
+                        "call_value",
+                        TypeId::INT,
+                        Value::Call {
+                            callee: Callee::Direct(failure_id),
+                            args: vec![Operand::Var(input)],
+                            suspends: false,
+                            on_fail: Some(OnFail::Break(caught_label)),
+                        },
+                    );
+                    builder.term(Term::Yield(Some(Operand::Var(call_value))));
+                },
+                |builder| {
+                    builder.let_(
+                        None,
+                        Value::Call {
+                            callee: Callee::Direct(cleanup_id),
+                            args: Vec::new(),
+                            suspends: false,
+                            on_fail: None,
+                        },
+                    );
+                },
+            );
+            builder.term(Term::Break {
+                label: done_label,
+                value: Some(Operand::Var(call_result)),
+            });
+        });
+        let is_probe_error = builder.assign(
+            "is_probe_error",
+            TypeId::BOOL,
+            Value::IsError {
+                error: caught_error,
+                enum_id: error_enum,
+            },
+        );
+        builder.if_(
+            None,
+            Operand::Var(is_probe_error),
+            |builder| {
+                let concrete_error = builder.assign(
+                    "concrete_error",
+                    error_ty,
+                    Value::AsError {
+                        error: caught_error,
+                        enum_id: error_enum,
+                    },
+                );
+                let payload = builder.assign(
+                    "payload",
+                    TypeId::INT,
+                    Value::Field {
+                        base: concrete_error,
+                        ctor: CtorRef {
+                            enum_id: error_enum,
+                            variant: 0,
+                        },
+                        index: 0,
+                    },
+                );
+                builder.term(Term::Break {
+                    label: done_label,
+                    value: Some(Operand::Var(payload)),
+                });
+            },
+            |builder| {
+                builder.term(Term::Break {
+                    label: done_label,
+                    value: Some(Operand::Const(Const::Int(-1))),
+                });
+            },
+        );
+        builder.term(Term::Return(Some(Operand::Const(Const::Int(-2)))));
+    });
+    caught.term(Term::Return(Some(Operand::Var(result))));
+    flow.add(caught.finish());
+
+    let mut propagate = FnBuilder::new(&flow.core, "propagate_probe_error");
+    let input = propagate.param("input", TypeId::INT);
+    propagate.set_ret(TypeId::INT).set_fails().set_exported();
+    let result = propagate.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(failure_id),
+            args: vec![Operand::Var(input)],
+            suspends: false,
+            on_fail: Some(OnFail::Propagate),
+        },
+    );
+    propagate.term(Term::Return(Some(Operand::Var(result))));
+    flow.add(propagate.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit fallible functions");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic int cleanup_calls;\nvoid fixture_cleanup(void) { cleanup_calls += 1; }\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_UNHANDLED_ERROR && length == UINT16_C(15) && memcmp(message, \"unhandled error\", 15) == 0) exit(0); exit(1); }\nint main(void) { if (emela_export_catch_probe_error_2(INT32_C(0)) != INT32_C(73) || cleanup_calls != 1) return 1; if (emela_export_catch_probe_error_2(INT32_C(9)) != INT32_C(9) || cleanup_calls != 2) return 2; if (emela_export_propagate_probe_error_3(INT32_C(9)) != INT32_C(9)) return 3; (void)emela_export_propagate_probe_error_3(INT32_C(0)); return 4; }\n",
     );
 }
 

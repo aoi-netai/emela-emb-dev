@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use emela_core::{CtorRef, Type, TypeId, TypeTable};
+use emela_core::{CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
-    Callee, CaseKey, Const, FnId, Function, LabelId, Operand, PrimOp, PrimTy, Repr, Stmt, SwitchOn,
-    Term, Value, VarId,
+    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr, Stmt,
+    SwitchOn, Term, Value, VarId,
 };
 
 use crate::writer::Writer;
@@ -16,6 +16,7 @@ const BOARD_HEADER_FILE: &str = "emela_board.h";
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
     let layouts = TypeLayouts::new(flow)?;
     let mut names = HashMap::new();
+    let mut public_names = HashMap::new();
     for (id, function) in flow.functions.iter() {
         let name = if function.external.is_some() {
             if function.exported {
@@ -25,7 +26,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         } else {
             function_name(id, function)
         };
-        names.insert(id, name);
+        public_names.insert(id, name.clone());
+        let implementation_name = if function.exported && function.fails {
+            format!("{name}_impl")
+        } else {
+            name
+        };
+        names.insert(id, implementation_name);
     }
     let main_entry = flow
         .functions
@@ -47,19 +54,23 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     header.line("#include <stdint.h>");
     header.blank();
     layouts.emit_declarations(&mut header);
+    layouts.emit_error_declaration(&mut header);
     if !layouts.aggregates.is_empty() {
         header.blank();
     }
 
     for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported) {
-        if function.fails || function.suspends {
+        if function.suspends {
             return Err(unsupported(
                 &function.name,
-                "fallible or suspending function signatures",
+                "suspending function signatures",
             ));
         }
-        let name = &names[&id];
-        header.line(&format!("{};", signature(&layouts, function, name, false)));
+        let name = &public_names[&id];
+        header.line(&format!(
+            "{};",
+            signature(&layouts, function, name, false, false)
+        ));
     }
     if main_entry.is_some() {
         header.line("void emela_embedded_start(void);");
@@ -98,6 +109,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     board_header.blank();
     let needs_defect_hook = has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem])
         || has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem])
+        || flow
+            .functions
+            .iter()
+            .any(|(_, function)| function.exported && function.fails)
         || flow.functions.iter().any(|(_, function)| {
             function
                 .seqs
@@ -163,20 +178,20 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         if function.external.is_some() {
             source.line(&format!(
                 "extern {};",
-                signature(&layouts, function, name, false)
+                signature(&layouts, function, name, false, false)
             ));
-        } else if !function.exported {
-            source.line(&format!("{};", signature(&layouts, function, name, true)));
+        } else if !function.exported || function.fails {
+            source.line(&format!(
+                "{};",
+                signature(&layouts, function, name, true, function.fails)
+            ));
         }
     }
     source.blank();
 
     for (id, function) in flow.functions.iter() {
-        if function.fails || function.suspends {
-            return Err(unsupported(
-                &function.name,
-                "fallible or suspending function bodies",
-            ));
+        if function.suspends {
+            return Err(unsupported(&function.name, "suspending function bodies"));
         }
 
         if function.external.is_some() {
@@ -196,7 +211,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         };
         let sequence = &function.seqs[body];
         let name = &names[&id];
-        source.begin_block(&signature(&layouts, function, name, !function.exported));
+        let is_static = !function.exported || function.fails;
+        source.begin_block(&signature(
+            &layouts,
+            function,
+            name,
+            is_static,
+            function.fails,
+        ));
+        if function.fails {
+            source.line("*emela_error_out = (EmelaError){0};");
+        }
         emit_local_declarations(&layouts, function, &mut source);
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
@@ -221,8 +246,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         source.end_block();
         source.blank();
     }
+    for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported && f.fails) {
+        emit_fallible_wrapper(
+            &layouts,
+            function,
+            &public_names[&id],
+            &names[&id],
+            &mut source,
+        );
+        source.blank();
+    }
     if let Some((id, _function)) = main_entry {
-        let main_name = &names[&id];
+        let main_name = &public_names[&id];
         source.begin_block("void emela_embedded_start(void)");
         source.line("emela_board_init();");
         source.line(&format!("(void){main_name}();"));
@@ -320,28 +355,55 @@ fn emit_statement(
                     callee: Callee::Direct(id),
                     args,
                     suspends: false,
-                    on_fail: None,
+                    on_fail,
                 } => {
                     let name = names
                         .get(id)
                         .ok_or_else(|| unsupported(&function.name, "call to missing function"))?;
-                    let args = args
+                    let mut args = args
                         .iter()
                         .map(operand_expression)
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|variant| unsupported(&function.name, variant))?;
-                    let expression = format!("{name}({})", args.join(", "));
-                    if let Some(dst) = dst {
-                        writer.assign(&variable_name(*dst), &expression);
+                    if let Some(edge) = on_fail {
+                        let error_name = format!("emela_call_error_{}", *next_temp);
+                        *next_temp += 1;
+                        writer.begin_block("");
+                        writer.decl("EmelaError", &error_name, Some("{0}"));
+                        args.push(format!("&{error_name}"));
+                        let expression = format!("{name}({})", args.join(", "));
+                        if let Some(dst) = dst {
+                            writer.assign(&variable_name(*dst), &expression);
+                        } else {
+                            writer.line(&format!("{expression};"));
+                        }
+                        writer.begin_block(&format!("if ({error_name}.tag != UINT32_C(0))"));
+                        emit_call_failure_edge(
+                            layouts,
+                            function,
+                            *edge,
+                            &error_name,
+                            writer,
+                            names,
+                            loops,
+                            blocks,
+                            protects,
+                            next_temp,
+                            next_label,
+                        )?;
+                        writer.end_block();
+                        writer.end_block();
                     } else {
-                        writer.line(&format!("{expression};"));
+                        let expression = format!("{name}({})", args.join(", "));
+                        if let Some(dst) = dst {
+                            writer.assign(&variable_name(*dst), &expression);
+                        } else {
+                            writer.line(&format!("{expression};"));
+                        }
                     }
                 }
                 Value::Call { .. } => {
-                    return Err(unsupported(
-                        &function.name,
-                        "indirect, failing, or suspending calls",
-                    ));
+                    return Err(unsupported(&function.name, "indirect or suspending calls"));
                 }
                 Value::Make { ctor, args } => {
                     emit_make(layouts, function, *dst, *ctor, args, writer)?;
@@ -357,6 +419,62 @@ fn emit_statement(
                 }
                 Value::TupleGet { base, index } => {
                     emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
+                }
+                Value::IsError { error, enum_id } => {
+                    if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError operand is not an EmelaError value",
+                        ));
+                    }
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError has no Bool destination",
+                        ));
+                    };
+                    if !layouts.core.enums[*enum_id].error {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError target is not an error enum",
+                        ));
+                    }
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "({}).tag == UINT32_C({}) ? INT32_C(1) : INT32_C(0)",
+                            variable_name(*error),
+                            enum_index(*enum_id) + 1
+                        ),
+                    );
+                }
+                Value::AsError { error, enum_id } => {
+                    if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError operand is not an EmelaError value",
+                        ));
+                    }
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError has no error enum destination",
+                        ));
+                    };
+                    if layouts.error_enum(function.vars[*dst].ty) != Some(*enum_id) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError destination does not match its error enum",
+                        ));
+                    }
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "{}.payload.e{}",
+                            variable_name(*error),
+                            enum_index(*enum_id)
+                        ),
+                    );
                 }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
@@ -683,6 +801,19 @@ fn emit_compound_sequence(
             )?;
             emit_return(layouts, function, &sequence.term, writer)?;
         }
+        Term::Fail(error) => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "Fail appears in a function without a failure channel",
+                ));
+            }
+            emit_pending_cleanups(
+                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+            )?;
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
+            emit_failure_return(layouts, function, writer);
+        }
         other => return Err(unsupported(&function.name, term_name(other))),
     }
     Ok(())
@@ -740,6 +871,129 @@ fn emit_recur(
     }
     writer.line("continue;");
     Ok(())
+}
+
+fn emit_call_failure_edge(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    edge: OnFail,
+    error_name: &str,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    match edge {
+        OnFail::Break(label) => {
+            let Some(target_index) = blocks.iter().rposition(|target| target.label == label) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target is not an enclosing emitted block",
+                ));
+            };
+            let target_dst = blocks[target_index].dst;
+            let protect_depth = blocks[target_index].protect_depth;
+            let Some(target_dst) = target_dst else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target block has no error destination",
+                ));
+            };
+            if !matches!(layouts.types[function.vars[target_dst].ty], Type::Any) {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target does not use the EmelaError representation",
+                ));
+            }
+            writer.assign(&variable_name(target_dst), error_name);
+            emit_pending_cleanups(
+                layouts,
+                function,
+                protect_depth,
+                writer,
+                names,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
+            blocks[target_index].used = true;
+            writer.line(&format!("goto {};", blocks[target_index].exit));
+            Ok(())
+        }
+        OnFail::Propagate => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failure propagates through a function without a failure channel",
+                ));
+            }
+            emit_pending_cleanups(
+                layouts, function, 0, writer, names, loops, blocks, protects, next_temp, next_label,
+            )?;
+            writer.assign("*emela_error_out", error_name);
+            emit_failure_return(layouts, function, writer);
+            Ok(())
+        }
+        OnFail::Handle { .. } => Err(invalid_flow_ir(
+            &function.name,
+            "Heap IR failure landing appears in Flow IR",
+        )),
+    }
+}
+
+fn emit_error_assignment(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    error: &Operand,
+    target: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Operand::Var(variable) = error else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand is not an error variable",
+        ));
+    };
+    let ty = function.vars[*variable].ty;
+    if matches!(layouts.types[ty], Type::Any) {
+        writer.assign(target, &variable_name(*variable));
+        return Ok(());
+    }
+    let Some(enum_id) = layouts.error_enum(ty) else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand is not an error enum or propagated EmelaError",
+        ));
+    };
+    if layouts.error_type(enum_id).is_none() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand error enum is missing from EmelaError layout",
+        ));
+    }
+    let object = format!("({target})");
+    writer.assign(
+        &format!("{object}.tag"),
+        &format!("UINT32_C({})", enum_index(enum_id) + 1),
+    );
+    writer.assign(
+        &format!("{object}.payload.e{}", enum_index(enum_id)),
+        &variable_name(*variable),
+    );
+    Ok(())
+}
+
+fn emit_failure_return(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.ret(None);
+    } else {
+        writer.ret(Some(&format!("({}){{0}}", layouts.c_type(function.ret))));
+    }
 }
 
 fn emit_protect(
@@ -1398,6 +1652,16 @@ fn emit_return(
                 .map_err(|variant| unsupported(&function.name, variant))?;
             writer.ret(Some(&expression));
         }
+        Term::Fail(error) => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "Fail appears in a function without a failure channel",
+                ));
+            }
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
+            emit_failure_return(layouts, function, writer);
+        }
         other => return Err(unsupported(&function.name, term_name(other))),
     }
 
@@ -1476,9 +1740,10 @@ fn signature(
     function: &Function,
     name: &str,
     is_static: bool,
+    takes_error_out: bool,
 ) -> String {
     let return_type = layouts.c_type(function.ret);
-    let params = function
+    let mut params: Vec<String> = function
         .params
         .iter()
         .map(|&variable| {
@@ -1486,6 +1751,9 @@ fn signature(
             format!("{} {}", layouts.c_type(data.ty), variable_name(variable))
         })
         .collect::<Vec<_>>();
+    if takes_error_out {
+        params.push("EmelaError *emela_error_out".to_owned());
+    }
     let params = if params.is_empty() {
         "void".to_owned()
     } else {
@@ -1493,6 +1761,40 @@ fn signature(
     };
     let linkage = if is_static { "static " } else { "" };
     format!("{linkage}{return_type} {name}({params})")
+}
+
+fn emit_fallible_wrapper(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    public_name: &str,
+    implementation_name: &str,
+    writer: &mut Writer,
+) {
+    writer.begin_block(&signature(layouts, function, public_name, false, false));
+    writer.decl("EmelaError", "emela_error", Some("{0}"));
+    let mut args: Vec<String> = function
+        .params
+        .iter()
+        .map(|&variable| variable_name(variable))
+        .collect();
+    args.push("&emela_error".to_owned());
+    let call = format!("{implementation_name}({})", args.join(", "));
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.line(&format!("{call};"));
+    } else {
+        writer.decl(&layouts.c_type(function.ret), "emela_result", Some(&call));
+    }
+    writer.begin_block("if (emela_error.tag != UINT32_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, \"unhandled error\", UINT16_C(15));",
+    );
+    writer.end_block();
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.ret(None);
+    } else {
+        writer.ret(Some("emela_result"));
+    }
+    writer.end_block();
 }
 
 #[derive(Debug)]
@@ -1512,6 +1814,8 @@ struct TypeLayouts<'a> {
     types: TypeTable,
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
+    error_types: Vec<(EnumId, TypeId)>,
+    has_error_abi: bool,
 }
 
 impl<'a> TypeLayouts<'a> {
@@ -1521,8 +1825,37 @@ impl<'a> TypeLayouts<'a> {
             types: flow.core.types.clone(),
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
+            error_types: Vec::new(),
+            has_error_abi: flow.functions.iter().any(|(_, function)| {
+                function.fails
+                    || function
+                        .seqs
+                        .iter()
+                        .any(|(_, sequence)| matches!(sequence.term, Term::Fail(_)))
+                    || function.stmts.iter().any(|(_, statement)| match statement {
+                        Stmt::Let { value, .. } => match value {
+                            Value::Call { on_fail, .. } => on_fail.is_some(),
+                            Value::IsError { .. } | Value::AsError { .. } => true,
+                            _ => false,
+                        },
+                        _ => false,
+                    })
+            }),
         };
         let mut states = HashMap::new();
+        if layouts.has_error_abi {
+            let error_ids: Vec<EnumId> = flow
+                .core
+                .enums
+                .iter()
+                .filter_map(|(id, def)| def.error.then_some(id))
+                .collect();
+            for id in error_ids {
+                let ty = layouts.types.enum_type(id, Vec::new());
+                layouts.collect(ty, "EmelaError", &mut states)?;
+                layouts.error_types.push((id, ty));
+            }
+        }
         for (_, function) in flow.functions.iter() {
             layouts.collect(function.ret, &function.name, &mut states)?;
             for (_, variable) in function.vars.iter() {
@@ -1625,8 +1958,22 @@ impl<'a> TypeLayouts<'a> {
             Type::Tuple(_) => type_name(ty),
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
             Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
+            Type::Any if self.has_error_abi => "EmelaError".to_owned(),
             _ => c_type(self.type_repr(ty)).to_owned(),
         }
+    }
+
+    fn error_enum(&self, ty: TypeId) -> Option<EnumId> {
+        match self.types[ty] {
+            Type::Enum(id, _) if self.core.enums[id].error => Some(id),
+            _ => None,
+        }
+    }
+
+    fn error_type(&self, enum_id: EnumId) -> Option<TypeId> {
+        self.error_types
+            .iter()
+            .find_map(|(id, ty)| (*id == enum_id).then_some(*ty))
     }
 
     fn enum_fields(&self, ty: TypeId) -> Option<&[Vec<TypeId>]> {
@@ -1680,6 +2027,29 @@ impl<'a> TypeLayouts<'a> {
             writer.blank();
         }
     }
+
+    fn emit_error_declaration(&self, writer: &mut Writer) {
+        if !self.has_error_abi {
+            return;
+        }
+        writer.line("typedef struct {");
+        writer.line("  uint32_t tag;");
+        writer.line("  union {");
+        if self.error_types.is_empty() {
+            writer.line("    uint8_t _empty;");
+        } else {
+            for (enum_id, ty) in &self.error_types {
+                writer.line(&format!(
+                    "    {} e{};",
+                    self.c_type(*ty),
+                    enum_index(*enum_id)
+                ));
+            }
+        }
+        writer.line("  } payload;");
+        writer.line("} EmelaError;");
+        writer.blank();
+    }
 }
 
 fn type_name(ty: TypeId) -> String {
@@ -1703,6 +2073,10 @@ fn function_name(id: FnId, function: &Function) -> String {
     } else {
         format!("emela_fn_{index}")
     }
+}
+
+fn enum_index(id: EnumId) -> u32 {
+    u32::from(id.into_raw())
 }
 
 fn c_identifier(name: &str) -> String {
