@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use emela_core::Builtin;
 use emela_lir::{
     Callee, Const, FnId, Function, Module, Operand, PrimOp, PrimTy, Stmt, Term, Value, VarId,
 };
@@ -153,7 +154,32 @@ fn evaluate_value(
             evaluate_function(module, *id, arguments, active)
         }
         Value::Call { .. } => Err("const body contains an indirect, fallible, or suspending call"),
+        Value::Builtin { op, args } => {
+            let args = args
+                .iter()
+                .map(|arg| operand_value(arg, values))
+                .collect::<Result<Vec<_>, _>>()?;
+            evaluate_builtin(*op, args).map(Outcome::Value)
+        }
         _ => Err("const body contains a value that is not statically evaluable"),
+    }
+}
+
+fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str> {
+    match (op, args.as_slice()) {
+        (Builtin::StringByteSize, [Const::String(value)]) => i32::try_from(value.len())
+            .map(Const::Int)
+            .map_err(|_| "String byte size exceeds Int range"),
+        (Builtin::StringContains, [Const::String(value), Const::String(needle)]) => {
+            Ok(Const::Bool(value.contains(needle.as_str())))
+        }
+        (Builtin::StringStartsWith, [Const::String(value), Const::String(prefix)]) => {
+            Ok(Const::Bool(value.starts_with(prefix.as_str())))
+        }
+        (Builtin::StringEndsWith, [Const::String(value), Const::String(suffix)]) => {
+            Ok(Const::Bool(value.ends_with(suffix.as_str())))
+        }
+        _ => Err("const body contains an unsupported builtin or builtin operand"),
     }
 }
 

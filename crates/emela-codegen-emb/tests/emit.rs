@@ -216,6 +216,93 @@ fn string_byte_size_counts_utf8_bytes_from_a_view() {
 }
 
 #[test]
+fn string_search_predicates_match_utf8_substrings_without_copying() {
+    let core = emela_core::Module::new();
+    let mut contains = FnBuilder::new(&core, "string_contains");
+    contains.set_ret(TypeId::BOOL).set_exported();
+    let value = contains.param("value", TypeId::STRING);
+    let needle = contains.param("needle", TypeId::STRING);
+    let result = contains.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![value.into(), needle.into()],
+        },
+    );
+    contains.term(Term::Return(Some(result.into())));
+    let contains = contains.finish();
+
+    let mut starts_with = FnBuilder::new(&core, "string_starts_with");
+    starts_with.set_ret(TypeId::BOOL).set_exported();
+    let value = starts_with.param("value", TypeId::STRING);
+    let prefix = starts_with.param("prefix", TypeId::STRING);
+    let result = starts_with.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringStartsWith,
+            args: vec![value.into(), prefix.into()],
+        },
+    );
+    starts_with.term(Term::Return(Some(result.into())));
+    let starts_with = starts_with.finish();
+
+    let mut ends_with = FnBuilder::new(&core, "string_ends_with");
+    ends_with.set_ret(TypeId::BOOL).set_exported();
+    let value = ends_with.param("value", TypeId::STRING);
+    let suffix = ends_with.param("suffix", TypeId::STRING);
+    let result = ends_with.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringEndsWith,
+            args: vec![value.into(), suffix.into()],
+        },
+    );
+    ends_with.term(Term::Return(Some(result.into())));
+    let ends_with = ends_with.finish();
+
+    let mut flow = Module::new(core);
+    flow.add(contains);
+    flow.add(starts_with);
+    flow.add(ends_with);
+    let output = compile_flow(&flow, &Options::default()).expect("emit String search builtins");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { EmelaString value = { .data = \"a\\xe2\\x82\\xac\\xf0\\x9f\\x99\\x82z\", .length = UINT16_C(9) }; EmelaString middle = { .data = \"\\xe2\\x82\\xac\\xf0\\x9f\\x99\\x82\", .length = UINT16_C(7) }; EmelaString prefix = { .data = \"a\\xe2\\x82\\xac\", .length = UINT16_C(4) }; EmelaString suffix = { .data = \"\\xf0\\x9f\\x99\\x82z\", .length = UINT16_C(5) }; EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; return emela_export_string_contains_0(value, middle) && emela_export_string_contains_0(value, empty) && emela_export_string_starts_with_1(value, prefix) && emela_export_string_starts_with_1(value, empty) && emela_export_string_ends_with_2(value, suffix) && emela_export_string_ends_with_2(value, empty) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_string_search_builtins_in_const_functions() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "HAS_SUBSTRING");
+    builder.set_ret(TypeId::BOOL).set_exported().set_constant();
+    let result = builder.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![
+                Const::String("aé🙂z".to_owned()).into(),
+                Const::String("é🙂".to_owned()).into(),
+            ],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate String.contains");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_HAS_SUBSTRING_0() == INT32_C(1) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn defers_a_statically_known_const_defect_until_reference() {
     let core = emela_core::Module::new();
     let mut constant = FnBuilder::new(&core, "BROKEN");

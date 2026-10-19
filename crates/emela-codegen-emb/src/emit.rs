@@ -242,6 +242,26 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     if has_dynamic_defect(flow, &emitted_functions) {
         emit_dynamic_defect_kind_helper(&mut source);
     }
+    if has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::StringContains,
+            Builtin::StringStartsWith,
+            Builtin::StringEndsWith,
+        ],
+    ) {
+        emit_string_matches_at_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringContains]) {
+        emit_string_contains_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringStartsWith]) {
+        emit_string_starts_with_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
+        emit_string_ends_with_helper(&mut source);
+    }
 
     for (id, function) in flow
         .functions
@@ -485,6 +505,136 @@ fn operand_is_string(layouts: &TypeLayouts<'_>, function: &Function, operand: &O
     }
 }
 
+fn emit_builtin(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    op: Builtin,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let (arity, result_type) = match op {
+        Builtin::StringByteSize => (1, Type::Int),
+        Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
+            (2, Type::Bool)
+        }
+        _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
+    };
+    if args.len() != arity {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!(
+                "builtin {op:?} has {} arguments, expected {arity}",
+                args.len()
+            ),
+        ));
+    }
+    if !args
+        .iter()
+        .all(|operand| operand_is_string(layouts, function, operand))
+    {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has a non-String argument"),
+        ));
+    }
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has no result destination"),
+        ));
+    };
+    if layouts.types[function.vars[dst].ty] != result_type {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has a result with the wrong type"),
+        ));
+    }
+
+    let expressions = args
+        .iter()
+        .map(operand_expression)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|variant| unsupported(&function.name, variant))?;
+    let expression = match op {
+        Builtin::StringByteSize => format!("(int32_t)(({}).length)", expressions[0]),
+        Builtin::StringContains => format!(
+            "emela_emb_string_contains({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::StringStartsWith => format!(
+            "emela_emb_string_starts_with({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::StringEndsWith => format!(
+            "emela_emb_string_ends_with({}, {})",
+            expressions[0], expressions[1]
+        ),
+        _ => unreachable!("builtin was validated above"),
+    };
+    writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn emit_string_matches_at_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
+    );
+    writer.begin_block(
+        "if (offset > (uint32_t)value.length || (uint32_t)needle.length > (uint32_t)value.length - offset)",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = 0; i < (uint32_t)needle.length; ++i)");
+    writer.begin_block("if (value.data[offset + i] != needle.data[i])");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_contains_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
+    );
+    writer.begin_block("if (needle.length > value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t last = (uint32_t)value.length - needle.length;");
+    writer.begin_block("for (uint32_t offset = 0; offset <= last; ++offset)");
+    writer.begin_block("if (emela_emb_string_matches_at(value, needle, offset))");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_starts_with_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
+    );
+    writer.line("return emela_emb_string_matches_at(value, prefix, UINT32_C(0));");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_ends_with_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
+    );
+    writer.begin_block("if (suffix.length > value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t offset = (uint32_t)value.length - suffix.length;");
+    writer.line("return emela_emb_string_matches_at(value, suffix, offset);");
+    writer.end_block();
+    writer.blank();
+}
+
 fn emit_statement(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -542,43 +692,8 @@ fn emit_statement(
                         writer.assign(&variable_name(*dst), &expression);
                     }
                 }
-                Value::Builtin {
-                    op: Builtin::StringByteSize,
-                    args,
-                } => {
-                    let [value] = args.as_slice() else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "StringByteSize must have one argument",
-                        ));
-                    };
-                    if !operand_is_string(layouts, function, value) {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "StringByteSize argument is not a String",
-                        ));
-                    }
-                    let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "StringByteSize has no Int destination",
-                        ));
-                    };
-                    if !matches!(layouts.types[function.vars[*dst].ty], Type::Int) {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "StringByteSize destination is not an Int",
-                        ));
-                    }
-                    let expression = operand_expression(value)
-                        .map_err(|variant| unsupported(&function.name, variant))?;
-                    writer.assign(
-                        &variable_name(*dst),
-                        &format!("(int32_t)(({expression}).length)"),
-                    );
-                }
-                Value::Builtin { op, .. } => {
-                    return Err(unsupported(&function.name, &format!("builtin {op:?}")));
+                Value::Builtin { op, args } => {
+                    emit_builtin(layouts, function, *dst, *op, args, writer)?;
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
@@ -1959,6 +2074,22 @@ fn has_prim(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ty: PrimTy, ops: 
                         },
                         ..
                     } if *found_ty == ty && ops.contains(op)
+                )
+            })
+    })
+}
+
+fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin]) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin { op, .. },
+                        ..
+                    } if ops.contains(op)
                 )
             })
     })
