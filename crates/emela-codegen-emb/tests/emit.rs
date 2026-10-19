@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
 
+mod suspend;
+
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
     BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, FnType, HostRef, OpTy, Roots,

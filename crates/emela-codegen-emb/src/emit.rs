@@ -10,6 +10,9 @@ use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
+#[path = "suspend.rs"]
+mod suspend;
+
 const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
@@ -37,6 +40,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     crate::static_handler::lower(&mut lowered_flow);
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
+    let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let layouts = TypeLayouts::new(flow, &emitted_functions, &closures)?;
     for (environment_index, environment) in closures.environments.iter().enumerate() {
         let parent = &flow.functions[environment.parent];
@@ -172,6 +176,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     layouts.emit_declarations(&mut header);
     layouts.emit_error_declaration(&mut header);
+    if has_scheduler {
+        header.line(include_str!("runtime/scheduler.h"));
+    }
     if !layouts.aggregates.is_empty() {
         header.blank();
     }
@@ -182,10 +189,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .filter(|(id, f)| emitted_functions.contains(id) && f.exported)
     {
         if function.suspends {
-            return Err(unsupported(
-                &function.name,
-                "suspending function signatures",
+            header.line(&format!(
+                "{};",
+                suspend::start_signature(&layouts, function, &public_names[&id])
             ));
+            continue;
         }
         let name = &public_names[&id];
         let takes_string_output = string_output_functions.contains(&id);
@@ -244,7 +252,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = heap_required
+    let needs_defect_hook = has_scheduler
+        || heap_required
         || has_prim(
             flow,
             &emitted_functions,
@@ -338,6 +347,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
     source.blank();
+    if has_scheduler {
+        suspend::emit_runtime(&mut source, options);
+    }
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
     if heap_required {
@@ -516,7 +528,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     {
         let name = &names[&id];
         let takes_string_output = string_output_functions.contains(&id);
-        if function.external.is_some() {
+        if function.suspends {
+            suspend::emit_declarations(&layouts, function, name, &mut source)?;
+        } else if function.external.is_some() {
             source.line(&format!(
                 "extern {};",
                 signature(&layouts, function, name, false, false, false)
@@ -568,7 +582,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .filter(|(id, _)| emitted_functions.contains(id))
     {
         if function.suspends {
-            return Err(unsupported(&function.name, "suspending function bodies"));
+            suspend::emit_function(
+                flow,
+                &layouts,
+                function,
+                &names[&id],
+                &names,
+                options,
+                &mut source,
+            )?;
+            continue;
         }
 
         if function.external.is_some() {
@@ -741,11 +764,28 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         );
         source.blank();
     }
-    if let Some((id, _function)) = main_entry {
+    if let Some((id, function)) = main_entry {
         let main_name = &public_names[&id];
         source.begin_block("void emela_embedded_start(void)");
         source.line("emela_board_init();");
-        source.line(&format!("(void){main_name}();"));
+        if function.suspends {
+            let args = if layouts.type_repr(function.ret) == Repr::Void {
+                String::new()
+            } else {
+                source.decl(&layouts.c_type(function.ret), "result", Some("{0}"));
+                "&result".to_owned()
+            };
+            source.line(&format!(
+                "EmelaFiber main_fiber = {main_name}_start({args});"
+            ));
+            source.begin_block("while (!emela_fiber_done(main_fiber))");
+            source.line("(void)emela_scheduler_run(UINT32_C(64));");
+            source.line("emela_board_idle();");
+            source.end_block();
+            source.line("emela_fiber_release(main_fiber);");
+        } else {
+            source.line(&format!("(void){main_name}();"));
+        }
         source.begin_block("for (;;)");
         source.line("emela_board_idle();");
         source.end_block();
