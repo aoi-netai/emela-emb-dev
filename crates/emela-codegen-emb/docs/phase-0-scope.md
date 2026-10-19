@@ -155,6 +155,7 @@
 - 生成する `emela_embedded.h` は公開Emela入口、外部関数ABI、`EmelaTask`の完了通知ABIを宣言する。`emela_board.h` は必要なhookだけ宣言する。
 - 必須hookは `_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length)`。kindは `EMELA_DEFECT_PANIC`、`EMELA_DEFECT_TODO`、`EMELA_DEFECT_DIVISION_BY_ZERO`、`EMELA_DEFECT_NO_MATCH`、`EMELA_DEFECT_FLOAT_TO_INT`、`EMELA_DEFECT_NEGATIVE_SHIFT`、`EMELA_DEFECT_HEAP_EXHAUSTED`、`EMELA_DEFECT_STRING_CAPACITY`、`EMELA_DEFECT_UNSUPPORTED_UNICODE`、`EMELA_DEFECT_UNHANDLED_ERROR`、`EMELA_DEFECT_ASSERT`を区別する。messageはUTF-8 byte列で、NUL終端を保証せず、hook呼び出し中だけ有効とする。hookはISRから呼ばれる場合もあるため、ISR安全でなければならない。
 - `main`を出力する場合は `void emela_board_init(void)` を起動時に呼び、Emelaのmain終了後は `void emela_board_idle(void)` を繰り返す。`DebugPrint`を使う場合は `void emela_board_debug(const char *bytes, uint16_t length)` を要求する。Consoleなどのproject effectは個別の外部C関数として解決し、標準のboard hookには含めない。
+- `emela_board_debug`にはNUL終端しないUTF-8 byte列とbyte長を渡す。hookは戻る前に読み切るか自分の領域へcopyし、改行を付けて一行を出力する。ISRから到達する場合はISR安全に実装する。
 - 初期版はSTM32 HALの自動adapterを出力しない。GPIO/UART/I2C/SPIなどの操作は、プロジェクトのeffect定義とC外部関数を通じてボード側が実装する。HAL adapterとboard TOMLの自動生成は後続の拡張とする。
 - 初期版はEmelaソースの新しい標準module、`@external(embedded, ...)`、`@static`を追加しない。割り込みをまたぐ永続Stateも対象外とし、`State.run`の呼び出し内状態だけ扱う。
 
@@ -163,7 +164,7 @@
 | Operation | 意味 | 状態 | 実装基盤 | 方針 |
 | --- | --- | --- | --- | --- |
 | `ShowString` | Stringを表示用にescape | 対応 | 静的に対応可能 | quoteで囲み、`\"`、`\\`、`\n`、`\t`、`\r`、`#{`の前の`\#`、その他の制御byteを仕様どおりescapeする。動的出力は`string_capacity`内のscratchへ書き、超過はdefectにする。 |
-| `DebugPrint` | debug用に一行出力 | 対応 | 静的に対応可能 | boardのdebug hookへ一行出力する。 |
+| `DebugPrint` | debug用に一行出力 | 対応 | 静的に対応可能 | board hookへNUL終端しないUTF-8 byte列と長さを同期で渡す。hookは呼び出し中に読み切るか自分の領域へcopyし、改行を付ける。ISRから到達する場合はISR安全なhookを使う。 |
 | `Retire` | handlerの使用を終了 | 対応 | 静的（handler消去）／独自ランタイム（動的handler） | 静的に消せる場合は消去する。動的handlerはretired状態を保持し、その後の操作呼び出しをdefectにする。 |
 | `Hold`, `Unhold` | fiber interruptの延期・再開 | 対応 | 独自ランタイム（interruptの延期） | 現在のfiberでreleaseがsuspendしている間、fiber interrupt/cancelを延期し、対応する`Unhold`で再開する。hardware ISRはmaskしない。 |
 | `Defect`, `DefectTake`, `DefectResume`, `Yield`, `YieldPerform` | defect伝播・suspend制御 | Flow IRでは不正 | Flow IR対象外 | Heap IR専用operation。出現したら内部エラー。 |

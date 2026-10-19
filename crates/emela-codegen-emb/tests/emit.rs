@@ -720,6 +720,91 @@ fn runtime_show_string_capacity_overflow_uses_the_board_defect_hook() {
 }
 
 #[test]
+fn debug_print_calls_the_board_hook_with_the_string_view() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "debug_line");
+    builder.set_ret(TypeId::UNIT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    builder.let_(
+        None,
+        Value::Runtime {
+            op: RuntimeOp::DebugPrint,
+            args: vec![input.into()],
+        },
+    );
+    builder.term(Term::Return(None));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit RuntimeOp::DebugPrint");
+    let board_header = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_board.h")
+        .expect("board header")
+        .contents;
+    assert!(board_header.contains("void emela_board_debug(const char *bytes, uint16_t length);"));
+    assert!(!board_header.contains("emela_board_defect"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic int calls;\nvoid emela_board_debug(const char *bytes, uint16_t length) { if (length != UINT16_C(3) || memcmp(bytes, \"abc\", 3) != 0) exit(1); ++calls; }\nint main(void) { EmelaString input = { .data = \"abc\", .length = UINT16_C(3) }; emela_export_debug_line_0(input); return calls == 1 ? 0 : 2; }\n",
+    );
+}
+
+#[test]
+fn debug_print_can_consume_a_runtime_show_view_before_return() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "debug_shown_string");
+    builder.set_ret(TypeId::UNIT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let rendered = builder.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Runtime {
+            op: RuntimeOp::ShowString,
+            args: vec![input.into()],
+        },
+    );
+    builder.let_(
+        None,
+        Value::Runtime {
+            op: RuntimeOp::DebugPrint,
+            args: vec![rendered.into()],
+        },
+    );
+    builder.term(Term::Return(None));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit show then debug print");
+    compile_and_run(
+        output,
+        r#"
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static int calls;
+static const unsigned char expected[] = { 0x22, 'a', 0x5c, 0x22, 'b', 0x5c, 'n', 0x22 };
+void emela_board_debug(const char *bytes, uint16_t length) {
+    if (length != sizeof expected || memcmp(bytes, expected, sizeof expected) != 0) exit(1);
+    ++calls;
+}
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {
+    (void)kind; (void)message; (void)length; exit(2);
+}
+int main(void) {
+    EmelaString input = { .data = "a\"b\n", .length = UINT16_C(4) };
+    emela_export_debug_shown_string_0(input);
+    return calls == 1 ? 0 : 3;
+}
+"#,
+    );
+}
+
+#[test]
 fn rejects_dynamic_string_append_that_returns_its_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "return_appended");

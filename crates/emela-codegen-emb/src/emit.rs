@@ -204,6 +204,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         board_header.line("void emela_board_init(void);");
         board_header.line("void emela_board_idle(void);");
     }
+    if has_runtime_op(flow, &emitted_functions, RuntimeOp::DebugPrint) {
+        board_header.line("void emela_board_debug(const char *bytes, uint16_t length);");
+    }
     board_header.blank();
     board_header.line("#endif");
 
@@ -590,7 +593,7 @@ impl StringBufferPlan {
                             args,
                         } => !append_has_empty_constant(args),
                         Value::Runtime {
-                            op: RuntimeOp::ShowString,
+                            op: RuntimeOp::ShowString | RuntimeOp::DebugPrint,
                             ..
                         } => true,
                         _ => false,
@@ -1214,6 +1217,26 @@ fn emit_runtime(
     string_buffers: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if op == RuntimeOp::DebugPrint {
+        if args.len() != 1 || !operand_is_string(layouts, function, &args[0]) {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "RuntimeOp::DebugPrint must have one String argument",
+            ));
+        }
+        if dst.is_some() {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "RuntimeOp::DebugPrint has a result destination",
+            ));
+        }
+        let value =
+            operand_expression(&args[0]).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.line(&format!(
+            "emela_board_debug(({value}).data, ({value}).length);"
+        ));
+        return Ok(());
+    }
     if op != RuntimeOp::ShowString {
         return Err(unsupported(&function.name, &format!("RuntimeOp::{op:?}")));
     }
@@ -3194,6 +3217,23 @@ fn has_runtime_string_show(flow: &emela_lir::Module, emitted: &HashSet<FnId>) ->
                         },
                         ..
                     } if !matches!(args.as_slice(), [Operand::Const(Const::String(_))])
+                )
+            })
+        })
+}
+
+fn has_runtime_op(flow: &emela_lir::Module, emitted: &HashSet<FnId>, op: RuntimeOp) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Runtime { op: found, .. },
+                        ..
+                    } if *found == op
                 )
             })
         })
