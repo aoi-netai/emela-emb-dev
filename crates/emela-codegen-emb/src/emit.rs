@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use emela_core::{Builtin, CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
-    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr, SeqId,
-    Stmt, StmtId, SwitchOn, Term, Value, VarId,
+    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr,
+    RuntimeOp, SeqId, Stmt, StmtId, SwitchOn, Term, Value, VarId,
 };
 
 use crate::const_eval::{self, Outcome as ConstOutcome};
@@ -171,6 +171,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
         )
     }) || has_runtime_string_append(flow, &emitted_functions)
+        || has_runtime_string_show(flow, &emitted_functions)
         || flow.functions.iter().any(|(id, function)| {
             if !emitted_functions.contains(&id) {
                 return false;
@@ -277,6 +278,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if has_runtime_string_append(flow, &emitted_functions) {
         emit_string_append_helper(&mut source);
+    }
+    if has_runtime_string_show(flow, &emitted_functions) {
+        emit_string_show_helpers(&mut source);
     }
 
     for (id, function) in flow
@@ -483,27 +487,41 @@ struct StringBufferPlan {
 impl StringBufferPlan {
     fn new(layouts: &TypeLayouts<'_>, function: &Function, capacity: u16) -> Self {
         let mut append_args = HashMap::new();
-        let mut append_positions = HashMap::new();
+        let mut buffer_producers = HashSet::new();
+        let mut producer_positions = HashMap::new();
         for (statement_id, statement) in function.stmts.iter() {
             let Stmt::Let {
                 dst: Some(dst),
-                value:
-                    Value::Builtin {
-                        op: Builtin::StringAppend,
-                        args,
-                    },
+                value,
                 ..
             } = statement
             else {
                 continue;
             };
-            if args.len() == 2
-                && !append_is_static(args)
-                && !append_has_empty_constant(args)
-                && matches!(layouts.types[function.vars[*dst].ty], Type::String)
-            {
-                append_args.insert(*dst, args.clone());
-                append_positions.insert(*dst, statement_id);
+            match value {
+                Value::Builtin {
+                    op: Builtin::StringAppend,
+                    args,
+                } if args.len() == 2
+                    && !append_is_static(args)
+                    && !append_has_empty_constant(args)
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    append_args.insert(*dst, args.clone());
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Runtime {
+                    op: RuntimeOp::ShowString,
+                    args,
+                } if args.len() == 1
+                    && !matches!(args[0], Operand::Const(Const::String(_)))
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                _ => {}
             }
         }
 
@@ -571,6 +589,10 @@ impl StringBufferPlan {
                                 | Builtin::StringAppend,
                             args,
                         } => !append_has_empty_constant(args),
+                        Value::Runtime {
+                            op: RuntimeOp::ShowString,
+                            ..
+                        } => true,
                         _ => false,
                     };
                     if !reusable_consumer {
@@ -690,6 +712,19 @@ impl StringBufferPlan {
                     }
                     _ => usize::from(capacity),
                 };
+                let bound = match value {
+                    Value::Runtime {
+                        op: RuntimeOp::ShowString,
+                        args,
+                    } if args.len() == 1 => match &args[0] {
+                        Operand::Const(Const::String(value)) => show_string(value).len(),
+                        operand => operand_string_bound(operand, &bounds, capacity)
+                            .saturating_mul(6)
+                            .saturating_add(2)
+                            .min(usize::from(capacity)),
+                    },
+                    _ => bound,
+                };
                 if bounds.get(dst).copied() != Some(bound) {
                     bounds.insert(*dst, bound);
                     changed = true;
@@ -700,14 +735,15 @@ impl StringBufferPlan {
             }
         }
 
-        let mut roots: HashMap<VarId, VarId> = append_args.keys().map(|&id| (id, id)).collect();
+        let mut roots: HashMap<VarId, VarId> =
+            buffer_producers.iter().map(|&id| (id, id)).collect();
         for _ in 0..=append_args.len() {
             let mut changed = false;
             for (&dst, args) in &append_args {
                 let Some(Operand::Var(left)) = args.first() else {
                     continue;
                 };
-                if uses.get(left).copied() != Some(1) || !append_args.contains_key(left) {
+                if uses.get(left).copied() != Some(1) || !roots.contains_key(left) {
                     continue;
                 }
                 let root = roots[left];
@@ -734,7 +770,7 @@ impl StringBufferPlan {
                 .entry(root)
                 .and_modify(|current| *current = (*current).max(bound))
                 .or_insert(bound);
-            let definition = append_positions
+            let definition = producer_positions
                 .get(&variable)
                 .and_then(|statement| statement_positions.get(statement))
                 .copied()
@@ -1169,6 +1205,84 @@ fn emit_builtin(
     Ok(())
 }
 
+fn emit_runtime(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    op: RuntimeOp,
+    args: &[Operand],
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    if op != RuntimeOp::ShowString {
+        return Err(unsupported(&function.name, &format!("RuntimeOp::{op:?}")));
+    }
+    if args.len() != 1 || !operand_is_string(layouts, function, &args[0]) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString must have one String argument",
+        ));
+    }
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString has no String destination",
+        ));
+    };
+    if !matches!(layouts.types[function.vars[dst].ty], Type::String) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString destination is not String",
+        ));
+    }
+
+    let expression = match &args[0] {
+        Operand::Const(Const::String(value)) => {
+            let shown = constant_expression(&Const::String(show_string(value)))
+                .map_err(|variant| unsupported(&function.name, variant))?
+                .ok_or_else(|| {
+                    invalid_flow_ir(&function.name, "RuntimeOp::ShowString has no C expression")
+                })?;
+            shown
+        }
+        operand => {
+            let input = operand_expression(operand)
+                .map_err(|variant| unsupported(&function.name, variant))?;
+            let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "dynamic RuntimeOp::ShowString has no planned output buffer",
+                ));
+            };
+            format!("emela_emb_string_show({input}, {buffer}, UINT16_C({capacity}))")
+        }
+    };
+    writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn show_string(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().saturating_add(2));
+    output.push('"');
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\t' => output.push_str("\\t"),
+            '\r' => output.push_str("\\r"),
+            '#' if characters.peek() == Some(&'{') => output.push_str("\\#"),
+            control if control <= '\u{1f}' || control == '\u{7f}' => {
+                output.push_str(&format!("\\u{{{:x}}}", control as u32));
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+    output
+}
+
 fn emit_string_matches_at_helper(writer: &mut Writer) {
     writer.begin_block(
         "static inline int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
@@ -1250,6 +1364,68 @@ fn emit_string_append_helper(writer: &mut Writer) {
     writer.line(
         "return (EmelaString){ .data = buffer, .length = (uint16_t)(left.length + right.length) };",
     );
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_show_helpers(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
+    );
+    writer.begin_block("if (*length >= (uint32_t)capacity)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.line("buffer[*length] = (char)byte;");
+    writer.line("++*length;");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
+    );
+    writer.line("uint32_t length = UINT32_C(0);");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)value.length; ++i)");
+    writer.line("const uint8_t byte = (uint8_t)value.data[i];");
+    writer.begin_block("if (byte == UINT8_C(0x22) || byte == UINT8_C(0x5c))");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.begin_block(
+        "else if (byte == UINT8_C(0x23) && i + UINT32_C(1) < (uint32_t)value.length && value.data[i + UINT32_C(1)] == '{')",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.begin_block(
+        "else if (byte == UINT8_C(0x0a) || byte == UINT8_C(0x09) || byte == UINT8_C(0x0d))",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("const uint8_t escaped = byte == UINT8_C(0x0a) ? UINT8_C(0x6e) : (byte == UINT8_C(0x09) ? UINT8_C(0x74) : UINT8_C(0x72));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, escaped);");
+    writer.end_block();
+    writer.begin_block("else if (byte < UINT8_C(0x20) || byte == UINT8_C(0x7f))");
+    writer.line("static const char digits[] = \"0123456789abcdef\";");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x75));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x7b));");
+    writer.begin_block("if (byte >= UINT8_C(0x10))");
+    writer
+        .line("emela_emb_string_show_put(buffer, capacity, &length, (uint8_t)digits[byte >> 4]);");
+    writer.end_block();
+    writer.line(
+        "emela_emb_string_show_put(buffer, capacity, &length, (uint8_t)digits[byte & UINT8_C(0x0f)]);",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x7d));");
+    writer.end_block();
+    writer.begin_block("else");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
+    writer.line("return (EmelaString){ .data = buffer, .length = (uint16_t)length };");
     writer.end_block();
     writer.blank();
 }
@@ -1421,6 +1597,9 @@ fn emit_statement(
                 }
                 Value::Builtin { op, args } => {
                     emit_builtin(layouts, function, *dst, *op, args, string_buffers, writer)?;
+                }
+                Value::Runtime { op, args } => {
+                    emit_runtime(layouts, function, *dst, *op, args, string_buffers, writer)?;
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
@@ -2995,6 +3174,26 @@ fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) 
                         },
                         ..
                     } if args.len() == 2 && !append_is_static(args) && !append_has_empty_constant(args)
+                )
+            })
+        })
+}
+
+fn has_runtime_string_show(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Runtime {
+                            op: RuntimeOp::ShowString,
+                            args,
+                        },
+                        ..
+                    } if !matches!(args.as_slice(), [Operand::Const(Const::String(_))])
                 )
             })
         })

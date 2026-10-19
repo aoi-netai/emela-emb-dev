@@ -162,7 +162,7 @@
 
 | Operation | 意味 | 状態 | 実装基盤 | 方針 |
 | --- | --- | --- | --- | --- |
-| `ShowString` | Stringを表示用にescape | 対応 | 静的に対応可能 | Stringを仕様のescape規則で表示用に変換する。 |
+| `ShowString` | Stringを表示用にescape | 対応 | 静的に対応可能 | quoteで囲み、`\"`、`\\`、`\n`、`\t`、`\r`、`#{`の前の`\#`、その他の制御byteを仕様どおりescapeする。動的出力は`string_capacity`内のscratchへ書き、超過はdefectにする。 |
 | `DebugPrint` | debug用に一行出力 | 対応 | 静的に対応可能 | boardのdebug hookへ一行出力する。 |
 | `Retire` | handlerの使用を終了 | 対応 | 静的（handler消去）／独自ランタイム（動的handler） | 静的に消せる場合は消去する。動的handlerはretired状態を保持し、その後の操作呼び出しをdefectにする。 |
 | `Hold`, `Unhold` | fiber interruptの延期・再開 | 対応 | 独自ランタイム（interruptの延期） | 現在のfiberでreleaseがsuspendしている間、fiber interrupt/cancelを延期し、対応する`Unhold`で再開する。hardware ISRはmaskしない。 |

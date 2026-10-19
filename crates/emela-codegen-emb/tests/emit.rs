@@ -8,8 +8,8 @@ use emela_core::{
     BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
 };
 use emela_lir::{
-    Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, SwitchOn, Term,
-    Value,
+    Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, RuntimeOp,
+    SwitchOn, Term, Value,
 };
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -540,6 +540,182 @@ fn statically_evaluates_string_append_in_const_functions() {
     compile_and_run(
         output,
         "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_CONCATENATED_0(); return value.length == UINT16_C(3) && memcmp(value.data, \"a\\xc3\\xa9\", 3) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn shows_dynamic_strings_into_a_bounded_scratch_buffer() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "show_runtime");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let rendered = builder.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Runtime {
+            op: RuntimeOp::ShowString,
+            args: vec![input.into()],
+        },
+    );
+    let size = builder.assign(
+        "size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![rendered.into()],
+        },
+    );
+    let expected = [
+        "\"q",
+        r#"\""#,
+        " ",
+        r#"\\"#,
+        " ",
+        r#"\#{"#,
+        " # ",
+        r#"\n"#,
+        r#"\t"#,
+        r#"\r"#,
+        r#"\u{0}"#,
+        r#"\u{7}"#,
+        r#"\u{7f}"#,
+        "é",
+        "\"",
+    ]
+    .concat();
+    let size_matches = builder.assign(
+        "size_matches",
+        TypeId::BOOL,
+        Value::Prim {
+            op: PrimOp::Eq,
+            ty: PrimTy::I32,
+            args: vec![size.into(), Const::Int(expected.len() as i32).into()],
+        },
+    );
+    let content_matches = builder.assign(
+        "content_matches",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringStartsWith,
+            args: vec![rendered.into(), Const::String(expected).into()],
+        },
+    );
+    let result = builder.var("result", TypeId::BOOL);
+    builder.if_(
+        Some(result),
+        size_matches,
+        |then| then.term(Term::Yield(Some(content_matches.into()))),
+        |otherwise| otherwise.term(Term::Yield(Some(Const::Bool(false).into()))),
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit RuntimeOp::ShowString");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("char emela_string_buffer_0[256];"));
+    compile_and_run(
+        output,
+        r#"
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {
+    (void)kind; (void)message; (void)length; exit(2);
+}
+int main(void) {
+    static const unsigned char input[] = {
+        'q', '"', ' ', '\\', ' ', '#', '{', ' ', '#', ' ', '\n', '\t', '\r',
+        '\0', 0x07, 0x7f, 0xc3, 0xa9
+    };
+    EmelaString value = { .data = (const char *)input, .length = sizeof input };
+    return emela_export_show_runtime_0(value) ? 0 : 1;
+}
+"#,
+    );
+}
+
+#[test]
+fn statically_shows_a_string_without_runtime_scratch() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "show_static");
+    builder.set_ret(TypeId::STRING).set_exported();
+    let rendered = builder.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Runtime {
+            op: RuntimeOp::ShowString,
+            args: vec![Const::String("a\"b#{\n".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(rendered.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("fold static show string");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(!source.contains("emela_emb_string_show"));
+    assert!(!source.contains("char emela_string_buffer_"));
+    compile_and_run(
+        output,
+        r#"
+#include <string.h>
+#include "emela_embedded.h"
+static const unsigned char expected[] = {
+    0x22, 'a', 0x5c, 0x22, 'b', 0x5c, '#', '{', 0x5c, 'n', 0x22
+};
+int main(void) {
+    EmelaString value = emela_export_show_static_0();
+    return value.length == sizeof expected && memcmp(value.data, expected, sizeof expected) == 0 ? 0 : 1;
+}
+"#,
+    );
+}
+
+#[test]
+fn runtime_show_string_capacity_overflow_uses_the_board_defect_hook() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "show_too_large");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let rendered = builder.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Runtime {
+            op: RuntimeOp::ShowString,
+            args: vec![input.into()],
+        },
+    );
+    let size = builder.assign(
+        "size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![rendered.into()],
+        },
+    );
+    builder.term(Term::Return(Some(size.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_string_capacity(2))
+        .expect("emit the show capacity check");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_STRING_CAPACITY && length == UINT16_C(24) && memcmp(message, \"string capacity exceeded\", length) == 0) exit(0); exit(1); }\nint main(void) { EmelaString input = { .data = \"x\", .length = UINT16_C(1) }; (void)emela_export_show_too_large_0(input); return 2; }\n",
     );
 }
 
