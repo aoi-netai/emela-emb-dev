@@ -236,16 +236,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             Builtin::IntShiftRightUnsigned,
         ],
     );
-    let has_shift = has_int_shift
-        || has_builtin(
-            flow,
-            &emitted_functions,
-            &[
-                Builtin::Int64ShiftLeft,
-                Builtin::Int64ShiftRight,
-                Builtin::Int64ShiftRightUnsigned,
-            ],
-        );
+    let has_i64_shift = has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::Int64ShiftLeft,
+            Builtin::Int64ShiftRight,
+            Builtin::Int64ShiftRightUnsigned,
+        ],
+    );
+    let has_shift = has_int_shift || has_i64_shift;
     if has_prim(
         flow,
         &emitted_functions,
@@ -280,8 +280,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         &emitted_functions,
         PrimTy::I64,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
-    ) {
+    ) || has_i64_shift
+    {
         emit_i64_wrap_helper(&mut source);
+    }
+    if has_i64_shift {
+        emit_i64_shift_helpers(&mut source);
     }
     if has_prim(
         flow,
@@ -1180,6 +1184,9 @@ fn emit_builtin(
         }
         Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
         Builtin::Int64BitNot => (1, Type::Int64),
+        Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
+            (2, Type::Int64)
+        }
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
     };
     if args.len() != arity {
@@ -1201,6 +1208,10 @@ fn emit_builtin(
         | Builtin::IntShiftRightUnsigned => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
+            operand_is_int64(layouts, function, &args[0])
+                && operand_is_int(layouts, function, &args[1])
+        }
         Builtin::Int64BitAnd
         | Builtin::Int64BitOr
         | Builtin::Int64BitXor
@@ -1237,7 +1248,12 @@ fn emit_builtin(
         .map_err(|variant| unsupported(&function.name, variant))?;
     if matches!(
         op,
-        Builtin::IntShiftLeft | Builtin::IntShiftRight | Builtin::IntShiftRightUnsigned
+        Builtin::IntShiftLeft
+            | Builtin::IntShiftRight
+            | Builtin::IntShiftRightUnsigned
+            | Builtin::Int64ShiftLeft
+            | Builtin::Int64ShiftRight
+            | Builtin::Int64ShiftRightUnsigned
     ) {
         writer.begin_block(&format!("if ({} < INT32_C(0))", expressions[1]));
         writer.line(&format!(
@@ -1294,6 +1310,18 @@ fn emit_builtin(
         ),
         Builtin::IntShiftRightUnsigned => format!(
             "emela_i32_shift_right_unsigned({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftLeft => format!(
+            "emela_i64_shift_left({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftRight => format!(
+            "emela_i64_shift_right({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftRightUnsigned => format!(
+            "emela_i64_shift_right_unsigned({}, {})",
             expressions[0], expressions[1]
         ),
         Builtin::Int64BitAnd => format!("({} & {})", expressions[0], expressions[1]),
@@ -3221,6 +3249,38 @@ fn emit_i32_shift_helpers(writer: &mut Writer) {
     writer.line("return INT32_C(0);");
     writer.end_block();
     writer.line("return emela_i32_from_bits((uint32_t)value >> (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_i64_shift_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int64_t emela_i64_shift_left(int64_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return INT64_C(0);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits((uint64_t)value << (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int64_t emela_i64_shift_right(int64_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return value < INT64_C(0) ? -INT64_C(1) : INT64_C(0);");
+    writer.end_block();
+    writer.line("uint64_t shifted = (uint64_t)value >> (uint32_t)by;");
+    writer.begin_block("if (by > INT32_C(0) && value < INT64_C(0))");
+    writer.line("shifted |= UINT64_MAX << (UINT32_C(64) - (uint32_t)by);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits(shifted);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
+    );
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return INT64_C(0);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits((uint64_t)value >> (uint32_t)by);");
     writer.end_block();
     writer.blank();
 }
