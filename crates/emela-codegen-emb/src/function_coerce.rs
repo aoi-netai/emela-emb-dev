@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use emela_core::Type;
 use emela_lir::{Callee, Function, Module, Operand, Seq, Stmt, Term, Value, VarData};
 
-pub(crate) fn lower(module: &mut Module) {
+pub(crate) fn lower(module: &mut Module, closure_functions: &HashSet<emela_lir::FnId>) {
     let reachable = crate::emit::runtime_reachable(module);
     let mut adapters = HashMap::new();
     let mut pending = Vec::new();
@@ -49,6 +49,9 @@ pub(crate) fn lower(module: &mut Module) {
                     _ => None,
                 });
             if let Some(target) = target {
+                if closure_functions.contains(&target) {
+                    continue;
+                }
                 pending.push((*function_id, statement, target, function.vars[*dst].ty));
             }
         }

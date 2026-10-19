@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use emela_core::Type;
+use emela_core::TypeId;
 use emela_lir::{
-    Case, Closure, Const, Function, LabelId, Module, OnFail, Operand, Seq, SeqId, Stmt, StmtId,
-    Suspend, SwitchOn, Term, Value, VarId,
+    Case, Closure, Const, FnId, Function, LabelId, Module, OnFail, Operand, Seq, SeqId, Stmt,
+    StmtId, Suspend, SwitchOn, Term, Value, VarId,
 };
 
 use crate::{Error, ErrorKind};
@@ -16,8 +17,30 @@ struct BodySlice {
     labels: HashSet<LabelId>,
 }
 
-pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
+#[derive(Default)]
+pub(crate) struct ClosureLowering {
+    pub(crate) module: Option<Module>,
+    pub(crate) functions: HashMap<FnId, usize>,
+    pub(crate) environments: Vec<ClosureEnvironment>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ClosureEnvironment {
+    pub(crate) parent: FnId,
+    pub(crate) function_type: TypeId,
+    pub(crate) captures: Vec<CaptureBinding>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CaptureBinding {
+    pub(crate) source: VarId,
+    pub(crate) local: VarId,
+    pub(crate) ty: TypeId,
+}
+
+pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
     let mut lowered = flow.clone();
+    let mut result = ClosureLowering::default();
     let mut next_name = 0usize;
     loop {
         let reachable = crate::emit::runtime_reachable(&lowered);
@@ -40,7 +63,7 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
         let Some((parent, statement, dst, closure)) = next else {
             break;
         };
-        let parent_function = &lowered.functions[parent];
+        let parent_function = lowered.functions[parent].clone();
         let name = loop {
             let name = format!("{}$static_closure_{}", parent_function.name, next_name);
             next_name += 1;
@@ -59,13 +82,6 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
                 "Closure destination is not a function value",
             ));
         };
-        let captures =
-            static_capture_constants(&lowered, parent_function, &closure).ok_or_else(|| {
-                unsupported(
-                    &parent_function.name,
-                    "closure capturing non-constant values",
-                )
-            })?;
         if function_type.fails || function_type.suspends || function_type.ev || closure.suspends {
             return Err(unsupported(
                 &parent_function.name,
@@ -79,17 +95,44 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
             ));
         }
 
-        let mut lifted = lift_body(parent_function, &closure, &captures, &name)?;
+        let static_captures = static_capture_constants(&lowered, &parent_function, &closure);
+        let (mut lifted, capture_locals) = lift_body(
+            &parent_function,
+            &closure,
+            static_captures.as_deref().unwrap_or_default(),
+            &name,
+        )?;
         lifted.ret = function_type.ret;
         lifted.fails = function_type.fails;
         lifted.suspends = closure.suspends;
         let target = lowered.add(lifted);
+        if static_captures.is_none() {
+            let mut bindings = Vec::with_capacity(closure.captures.len());
+            for &source in &closure.captures {
+                let local = *capture_locals.get(&source).ok_or_else(|| {
+                    invalid_flow_ir(
+                        &parent_function.name,
+                        "closure capture is absent from the lifted body",
+                    )
+                })?;
+                let ty = parent_function.vars[source].ty;
+                bindings.push(CaptureBinding { source, local, ty });
+            }
+            let environment = result.environments.len();
+            result.functions.insert(target, environment);
+            result.environments.push(ClosureEnvironment {
+                parent,
+                function_type: parent_function.vars[dst].ty,
+                captures: bindings,
+            });
+        }
         if let Stmt::Let { value, .. } = &mut lowered.functions[parent].stmts[statement] {
             *value = Value::FnRef(target);
         }
     }
 
-    Ok(lowered)
+    result.module = Some(lowered);
+    Ok(result)
 }
 
 fn static_capture_constants(
@@ -140,12 +183,13 @@ fn lift_body(
     closure: &Closure,
     captures: &[(VarId, Const)],
     name: &str,
-) -> Result<Function, Vec<Error>> {
+) -> Result<(Function, HashMap<VarId, VarId>), Vec<Error>> {
     let mut slice = BodySlice::default();
     visit_sequence(parent, closure.body, &mut slice, name)?;
     for &parameter in &closure.params {
         slice.variables.insert(parameter);
     }
+    slice.variables.extend(closure.captures.iter().copied());
 
     let mut lifted = Function::new(name);
     let mut variable_map = HashMap::new();
@@ -235,7 +279,7 @@ fn lift_body(
     }
     initializers.append(&mut lifted.seqs[body].stmts);
     lifted.seqs[body].stmts = initializers;
-    Ok(lifted)
+    Ok((lifted, variable_map))
 }
 
 fn visit_sequence(

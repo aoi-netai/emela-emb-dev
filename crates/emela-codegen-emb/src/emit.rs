@@ -24,30 +24,60 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             ),
         }]);
     }
-    let mut lowered_flow = crate::static_closure::lower(flow)?;
-    crate::function_coerce::lower(&mut lowered_flow);
+    let mut closures = crate::static_closure::lower(flow)?;
+    let mut lowered_flow = closures
+        .module
+        .take()
+        .expect("closure lowering returns its Flow IR module");
+    let closure_functions: HashSet<_> = closures.functions.keys().copied().collect();
+    crate::function_coerce::lower(&mut lowered_flow, &closure_functions);
     crate::static_handler::lower(&mut lowered_flow);
     crate::verify_flow(&lowered_flow)?;
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
-    let layouts = TypeLayouts::new(flow, &emitted_functions)?;
+    let layouts = TypeLayouts::new(flow, &emitted_functions, &closures)?;
+    for environment in &closures.environments {
+        let parent = &flow.functions[environment.parent];
+        for capture in &environment.captures {
+            if type_contains_cell(&layouts, capture.ty, &mut HashSet::new()) {
+                return Err(unsupported(
+                    &parent.name,
+                    "closure capturing a stack-local Cell",
+                ));
+            }
+            if !matches!(layouts.types[capture.ty], Type::String)
+                && closure_capture_contains_string(
+                    &layouts,
+                    &mut layouts.types.clone(),
+                    capture.ty,
+                    &mut HashSet::new(),
+                )
+            {
+                return Err(unsupported(
+                    &parent.name,
+                    "closure capturing a tuple, enum, or List that contains a String",
+                ));
+            }
+        }
+    }
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
     validate_local_cells(flow, &emitted_functions, &layouts)?;
     let heap_required = flow.functions.iter().any(|(id, function)| {
-        emitted_functions.contains(&id) && function_needs_heap(function, &layouts)
+        emitted_functions.contains(&id) && function_needs_heap(id, function, &layouts, &closures)
     });
     if options.heap_bytes() == 0 && heap_required {
         let (_, function) = flow
             .functions
             .iter()
             .find(|(id, function)| {
-                emitted_functions.contains(id) && function_needs_heap(function, &layouts)
+                emitted_functions.contains(id)
+                    && function_needs_heap(*id, function, &layouts, &closures)
             })
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
-            "heap-backed List or recursive values with heap_bytes = 0; configure Options::with_heap_bytes",
+            "heap-backed List, recursive value, or closure environment with heap_bytes = 0; configure Options::with_heap_bytes",
         ));
     }
     let mut const_outcomes = HashMap::new();
@@ -158,15 +188,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.line("void emela_embedded_start(void);");
     }
     if heap_required {
-        header.line("/* Retains an owned List value before copying it. */");
+        header.line("/* Retains a value allocated from the fixed heap. */");
         header.line("void emela_embedded_retain(void *value);");
-        header.line("/* Releases an owned List value returned by this module. */");
+        header.line("/* Releases a value allocated from the fixed heap. */");
         header.line("void emela_embedded_release(void *value);");
         header.line("/* Retains the backing owner of an EmelaString value. */");
         header.line("void emela_embedded_retain_string(const EmelaString *value);");
         header.line("/* Releases the backing owner of an EmelaString value. */");
         header.line("void emela_embedded_release_string(EmelaString *value);");
         layouts.emit_public_release_declarations(&mut header);
+        layouts.emit_public_function_ownership_declarations(&mut header);
     }
 
     header.blank();
@@ -294,12 +325,22 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
     source.blank();
+    emit_closure_environment_declarations(&layouts, &closures, &mut source);
     if heap_required {
         layouts.emit_list_node_declarations(&mut source);
         crate::heap::emit_runtime(&mut source, options.heap_bytes());
+        if closures.environments.iter().any(|environment| {
+            environment
+                .captures
+                .iter()
+                .any(|capture| matches!(layouts.types[capture.ty], Type::String))
+        }) {
+            emit_closure_string_copy_helper(&layouts, &mut source);
+        }
         layouts.emit_heap_ownership_helpers(&mut source);
-        layouts.emit_heap_destroy_switch(&mut source);
+        layouts.emit_heap_destroy_switch(&closures.environments, &mut source);
         layouts.emit_public_release_helpers(&mut source);
+        layouts.emit_public_function_ownership_helpers(&mut source);
         crate::heap::emit_public_retain(&mut source);
         crate::heap::emit_public_release(&mut source);
         emit_public_string_ownership(&mut source);
@@ -469,16 +510,31 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         } else if !function.exported || function.fails {
             source.line(&format!(
                 "{};",
-                signature(
-                    &layouts,
-                    function,
-                    name,
-                    true,
-                    function.fails,
-                    takes_string_output
-                )
+                if closures.functions.contains_key(&id) {
+                    closure_signature(&layouts, function, name, true)
+                } else {
+                    signature(
+                        &layouts,
+                        function,
+                        name,
+                        true,
+                        function.fails,
+                        takes_string_output,
+                    )
+                }
             ));
         }
+    }
+    let function_ref_adapters = function_ref_adapters(flow, &emitted_functions, &layouts);
+    for &(target, function_type) in &function_ref_adapters {
+        source.line(&format!(
+            "{};",
+            function_ref_adapter_signature(
+                &layouts,
+                function_type,
+                &function_ref_adapter_name(target, function_type),
+            )
+        ));
     }
     source.blank();
 
@@ -510,14 +566,19 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let name = &names[&id];
         let is_static = !function.exported || function.fails;
         let takes_string_output = string_output_functions.contains(&id);
-        source.begin_block(&signature(
-            &layouts,
-            function,
-            name,
-            is_static,
-            function.fails,
-            takes_string_output,
-        ));
+        let function_signature = if closures.functions.contains_key(&id) {
+            closure_signature(&layouts, function, name, is_static)
+        } else {
+            signature(
+                &layouts,
+                function,
+                name,
+                is_static,
+                function.fails,
+                takes_string_output,
+            )
+        };
+        source.begin_block(&function_signature);
         if function.constant {
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
@@ -594,6 +655,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             ));
         }
         emit_local_declarations(&layouts, function, &string_buffers, &mut source);
+        if let Some(&environment) = layouts.closure_functions.get(&id) {
+            emit_closure_capture_loads(&layouts, function, environment, &mut source);
+        }
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
         let mut protects = Vec::new();
@@ -622,6 +686,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             &mut source,
         )?;
         source.end_block();
+        source.blank();
+    }
+    for &(target, function_type) in &function_ref_adapters {
+        emit_function_ref_adapter(
+            &layouts,
+            &flow.functions[target],
+            function_type,
+            &names[&target],
+            &function_ref_adapter_name(target, function_type),
+            &mut source,
+        );
         source.blank();
     }
     for (id, function) in flow
@@ -715,6 +790,75 @@ fn emit_local_declarations(
     }
     for (name, capacity) in &string_buffers.declarations {
         writer.line(&format!("char {name}[{capacity}];"));
+    }
+}
+
+fn emit_closure_environment_declarations(
+    layouts: &TypeLayouts<'_>,
+    closures: &crate::static_closure::ClosureLowering,
+    writer: &mut Writer,
+) {
+    for (index, environment) in closures.environments.iter().enumerate() {
+        writer.line("typedef struct {");
+        let mut represented = false;
+        for (capture_index, capture) in environment.captures.iter().enumerate() {
+            if layouts.type_repr(capture.ty) == Repr::Void {
+                continue;
+            }
+            represented = true;
+            writer.line(&format!(
+                "  {} c{capture_index};",
+                layouts.c_type(capture.ty)
+            ));
+        }
+        if !represented {
+            writer.line("  uint8_t _unit;");
+        }
+        writer.line(&format!("}} emela_closure_env_{index};"));
+        writer.blank();
+    }
+}
+
+fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    let kind = layouts.string_owner_kind();
+    writer.begin_block("static inline EmelaString emela_heap_copy_string(EmelaString value)");
+    writer.line(&format!(
+        "char *bytes = (char *)emela_heap_allocate((size_t)value.length, UINT32_C({kind}));"
+    ));
+    writer.line("for (uint32_t index = UINT32_C(0); index < (uint32_t)value.length; ++index)");
+    writer.begin_block("");
+    writer.line("bytes[index] = value.data[index];");
+    writer.end_block();
+    writer.line("EmelaString copy = { bytes, value.length, bytes };");
+    writer.ret(Some("copy"));
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_closure_capture_loads(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    environment: usize,
+    writer: &mut Writer,
+) {
+    let captures = &layouts.closure_environments[environment].captures;
+    writer.begin_block("if (emela_env == NULL)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_PANIC, \"null closure environment\", UINT16_C(24));",
+    );
+    writer.end_block();
+    for (capture_index, capture) in captures.iter().enumerate() {
+        if layouts.type_repr(capture.ty) == Repr::Void {
+            continue;
+        }
+        let source = format!("((emela_closure_env_{environment} *)emela_env)->c{capture_index}");
+        if layouts.is_managed_value(capture.ty) {
+            layouts.emit_retain_value_expression(capture.ty, &source, writer);
+        }
+        writer.assign(&variable_name(capture.local), &source);
+        if layouts.is_managed_value(function.vars[capture.local].ty) {
+            writer.assign(&owned_variable_name(capture.local), "INT32_C(1)");
+        }
     }
 }
 
@@ -1430,6 +1574,40 @@ fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSe
     type_contains_string_with_types(layouts, &mut types, ty, seen)
 }
 
+fn closure_capture_contains_string(
+    layouts: &TypeLayouts<'_>,
+    types: &mut TypeTable,
+    ty: TypeId,
+    seen: &mut HashSet<TypeId>,
+) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types[ty].clone() {
+        Type::String => true,
+        Type::Tuple(fields) => fields
+            .into_iter()
+            .any(|field| closure_capture_contains_string(layouts, types, field, seen)),
+        Type::List(element) | Type::Cell(element) => {
+            closure_capture_contains_string(layouts, types, element, seen)
+        }
+        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
+            variant.tys.iter().any(|&field| {
+                let field = types.subst(field, &args);
+                closure_capture_contains_string(layouts, types, field, seen)
+            })
+        }),
+        Type::Fn(function) => {
+            function
+                .params
+                .into_iter()
+                .any(|parameter| closure_capture_contains_string(layouts, types, parameter, seen))
+                || closure_capture_contains_string(layouts, types, function.ret, seen)
+        }
+        _ => false,
+    }
+}
+
 fn failure_value_contains_string(layouts: &TypeLayouts<'_>, function: &Function) -> bool {
     function.seqs.iter().any(|(_, sequence)| {
         let Term::Fail(operand) = &sequence.term else {
@@ -1714,7 +1892,7 @@ fn validate_function_value_types(
                 .map_or("function value", |(_, function)| function.name.as_str());
             return Err(unsupported(
                 owner,
-                "function values outside the non-failing scalar function ABI",
+                "function values outside the scalar, non-suspending function ABI",
             ));
         }
     }
@@ -2027,7 +2205,12 @@ fn validate_isr_function(
     Ok(())
 }
 
-fn function_needs_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
+fn function_needs_heap(
+    function_id: FnId,
+    function: &Function,
+    layouts: &TypeLayouts<'_>,
+    closures: &crate::static_closure::ClosureLowering,
+) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
         let Stmt::Let {
@@ -2095,6 +2278,10 @@ fn function_needs_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
         || returns_managed_alias
         || local_managed_value
         || returns_managed_aggregate
+        || closures
+            .environments
+            .iter()
+            .any(|environment| environment.parent == function_id)
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -3058,7 +3245,7 @@ fn emit_indirect_call(
     }
 
     let callee_name = variable_name(callee);
-    writer.begin_block(&format!("if ({callee_name} == NULL)"));
+    writer.begin_block(&format!("if ({callee_name}.call == NULL)"));
     writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"null function value\", UINT16_C(19));");
     writer.end_block();
     if let Some(edge) = on_fail {
@@ -3067,7 +3254,8 @@ fn emit_indirect_call(
         writer.begin_block("");
         writer.decl("EmelaError", &error_name, Some("{0}"));
         call_args.push(format!("&{error_name}"));
-        let expression = format!("{callee_name}({})", call_args.join(", "));
+        call_args.insert(0, format!("{callee_name}.env"));
+        let expression = format!("{callee_name}.call({})", call_args.join(", "));
         if let Some(result) = dst {
             writer.assign(&variable_name(result), &expression);
         } else {
@@ -3091,7 +3279,8 @@ fn emit_indirect_call(
         writer.end_block();
         writer.end_block();
     } else {
-        let expression = format!("{callee_name}({})", call_args.join(", "));
+        call_args.insert(0, format!("{callee_name}.env"));
+        let expression = format!("{callee_name}.call({})", call_args.join(", "));
         if let Some(result) = dst {
             writer.assign(&variable_name(result), &expression);
         } else {
@@ -3911,7 +4100,63 @@ fn emit_statement_inner(
                             "FnRef target is not reachable for C emission",
                         )
                     })?;
-                    writer.assign(&variable_name(*dst), name);
+                    let destination = variable_name(*dst);
+                    if let Some(&environment) = layouts.closure_functions.get(target) {
+                        let closure_environment = &layouts.closure_environments[environment];
+                        if closure_environment.function_type != function.vars[*dst].ty {
+                            return Err(invalid_flow_ir(
+                                &function.name,
+                                "closure function type differs from its closure value type",
+                            ));
+                        }
+                        writer.assign(&format!("{destination}.call"), name);
+                        let kind = layouts.closure_environment_kind(environment);
+                        writer.assign(
+                            &format!("{destination}.env"),
+                            &format!(
+                                "emela_heap_allocate(sizeof(emela_closure_env_{environment}), UINT32_C({kind}))"
+                            ),
+                        );
+                        for (capture_index, capture) in
+                            closure_environment.captures.iter().enumerate()
+                        {
+                            if layouts.type_repr(capture.ty) == Repr::Void {
+                                continue;
+                            }
+                            if matches!(layouts.types[capture.ty], Type::String) {
+                                writer.assign(
+                                    &format!(
+                                        "((emela_closure_env_{environment} *){destination}.env)->c{capture_index}"
+                                    ),
+                                    &format!(
+                                        "emela_heap_copy_string({})",
+                                        variable_name(capture.source)
+                                    ),
+                                );
+                                continue;
+                            }
+                            if layouts.is_managed_value(capture.ty) {
+                                layouts.emit_retain_value_expression(
+                                    capture.ty,
+                                    &variable_name(capture.source),
+                                    writer,
+                                );
+                            }
+                            writer.assign(
+                                &format!(
+                                    "((emela_closure_env_{environment} *){destination}.env)->c{capture_index}"
+                                ),
+                                &variable_name(capture.source),
+                            );
+                        }
+                    } else {
+                        let function_type = function.vars[*dst].ty;
+                        writer.assign(
+                            &format!("{destination}.call"),
+                            &function_ref_adapter_name(*target, function_type),
+                        );
+                        writer.assign(&format!("{destination}.env"), "NULL");
+                    }
                 }
                 Value::IsError { error, enum_id } => {
                     if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
@@ -6637,6 +6882,123 @@ fn signature(
     format!("{linkage}{return_type} {name}({params})")
 }
 
+fn closure_signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    is_static: bool,
+) -> String {
+    let signature = signature(layouts, function, name, is_static, false, false);
+    let open = signature
+        .find('(')
+        .expect("function signature contains an opening parenthesis");
+    let params = &signature[open + 1..signature.len() - 1];
+    if params == "void" {
+        format!("{}(void *emela_env)", &signature[..open])
+    } else {
+        format!("{}(void *emela_env, {params})", &signature[..open])
+    }
+}
+
+fn function_ref_adapters(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    layouts: &TypeLayouts<'_>,
+) -> Vec<(FnId, TypeId)> {
+    let mut adapters = HashSet::new();
+    for (function_id, function) in flow.functions.iter() {
+        if !emitted.contains(&function_id) {
+            continue;
+        }
+        for (_, statement) in function.stmts.iter() {
+            let Stmt::Let {
+                dst: Some(dst),
+                value: Value::FnRef(target),
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            if !layouts.closure_functions.contains_key(target) {
+                adapters.insert((*target, function.vars[*dst].ty));
+            }
+        }
+    }
+    let mut adapters: Vec<_> = adapters.into_iter().collect();
+    adapters.sort_by_key(|(target, function_type)| {
+        (u32::from(target.into_raw()), function_type.index())
+    });
+    adapters
+}
+
+fn function_ref_adapter_name(target: FnId, function_type: TypeId) -> String {
+    format!(
+        "emela_fn_ref_adapter_{}_{}",
+        u32::from(target.into_raw()),
+        function_type.index()
+    )
+}
+
+fn function_ref_adapter_signature(
+    layouts: &TypeLayouts<'_>,
+    function_type: TypeId,
+    name: &str,
+) -> String {
+    let Type::Fn(function_type) = layouts.types[function_type].clone() else {
+        unreachable!("function reference adapter has a non-function type")
+    };
+    let mut params = vec!["void *emela_env".to_owned()];
+    for (index, &parameter) in function_type.params.iter().enumerate() {
+        if layouts.type_repr(parameter) != Repr::Void {
+            params.push(format!("{} emela_arg_{index}", layouts.c_type(parameter)));
+        }
+    }
+    if function_type.fails {
+        params.push("EmelaError *emela_error_out".to_owned());
+    }
+    format!(
+        "static {} {name}({})",
+        layouts.c_type(function_type.ret),
+        params.join(", ")
+    )
+}
+
+fn emit_function_ref_adapter(
+    layouts: &TypeLayouts<'_>,
+    target: &Function,
+    function_type: TypeId,
+    target_name: &str,
+    adapter_name: &str,
+    writer: &mut Writer,
+) {
+    let Type::Fn(function_type_data) = layouts.types[function_type].clone() else {
+        unreachable!("function reference adapter has a non-function type")
+    };
+    writer.begin_block(&function_ref_adapter_signature(
+        layouts,
+        function_type,
+        adapter_name,
+    ));
+    writer.line("(void)emela_env;");
+    let mut args = Vec::new();
+    for (index, &parameter) in target.params.iter().enumerate() {
+        if layouts.type_repr(target.vars[parameter].ty) != Repr::Void {
+            args.push(format!("emela_arg_{index}"));
+        }
+    }
+    if function_type_data.fails {
+        args.push("emela_error_out".to_owned());
+    }
+    let call = format!("{target_name}({})", args.join(", "));
+    if layouts.type_repr(function_type_data.ret) == Repr::Void {
+        writer.line(&format!("{call};"));
+        writer.ret(None);
+    } else {
+        writer.ret(Some(&call));
+    }
+    writer.end_block();
+}
+
 fn emit_fallible_wrapper(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6706,12 +7068,19 @@ struct TypeLayouts<'a> {
     list_types: Vec<TypeId>,
     list_ids: HashMap<TypeId, usize>,
     function_types: Vec<TypeId>,
+    closure_function_types: HashSet<TypeId>,
+    closure_functions: HashMap<FnId, usize>,
+    closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
     error_types: Vec<(EnumId, TypeId)>,
     has_error_abi: bool,
 }
 
 impl<'a> TypeLayouts<'a> {
-    fn new(flow: &'a emela_lir::Module, emitted: &HashSet<FnId>) -> Result<Self, Vec<Error>> {
+    fn new(
+        flow: &'a emela_lir::Module,
+        emitted: &HashSet<FnId>,
+        closures: &crate::static_closure::ClosureLowering,
+    ) -> Result<Self, Vec<Error>> {
         let mut layouts = TypeLayouts {
             core: &flow.core,
             types: flow.core.types.clone(),
@@ -6723,6 +7092,13 @@ impl<'a> TypeLayouts<'a> {
             list_types: Vec::new(),
             list_ids: HashMap::new(),
             function_types: Vec::new(),
+            closure_function_types: closures
+                .environments
+                .iter()
+                .map(|environment| environment.function_type)
+                .collect(),
+            closure_functions: closures.functions.clone(),
+            closure_environments: closures.environments.clone(),
             error_types: Vec::new(),
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
@@ -6821,6 +7197,7 @@ impl<'a> TypeLayouts<'a> {
                 match layouts.types[ty].clone() {
                     Type::List(_) => {}
                     Type::Cell(_) => {}
+                    Type::Fn(_) => {}
                     Type::Any => {
                         return Err(unsupported(
                             &function.name,
@@ -7025,6 +7402,9 @@ impl<'a> TypeLayouts<'a> {
         if matches!(self.types[ty], Type::String | Type::List(_)) {
             return true;
         }
+        if matches!(self.types[ty], Type::Fn(_)) {
+            return self.closure_function_types.contains(&ty);
+        }
         if !seen.insert(ty) {
             return false;
         }
@@ -7051,6 +7431,9 @@ impl<'a> TypeLayouts<'a> {
     fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
         if matches!(self.types[ty], Type::List(_)) {
             return true;
+        }
+        if matches!(self.types[ty], Type::Fn(_)) {
+            return self.closure_function_types.contains(&ty);
         }
         if !seen.insert(ty) {
             return false;
@@ -7092,6 +7475,11 @@ impl<'a> TypeLayouts<'a> {
             .expect("too many fixed-heap object kinds")
     }
 
+    fn closure_environment_kind(&self, index: usize) -> u32 {
+        u32::try_from(self.string_owner_kind() as usize + 1 + index)
+            .expect("too many fixed-heap object kinds")
+    }
+
     fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize> {
         let index = *self.aggregate_ids.get(&ty)?;
         self.is_managed_value(ty).then_some(index)
@@ -7102,6 +7490,8 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!("emela_heap_retain({expression});"));
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!("emela_heap_retain(({expression}).owner);"));
+        } else if matches!(self.types[ty], Type::Fn(_)) {
+            writer.line(&format!("emela_heap_retain(({expression}).env);"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_retain_value_{index}(&({expression}));"
@@ -7125,6 +7515,10 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!(
                 "emela_heap_enqueue(({expression}).owner, {pending}, {tail});"
             ));
+        } else if matches!(self.types[ty], Type::Fn(_)) {
+            writer.line(&format!(
+                "emela_heap_enqueue(({expression}).env, {pending}, {tail});"
+            ));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_enqueue_value_{index}(&({expression}), {pending}, {tail});"
@@ -7137,6 +7531,8 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!("emela_heap_release({expression});"));
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!("emela_heap_release(({expression}).owner);"));
+        } else if matches!(self.types[ty], Type::Fn(_)) {
+            writer.line(&format!("emela_heap_release(({expression}).env);"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!(
                 "emela_heap_release_value_{index}(&({expression}));"
@@ -7302,7 +7698,11 @@ impl<'a> TypeLayouts<'a> {
         }
     }
 
-    fn emit_heap_destroy_switch(&self, writer: &mut Writer) {
+    fn emit_heap_destroy_switch(
+        &self,
+        environments: &[crate::static_closure::ClosureEnvironment],
+        writer: &mut Writer,
+    ) {
         writer.begin_block(
             "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
         );
@@ -7349,6 +7749,27 @@ impl<'a> TypeLayouts<'a> {
         writer.begin_block("");
         writer.line("break;");
         writer.end_block();
+        for (index, environment) in environments.iter().enumerate() {
+            let kind = self.closure_environment_kind(index);
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            writer.line(&format!(
+                "emela_closure_env_{index} *environment = (emela_closure_env_{index} *)value;"
+            ));
+            for (capture_index, capture) in environment.captures.iter().enumerate() {
+                if self.type_repr(capture.ty) != Repr::Void && self.is_managed_value(capture.ty) {
+                    self.emit_enqueue_value_expression(
+                        capture.ty,
+                        &format!("environment->c{capture_index}"),
+                        "pending",
+                        "tail",
+                        writer,
+                    );
+                }
+            }
+            writer.line("break;");
+            writer.end_block();
+        }
         writer.line("default:");
         writer.begin_block("");
         writer.line(&format!(
@@ -7405,6 +7826,52 @@ impl<'a> TypeLayouts<'a> {
         }
     }
 
+    fn emit_public_function_ownership_declarations(&self, writer: &mut Writer) {
+        for &ty in &self.function_types {
+            if !self.closure_function_types.contains(&ty) {
+                continue;
+            }
+            let function_type = self.c_type(ty);
+            writer.line("/* Retains the environment owned by this function value. */");
+            writer.line(&format!(
+                "void emela_embedded_retain_function_{}(const {function_type} *value);",
+                ty.index()
+            ));
+            writer.line("/* Releases the environment owned by this function value. */");
+            writer.line(&format!(
+                "void emela_embedded_release_function_{}({function_type} *value);",
+                ty.index()
+            ));
+        }
+    }
+
+    fn emit_public_function_ownership_helpers(&self, writer: &mut Writer) {
+        for &ty in &self.function_types {
+            if !self.closure_function_types.contains(&ty) {
+                continue;
+            }
+            let function_type = self.c_type(ty);
+            writer.begin_block(&format!(
+                "void emela_embedded_retain_function_{}(const {function_type} *value)",
+                ty.index()
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line("emela_heap_retain(value->env);");
+            writer.end_block();
+            writer.end_block();
+            writer.blank();
+            writer.begin_block(&format!(
+                "void emela_embedded_release_function_{}({function_type} *value)",
+                ty.index()
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line("emela_heap_release(value->env);");
+            writer.end_block();
+            writer.end_block();
+            writer.blank();
+        }
+    }
+
     fn emit_list_node_declarations(&self, writer: &mut Writer) {
         for &ty in &self.list_types {
             let Type::List(element) = self.types[ty].clone() else {
@@ -7427,25 +7894,25 @@ impl<'a> TypeLayouts<'a> {
             let Type::Fn(function_type) = self.types[ty].clone() else {
                 unreachable!("function type registry contains a non-function")
             };
-            let mut parameters = function_type
-                .params
-                .iter()
-                .filter(|&&parameter| self.type_repr(parameter) != Repr::Void)
-                .map(|&parameter| self.c_type(parameter))
-                .collect::<Vec<_>>();
+            let mut parameters = vec!["void *emela_env".to_owned()];
+            parameters.extend(
+                function_type
+                    .params
+                    .iter()
+                    .filter(|&&parameter| self.type_repr(parameter) != Repr::Void)
+                    .map(|&parameter| self.c_type(parameter)),
+            );
             if function_type.fails {
-                parameters.push("EmelaError *".to_owned());
+                parameters.push("EmelaError *emela_error_out".to_owned());
             }
-            let parameters = if parameters.is_empty() {
-                "void".to_owned()
-            } else {
-                parameters.join(", ")
-            };
+            writer.line("typedef struct {");
             writer.line(&format!(
-                "typedef {} (*{})({parameters});",
+                "  {} (*call)({});",
                 self.c_type(function_type.ret),
-                function_type_name(ty)
+                parameters.join(", ")
             ));
+            writer.line("  void *env;");
+            writer.line(&format!("}} {};", function_type_name(ty)));
         }
         if !self.function_types.is_empty() {
             writer.blank();
