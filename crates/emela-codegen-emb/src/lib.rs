@@ -4,7 +4,6 @@
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
 mod emit;
-#[allow(dead_code)]
 mod writer;
 
 /// Configuration for embedded C generation.

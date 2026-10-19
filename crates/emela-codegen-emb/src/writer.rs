@@ -33,6 +33,13 @@ impl Writer {
         self.line("}");
     }
 
+    pub(crate) fn ret(&mut self, value: Option<&str>) {
+        match value {
+            Some(value) => self.line(&format!("return {value};")),
+            None => self.line("return;"),
+        }
+    }
+
     pub(crate) fn finish(self) -> String {
         self.output
     }
