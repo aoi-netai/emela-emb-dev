@@ -59,12 +59,13 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
                 "Closure destination is not a function value",
             ));
         };
-        if !closure.captures.is_empty() {
-            return Err(unsupported(
-                &parent_function.name,
-                "closure with captured variables",
-            ));
-        }
+        let captures =
+            static_capture_constants(&lowered, parent_function, &closure).ok_or_else(|| {
+                unsupported(
+                    &parent_function.name,
+                    "closure capturing non-constant values",
+                )
+            })?;
         if function_type.fails || function_type.suspends || function_type.ev || closure.suspends {
             return Err(unsupported(
                 &parent_function.name,
@@ -78,7 +79,7 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
             ));
         }
 
-        let mut lifted = lift_body(parent_function, &closure, &name)?;
+        let mut lifted = lift_body(parent_function, &closure, &captures, &name)?;
         lifted.ret = function_type.ret;
         lifted.fails = function_type.fails;
         lifted.suspends = closure.suspends;
@@ -91,7 +92,55 @@ pub(crate) fn lower(flow: &Module) -> Result<Module, Vec<Error>> {
     Ok(lowered)
 }
 
-fn lift_body(parent: &Function, closure: &Closure, name: &str) -> Result<Function, Vec<Error>> {
+fn static_capture_constants(
+    module: &Module,
+    parent: &Function,
+    closure: &Closure,
+) -> Option<Vec<(VarId, Const)>> {
+    closure
+        .captures
+        .iter()
+        .map(|&capture| {
+            let value = parent
+                .stmts
+                .iter()
+                .find_map(|(_, statement)| match statement {
+                    Stmt::Let {
+                        dst: Some(dst),
+                        value: Value::Const(value),
+                        ..
+                    } if *dst == capture => Some(value.clone()),
+                    _ => None,
+                })?;
+            let ty = parent.vars[capture].ty;
+            let valid = match (&module.core.types[ty], &value) {
+                (Type::Unit, Const::Unit)
+                | (Type::Int, Const::Int(_))
+                | (Type::Bool, Const::Bool(_))
+                | (Type::Int64, Const::Int64(_))
+                | (Type::Float, Const::Float(_))
+                | (Type::String, Const::String(_)) => true,
+                (Type::Enum(enum_id, _), Const::Int(_)) => {
+                    let definition = &module.core.enums[*enum_id];
+                    !definition.external
+                        && definition
+                            .variants
+                            .iter()
+                            .all(|variant| variant.tys.is_empty())
+                }
+                _ => false,
+            };
+            valid.then_some((capture, value))
+        })
+        .collect()
+}
+
+fn lift_body(
+    parent: &Function,
+    closure: &Closure,
+    captures: &[(VarId, Const)],
+    name: &str,
+) -> Result<Function, Vec<Error>> {
     let mut slice = BodySlice::default();
     visit_sequence(parent, closure.body, &mut slice, name)?;
     for &parameter in &closure.params {
@@ -168,6 +217,24 @@ fn lift_body(parent: &Function, closure: &Closure, name: &str) -> Result<Functio
         };
     }
     lifted.body = Some(mapped_id(&sequence_map, closure.body, name)?);
+    let body = lifted.body.expect("lifted closure body was assigned");
+    let mut initializers = Vec::new();
+    for (capture, value) in captures {
+        if matches!(value, Const::Unit) {
+            continue;
+        }
+        let Some(&dst) = variable_map.get(capture) else {
+            continue;
+        };
+        initializers.push(lifted.stmts.alloc(Stmt::Let {
+            dst: Some(dst),
+            value: Value::Const(value.clone()),
+            on_defect: None,
+            on_suspend: None,
+        }));
+    }
+    initializers.append(&mut lifted.seqs[body].stmts);
+    lifted.seqs[body].stmts = initializers;
     Ok(lifted)
 }
 
