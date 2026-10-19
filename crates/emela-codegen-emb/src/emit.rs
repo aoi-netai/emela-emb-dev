@@ -95,6 +95,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         };
         names.insert(id, implementation_name);
     }
+    validate_isr_entries(flow, &emitted_functions, &layouts, &names, options)?;
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -1298,6 +1299,133 @@ fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
         }
     }
     reachable
+}
+
+fn validate_isr_entries(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    layouts: &TypeLayouts<'_>,
+    names: &HashMap<FnId, String>,
+    options: &Options,
+) -> Result<(), Vec<Error>> {
+    for entry_name in &options.isr_entries {
+        let Some((entry, _)) = flow.functions.iter().find(|(id, function)| {
+            emitted.contains(id) && function.exported && function.name == *entry_name
+        }) else {
+            return Err(vec![Error {
+                kind: ErrorKind::InvalidOptions,
+                message: format!(
+                    "ISR entry `{entry_name}` must name an emitted exported Emela function"
+                ),
+            }]);
+        };
+        validate_isr_function(
+            flow,
+            entry,
+            entry_name,
+            layouts,
+            names,
+            options,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_isr_function(
+    flow: &emela_lir::Module,
+    id: FnId,
+    entry_name: &str,
+    layouts: &TypeLayouts<'_>,
+    names: &HashMap<FnId, String>,
+    options: &Options,
+    active: &mut HashSet<FnId>,
+    complete: &mut HashSet<FnId>,
+) -> Result<(), Vec<Error>> {
+    if active.contains(&id) {
+        return Err(unsupported(
+            &flow.functions[id].name,
+            &format!("recursive call reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+    if complete.contains(&id) {
+        return Ok(());
+    }
+    let function = &flow.functions[id];
+    if function.suspends {
+        return Err(unsupported(
+            &function.name,
+            &format!("suspending function reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+    if std::iter::once(function.ret)
+        .chain(function.vars.iter().map(|(_, variable)| variable.ty))
+        .any(|ty| layouts.contains_list_ref(ty, &mut HashSet::new()))
+    {
+        return Err(unsupported(
+            &function.name,
+            &format!("heap-backed List value reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+
+    active.insert(id);
+    for (_, statement) in function.stmts.iter() {
+        let Stmt::Let {
+            value: Value::Call {
+                callee, suspends, ..
+            },
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        if *suspends {
+            active.remove(&id);
+            return Err(unsupported(
+                &function.name,
+                &format!("suspending call reachable from ISR entry `{entry_name}`"),
+            ));
+        }
+        match callee {
+            Callee::Direct(callee_id) => {
+                let callee = &flow.functions[*callee_id];
+                if callee.suspends {
+                    active.remove(&id);
+                    return Err(unsupported(
+                        &function.name,
+                        &format!("suspending call reachable from ISR entry `{entry_name}`"),
+                    ));
+                }
+                if callee.external.is_some() {
+                    let symbol = &names[callee_id];
+                    if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
+                        active.remove(&id);
+                        return Err(unsupported(
+                            &function.name,
+                            &format!(
+                                "external C function `{symbol}` reachable from ISR entry `{entry_name}` is not marked ISR-safe"
+                            ),
+                        ));
+                    }
+                } else if !callee.constant {
+                    validate_isr_function(
+                        flow, *callee_id, entry_name, layouts, names, options, active, complete,
+                    )?;
+                }
+            }
+            Callee::Indirect(_) | Callee::Op { .. } => {
+                active.remove(&id);
+                return Err(unsupported(
+                    &function.name,
+                    &format!("dynamic call reachable from ISR entry `{entry_name}`"),
+                ));
+            }
+        }
+    }
+    active.remove(&id);
+    complete.insert(id);
+    Ok(())
 }
 
 fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {

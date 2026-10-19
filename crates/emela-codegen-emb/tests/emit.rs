@@ -3736,6 +3736,133 @@ fn compiles_direct_calls_to_internal_and_external_c_functions() {
 }
 
 #[test]
+fn validates_isr_entries_and_external_safety() {
+    let core = emela_core::Module::new();
+    let external = {
+        let builder = FnBuilder::new(&core, "timer_tick");
+        builder.finish_external(External {
+            bindings: vec![ExternalBinding {
+                target: "c".to_owned(),
+                host: HostRef::Global("board_timer_tick".to_owned()),
+            }],
+        })
+    };
+    let mut flow = Module::new(core);
+    let external_id = flow.add(external);
+    let entry = {
+        let mut builder = FnBuilder::new(&flow.core, "on_timer");
+        builder.set_exported();
+        builder.let_(
+            None,
+            Value::Call {
+                callee: Callee::Direct(external_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    flow.add(entry);
+
+    let errors = compile_flow(&flow, &Options::default().with_isr_entry("on_timer"))
+        .expect_err("require an ISR-safe annotation for external C calls");
+    assert!(errors[0].message.contains("not marked ISR-safe"));
+
+    let output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_isr_entry("on_timer")
+            .with_isr_safe_external("board_timer_tick"),
+    )
+    .expect("accept an explicitly ISR-safe external C function");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nstatic int tick_count;\nvoid board_timer_tick(void) { tick_count++; }\nint main(void) { emela_export_on_timer_1(); return tick_count == 1 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn rejects_unknown_or_heap_using_isr_entries() {
+    let core = emela_core::Module::new();
+    let function = {
+        let mut builder = FnBuilder::new(&core, "plain_interrupt");
+        builder.set_ret(TypeId::UNIT).set_exported();
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default().with_isr_entry("missing_interrupt"),
+    )
+    .expect_err("require configured ISR entries to name exported functions");
+    assert_eq!(errors[0].kind, ErrorKind::InvalidOptions);
+
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "list_interrupt");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(1).into()],
+                tail: None,
+            },
+        );
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(list));
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_isr_entry("list_interrupt"),
+    )
+    .expect_err("reject heap-backed List values reachable from an ISR");
+    assert!(errors[0].message.contains("heap-backed List"));
+}
+
+#[test]
+fn rejects_recursive_calls_reachable_from_isr_entries() {
+    let core = emela_core::Module::new();
+    let mut flow = Module::new(core);
+    let entry_id = flow.declare("recursive_interrupt");
+    let entry = {
+        let mut builder = FnBuilder::new(&flow.core, "recursive_interrupt");
+        builder.set_ret(TypeId::UNIT).set_exported();
+        builder.let_(
+            None,
+            Value::Call {
+                callee: Callee::Direct(entry_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    flow.define(entry_id, entry);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default().with_isr_entry("recursive_interrupt"),
+    )
+    .expect_err("reject recursive call graphs reachable from an ISR");
+    assert!(errors[0].message.contains("recursive call"));
+}
+
+#[test]
 fn compiles_if_statements_and_boolean_short_circuiting() {
     let if_expr = emela_core::build::if_(
         emela_core::build::bin(

@@ -16,6 +16,8 @@ mod writer;
 pub struct Options {
     string_capacity: u16,
     heap_bytes: u32,
+    isr_entries: Vec<String>,
+    isr_safe_externals: Vec<String>,
 }
 
 impl Default for Options {
@@ -23,6 +25,8 @@ impl Default for Options {
         Self {
             string_capacity: 256,
             heap_bytes: 0,
+            isr_entries: Vec::new(),
+            isr_safe_externals: Vec::new(),
         }
     }
 }
@@ -53,6 +57,18 @@ impl Options {
     /// Returns the configured byte capacity for the generated fixed heap.
     pub fn heap_bytes(&self) -> u32 {
         self.heap_bytes
+    }
+
+    /// Marks an exported Emela function as an interrupt-service entry point.
+    pub fn with_isr_entry(mut self, function_name: impl Into<String>) -> Self {
+        self.isr_entries.push(function_name.into());
+        self
+    }
+
+    /// Marks a C symbol as safe to call from a configured interrupt-service entry point.
+    pub fn with_isr_safe_external(mut self, symbol: impl Into<String>) -> Self {
+        self.isr_safe_externals.push(symbol.into());
+        self
     }
 }
 
