@@ -179,6 +179,7 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         }
         (Builtin::IntToString, [Const::Int(value)]) => Ok(Const::String(value.to_string())),
         (Builtin::Int64ToString, [Const::Int64(value)]) => Ok(Const::String(value.to_string())),
+        (Builtin::FloatToString, [Const::Float(value)]) => Ok(Const::String(format_float(*value))),
         (Builtin::FloatFromInt, [Const::Int(value)]) => Ok(Const::Float(f64::from(*value))),
         (Builtin::FloatFloor, [Const::Float(value)]) => float_to_int(value.floor()),
         (Builtin::FloatCeil, [Const::Float(value)]) => float_to_int(value.ceil()),
@@ -203,6 +204,128 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         )),
         _ => Err("const body contains an unsupported builtin or builtin operand"),
     }
+}
+
+pub(crate) fn format_float(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == f64::INFINITY {
+        return "Infinity".to_owned();
+    }
+    if value == f64::NEG_INFINITY {
+        return "-Infinity".to_owned();
+    }
+    if value == 0.0 {
+        return "0.0".to_owned();
+    }
+
+    let raw = format!("{value:?}");
+    let (negative, unsigned) = raw
+        .strip_prefix('-')
+        .map_or((false, raw.as_str()), |value| (true, value));
+    let (mantissa, exponent) = unsigned
+        .split_once('e')
+        .or_else(|| unsigned.split_once('E'))
+        .map_or((unsigned, 0), |(mantissa, exponent)| {
+            (
+                mantissa,
+                exponent.parse::<i32>().expect("valid Float exponent"),
+            )
+        });
+    let decimal_position = mantissa.find('.').unwrap_or(mantissa.len()) as i32 + exponent;
+    let mut digits: String = mantissa
+        .chars()
+        .filter(|character| *character != '.')
+        .collect();
+    let leading_zeroes = digits.bytes().take_while(|byte| *byte == b'0').count();
+    if leading_zeroes > 0 {
+        digits.drain(..leading_zeroes);
+    }
+    let decimal_position = decimal_position - leading_zeroes as i32;
+    while digits.len() > 1 && digits.ends_with('0') {
+        digits.pop();
+    }
+
+    let digit_count = digits.len() as i32;
+    let mut output = String::with_capacity(24);
+    if negative {
+        output.push('-');
+    }
+    if digit_count <= decimal_position && decimal_position <= 21 {
+        output.push_str(&digits);
+        for _ in digit_count..decimal_position {
+            output.push('0');
+        }
+        output.push_str(".0");
+    } else if 0 < decimal_position && decimal_position <= 21 {
+        let split = decimal_position as usize;
+        output.push_str(&digits[..split]);
+        output.push('.');
+        output.push_str(&digits[split..]);
+    } else if -6 < decimal_position && decimal_position <= 0 {
+        output.push_str("0.");
+        for _ in decimal_position..0 {
+            output.push('0');
+        }
+        output.push_str(&digits);
+    } else {
+        output.push(digits.as_bytes()[0] as char);
+        if digit_count > 1 {
+            output.push('.');
+            output.push_str(&digits[1..]);
+        }
+        let exponent = decimal_position - 1;
+        output.push('e');
+        output.push(if exponent < 0 { '-' } else { '+' });
+        output.push_str(&exponent.unsigned_abs().to_string());
+    }
+    output
+}
+
+pub(crate) fn parse_float(value: &str) -> Option<f64> {
+    match value {
+        "NaN" => return Some(f64::NAN),
+        "Infinity" | "+Infinity" => return Some(f64::INFINITY),
+        "-Infinity" => return Some(f64::NEG_INFINITY),
+        _ => {}
+    }
+
+    let bytes = value.as_bytes();
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let integer_start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    if index == integer_start {
+        return None;
+    }
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == fraction_start {
+            return None;
+        }
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return None;
+        }
+    }
+    (index == bytes.len())
+        .then(|| value.parse::<f64>().ok())
+        .flatten()
 }
 
 fn float_to_int(value: f64) -> Result<Const, &'static str> {
@@ -373,5 +496,31 @@ fn defect_kind(message: &str) -> &'static str {
         "DIVISION_BY_ZERO"
     } else {
         "PANIC"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_float;
+
+    #[test]
+    fn formats_float_edges_with_emela_decimal_notation() {
+        for (value, expected) in [
+            (0.0, "0.0"),
+            (-0.0, "0.0"),
+            (0.1, "0.1"),
+            (1.0e-6, "0.000001"),
+            (1.0e-7, "1e-7"),
+            (1.0e20, "100000000000000000000.0"),
+            (1.0e21, "1e+21"),
+            (f64::from_bits(1), "5e-324"),
+            (f64::MIN_POSITIVE, "2.2250738585072014e-308"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+        ] {
+            assert_eq!(format_float(value), expected);
+        }
+        assert_eq!(format_float(f64::NAN), "NaN");
     }
 }

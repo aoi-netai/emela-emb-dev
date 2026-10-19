@@ -827,6 +827,15 @@ impl StringBufferPlan {
                         _ => unreachable!(),
                     },
                     Value::Builtin {
+                        op: Builtin::FloatToString,
+                        args,
+                    } if args.len() == 1 => match &args[0] {
+                        Operand::Const(Const::Float(value)) => {
+                            const_eval::format_float(*value).len()
+                        }
+                        _ => 24.min(usize::from(capacity)),
+                    },
+                    Value::Builtin {
                         op: Builtin::StringFromCodePoint,
                         ..
                     } => 4.min(usize::from(capacity)),
@@ -1358,7 +1367,9 @@ fn emit_builtin(
         Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
         Builtin::Int64BitNot => (1, Type::Int64),
         Builtin::Int64ToString => (1, Type::String),
+        Builtin::FloatToString => (1, Type::String),
         Builtin::FloatFromInt => (1, Type::Float),
+        Builtin::FloatParse => (1, Type::Float),
         Builtin::FloatFloor | Builtin::FloatCeil | Builtin::FloatRound | Builtin::FloatTruncate => {
             (1, Type::Int)
         }
@@ -1397,6 +1408,8 @@ fn emit_builtin(
         Builtin::FloatFromInt => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::FloatToString => operand_is_float(layouts, function, &args[0]),
+        Builtin::FloatParse => operand_is_string(layouts, function, &args[0]),
         Builtin::FloatFloor | Builtin::FloatCeil | Builtin::FloatRound | Builtin::FloatTruncate => {
             operand_is_float(layouts, function, &args[0])
         }
@@ -1440,6 +1453,9 @@ fn emit_builtin(
     let result_matches = if matches!(op, Builtin::IntCheckedAdd | Builtin::IntParse) {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::Int))
+    } else if op == Builtin::FloatParse {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::Float))
     } else if op == Builtin::StringFromCodePoint {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::String))
@@ -1516,6 +1532,28 @@ fn emit_builtin(
             writer.assign(&variable_name(dst), &none);
             writer.end_block();
         }
+        return Ok(());
+    }
+    if op == Builtin::FloatParse {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        let Some(Operand::Const(Const::String(value))) = args.first() else {
+            return Err(unsupported(
+                &function.name,
+                "dynamic Float.parse requires an allocation-free bounded decimal parser",
+            ));
+        };
+        let expression = match const_eval::parse_float(value) {
+            Some(parsed) => option_variant_expression(
+                layouts,
+                function,
+                ty,
+                "Some",
+                Some(&float_literal(parsed)),
+            )?,
+            None => none,
+        };
+        writer.assign(&variable_name(dst), &expression);
         return Ok(());
     }
     if op == Builtin::StringFromCodePoint {
@@ -1758,6 +1796,19 @@ fn emit_builtin(
                     "emela_emb_int_to_string({}, {buffer}, UINT16_C({capacity}))",
                     expressions[0]
                 )
+            }
+        },
+        Builtin::FloatToString => match &args[0] {
+            Operand::Const(Const::Float(value)) => {
+                constant_expression(&Const::String(const_eval::format_float(*value)))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                return Err(unsupported(
+                    &function.name,
+                    "dynamic Float.to_string needs an allocation-free shortest-decimal runtime",
+                ));
             }
         },
         Builtin::FloatFromInt => format!("((double)({}))", expressions[0]),

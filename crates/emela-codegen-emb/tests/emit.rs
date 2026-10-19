@@ -546,6 +546,185 @@ fn statically_evaluates_float_rounding_builtin() {
 }
 
 #[test]
+fn statically_formats_float_values_without_runtime_scratch() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut constant = FnBuilder::new(&flow.core, "FLOAT_TEXT");
+    constant
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    let result = constant.assign(
+        "result",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::FloatToString,
+            args: vec![Const::Float(1.0e-6).into()],
+        },
+    );
+    constant.term(Term::Return(Some(result.into())));
+    flow.add(constant.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate Float.to_string const");
+    compile_and_run(
+        output,
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_FLOAT_TEXT_0(); return value.length == UINT16_C(8) && memcmp(value.data, \"0.000001\", 8) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn float_to_string_constant_contributes_its_exact_append_bound() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut builder = FnBuilder::new(&flow.core, "concat_float_and_int");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::INT);
+    let float_text = builder.assign(
+        "float_text",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::FloatToString,
+            args: vec![Const::Float(1.0e-6).into()],
+        },
+    );
+    let int_text = builder.assign(
+        "int_text",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::IntToString,
+            args: vec![input.into()],
+        },
+    );
+    let combined = builder.assign(
+        "combined",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![float_text.into(), int_text.into()],
+        },
+    );
+    let length = builder.assign(
+        "length",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![combined.into()],
+        },
+    );
+    builder.term(Term::Return(Some(length.into())));
+    flow.add(builder.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit bounded String.append");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("C source")
+        .contents;
+    assert!(source.contains("UINT16_C(19)"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { return emela_export_concat_float_and_int_0(INT32_C(42)) == INT32_C(10) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn statically_parses_float_literals_with_the_float_parse_grammar() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let option = flow.core.option_enum();
+    let option_float = flow.core.enum_type(option, vec![TypeId::FLOAT]);
+    for (name, text) in [
+        ("parse_decimal", "+12.5e-1"),
+        ("parse_negative_infinity", "-Infinity"),
+        ("parse_nan", "NaN"),
+        ("reject_leading_decimal", ".5"),
+        ("reject_trailing_decimal", "1."),
+        ("reject_whitespace", " 1"),
+        ("parse_overflow", "1e999"),
+        ("parse_underflow", "1e-999"),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(option_float).set_exported();
+        let result = builder.assign(
+            "result",
+            option_float,
+            Value::Builtin {
+                op: Builtin::FloatParse,
+                args: vec![Const::String(text.to_owned()).into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("fold Float.parse literals");
+    let c_type = format!("emela_type_{}", option_float.index());
+    let harness = format!(
+        "#include <math.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {c_type} value = emela_export_parse_decimal_0(); if (value.tag != 0 || value.payload.v0.f0 != 1.25) return 1; value = emela_export_parse_negative_infinity_1(); if (value.tag != 0 || !isinf(value.payload.v0.f0) || value.payload.v0.f0 > 0.0) return 2; value = emela_export_parse_nan_2(); if (value.tag != 0 || !isnan(value.payload.v0.f0)) return 3; value = emela_export_reject_leading_decimal_3(); if (value.tag != INT32_C({none})) return 4; value = emela_export_reject_trailing_decimal_4(); if (value.tag != INT32_C({none})) return 5; value = emela_export_reject_whitespace_5(); if (value.tag != INT32_C({none})) return 6; value = emela_export_parse_overflow_6(); if (value.tag != 0 || !isinf(value.payload.v0.f0)) return 7; value = emela_export_parse_underflow_7(); if (value.tag != 0 || value.payload.v0.f0 != 0.0) return 8; return 0; }}\n",
+        none = emela_core::OPTION_NONE,
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn dynamic_float_formatting_and_parsing_report_the_runtime_requirement() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut format = FnBuilder::new(&flow.core, "dynamic_float_to_string");
+    format.set_ret(TypeId::INT).set_exported();
+    let input = format.param("input", TypeId::FLOAT);
+    let rendered = format.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::FloatToString,
+            args: vec![input.into()],
+        },
+    );
+    let length = format.assign(
+        "length",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![rendered.into()],
+        },
+    );
+    format.term(Term::Return(Some(length.into())));
+    flow.add(format.finish());
+
+    let error =
+        compile_flow(&flow, &Options::default()).expect_err("reject dynamic Float.to_string");
+    assert_eq!(error[0].kind, ErrorKind::Unsupported);
+    assert!(
+        error[0]
+            .message
+            .contains("allocation-free shortest-decimal runtime")
+    );
+
+    let mut flow = Module::new(emela_core::Module::new());
+    let option = flow.core.option_enum();
+    let option_float = flow.core.enum_type(option, vec![TypeId::FLOAT]);
+    let mut parse = FnBuilder::new(&flow.core, "dynamic_float_parse");
+    parse.set_ret(option_float).set_exported();
+    let input = parse.param("input", TypeId::STRING);
+    let result = parse.assign(
+        "result",
+        option_float,
+        Value::Builtin {
+            op: Builtin::FloatParse,
+            args: vec![input.into()],
+        },
+    );
+    parse.term(Term::Return(Some(result.into())));
+    flow.add(parse.finish());
+
+    let error = compile_flow(&flow, &Options::default()).expect_err("reject dynamic Float.parse");
+    assert_eq!(error[0].kind, ErrorKind::Unsupported);
+    assert!(
+        error[0]
+            .message
+            .contains("allocation-free bounded decimal parser")
+    );
+}
+
+#[test]
 fn int_checked_add_returns_some_or_none_at_int_boundaries() {
     let mut flow = Module::new(emela_core::Module::new());
     let option = flow.core.option_enum();
