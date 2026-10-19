@@ -681,6 +681,32 @@ fn emits_and_runs_a_block_that_yields_a_value() {
 }
 
 #[test]
+fn emits_and_runs_break_to_an_enclosing_block() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "break_value");
+    builder.set_ret(TypeId::INT).set_exported();
+    let result = builder.var("result", TypeId::INT);
+    builder.block(Some(result), "outer", |builder, outer_label| {
+        builder.block(None, "inner", |builder, _inner_label| {
+            builder.term(Term::Break {
+                label: outer_label,
+                value: Some(Operand::Const(Const::Int(137))),
+            });
+        });
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(0)))));
+    });
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit Break to an outer block");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_break_value_0() == INT32_C(137) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
