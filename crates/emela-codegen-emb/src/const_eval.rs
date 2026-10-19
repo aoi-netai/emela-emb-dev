@@ -1,26 +1,85 @@
 use std::collections::HashMap;
 
-use emela_lir::{Const, Function, Operand, PrimOp, PrimTy, Stmt, Term, Value, VarId};
+use emela_lir::{
+    Callee, Const, FnId, Function, Module, Operand, PrimOp, PrimTy, Stmt, Term, Value, VarId,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome {
     Value(Const),
     Defect { kind: &'static str, message: String },
+    SelfReference { message: String },
 }
 
-pub(crate) fn evaluate(function: &Function) -> Result<Outcome, &'static str> {
-    if !function.constant {
-        return Err("function is not marked constant");
+pub(crate) fn evaluate(module: &Module, function: FnId) -> Result<Outcome, &'static str> {
+    match evaluate_function(module, function, Vec::new(), &mut Vec::new())? {
+        Outcome::SelfReference { message } => Ok(Outcome::Defect {
+            kind: "PANIC",
+            message,
+        }),
+        outcome => Ok(outcome),
     }
-    if !function.params.is_empty() {
+}
+
+fn evaluate_function(
+    module: &Module,
+    id: FnId,
+    arguments: Vec<Const>,
+    active: &mut Vec<FnId>,
+) -> Result<Outcome, &'static str> {
+    let function = &module.functions[id];
+    if active.contains(&id) {
+        if function.constant {
+            return Ok(Outcome::SelfReference {
+                message: format!(
+                    "const {} refers to itself while being evaluated",
+                    function.name
+                ),
+            });
+        }
+        return Err("const evaluation reached a recursive helper function");
+    }
+    if arguments.len() != function.params.len() {
+        return Err("direct call has an unsupported argument count");
+    }
+    if function.constant && !arguments.is_empty() {
         return Err("const function has parameters");
     }
     if function.fails || function.suspends || function.external.is_some() {
-        return Err("const function has a failure, suspension, or external body");
+        return Err("called function has a failure, suspension, or external body");
     }
-    let body = function.body.ok_or("const function has no body")?;
+    let body = function.body.ok_or("called function has no body")?;
+
+    active.push(id);
+    let result = evaluate_body(module, function, body, arguments, active);
+    active.pop();
+    let outcome = result?;
+
+    if function.constant {
+        Ok(match outcome {
+            Outcome::Defect { kind, message } => Outcome::Defect {
+                kind,
+                message: format!("while evaluating const {}: {message}", function.name),
+            },
+            other => other,
+        })
+    } else {
+        Ok(outcome)
+    }
+}
+
+fn evaluate_body(
+    module: &Module,
+    function: &Function,
+    body: emela_lir::SeqId,
+    arguments: Vec<Const>,
+    active: &mut Vec<FnId>,
+) -> Result<Outcome, &'static str> {
     let sequence = &function.seqs[body];
     let mut values = HashMap::new();
+    for (&param, value) in function.params.iter().zip(arguments) {
+        values.insert(param, value);
+    }
 
     for &statement_id in &sequence.stmts {
         let Stmt::Let {
@@ -33,63 +92,68 @@ pub(crate) fn evaluate(function: &Function) -> Result<Outcome, &'static str> {
             return Err("const body contains unsupported control flow");
         };
 
-        let value = match value {
-            Value::Const(value) => value.clone(),
-            Value::Prim { op, ty, args } => match evaluate_primitive(
-                *op,
-                *ty,
-                args.iter()
-                    .map(|arg| operand_value(arg, &values))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ) {
-                Ok(value) => value,
-                Err(message) if message == "division by zero" => {
-                    return Ok(with_const_context(
-                        function,
-                        Outcome::Defect {
-                            kind: defect_kind(&message),
-                            message,
-                        },
-                    ));
+        match evaluate_value(module, value, &values, active)? {
+            Outcome::Value(value) => {
+                if let Some(dst) = dst {
+                    values.insert(*dst, value);
                 }
-                Err(_) => return Err("const body contains an unsupported primitive"),
-            },
-            _ => return Err("const body contains a value that is not statically evaluable"),
-        };
-
-        if let Some(dst) = dst {
-            values.insert(*dst, value);
+            }
+            outcome => return Ok(outcome),
         }
     }
 
-    let outcome = match &sequence.term {
-        Term::Return(None) => Outcome::Value(Const::Unit),
-        Term::Return(Some(operand)) => Outcome::Value(operand_value(operand, &values)?),
+    match &sequence.term {
+        Term::Return(None) => Ok(Outcome::Value(Const::Unit)),
+        Term::Return(Some(operand)) => Ok(Outcome::Value(operand_value(operand, &values)?)),
         Term::Defect(operand) => {
             let Const::String(message) = operand_value(operand, &values)? else {
                 return Err("const defect message is not a String");
             };
-            Outcome::Defect {
+            Ok(Outcome::Defect {
                 kind: defect_kind(&message),
                 message,
-            }
+            })
         }
-        _ => return Err("const body has an unsupported terminator"),
-    };
-
-    Ok(match outcome {
-        Outcome::Defect { .. } => with_const_context(function, outcome),
-        value => value,
-    })
+        _ => Err("const body has an unsupported terminator"),
+    }
 }
 
-fn with_const_context(function: &Function, outcome: Outcome) -> Outcome {
-    match outcome {
-        Outcome::Defect { kind, message } => Outcome::Defect {
-            kind,
-            message: format!("while evaluating const {}: {message}", function.name),
-        },
-        value => value,
+fn evaluate_value(
+    module: &Module,
+    value: &Value,
+    values: &HashMap<VarId, Const>,
+    active: &mut Vec<FnId>,
+) -> Result<Outcome, &'static str> {
+    match value {
+        Value::Const(value) => Ok(Outcome::Value(value.clone())),
+        Value::Prim { op, ty, args } => {
+            let args = args
+                .iter()
+                .map(|arg| operand_value(arg, values))
+                .collect::<Result<Vec<_>, _>>()?;
+            match evaluate_primitive(*op, *ty, args) {
+                Ok(value) => Ok(Outcome::Value(value)),
+                Err(message) if message == "division by zero" => Ok(Outcome::Defect {
+                    kind: defect_kind(&message),
+                    message,
+                }),
+                Err(_) => Err("const body contains an unsupported primitive"),
+            }
+        }
+        Value::Call {
+            callee: Callee::Direct(id),
+            args,
+            suspends: false,
+            on_fail: None,
+        } => {
+            let arguments = args
+                .iter()
+                .map(|arg| operand_value(arg, values))
+                .collect::<Result<Vec<_>, _>>()?;
+            evaluate_function(module, *id, arguments, active)
+        }
+        Value::Call { .. } => Err("const body contains an indirect, fallible, or suspending call"),
+        _ => Err("const body contains a value that is not statically evaluable"),
     }
 }
 

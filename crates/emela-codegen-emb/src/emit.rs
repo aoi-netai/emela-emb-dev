@@ -15,46 +15,44 @@ const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
 pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
-    let layouts = TypeLayouts::new(flow)?;
+    let emitted_functions = runtime_reachable(flow);
+    let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let mut const_outcomes = HashMap::new();
-    let mut omitted_consts = HashSet::new();
     for (id, function) in flow
         .functions
         .iter()
-        .filter(|(_, function)| function.constant)
+        .filter(|(id, function)| emitted_functions.contains(id) && function.constant)
     {
-        match const_eval::evaluate(function) {
+        match const_eval::evaluate(flow, id) {
             Ok(outcome) => {
                 const_outcomes.insert(id, outcome);
             }
             Err(reason) => {
-                let caller = flow
-                    .functions
-                    .iter()
-                    .find_map(|(_, caller)| directly_calls(caller, id).then_some(caller));
-                if let Some(caller) = caller {
-                    return Err(unsupported(
-                        &caller.name,
-                        &format!(
-                            "const `{}` cannot be evaluated statically: {reason}",
-                            function.name
-                        ),
-                    ));
-                }
-                if function.exported {
-                    return Err(unsupported(
-                        &function.name,
-                        &format!("const value cannot be evaluated statically: {reason}"),
-                    ));
-                }
-                omitted_consts.insert(id);
+                let caller = flow.functions.iter().find_map(|(caller_id, caller)| {
+                    (emitted_functions.contains(&caller_id)
+                        && !caller.constant
+                        && directly_calls(caller, id))
+                    .then_some(caller)
+                });
+                let location = caller.map_or(function.name.as_str(), |caller| caller.name.as_str());
+                return Err(unsupported(
+                    location,
+                    &format!(
+                        "const `{}` cannot be evaluated statically: {reason}",
+                        function.name
+                    ),
+                ));
             }
         }
     }
 
     let mut names = HashMap::new();
     let mut public_names = HashMap::new();
-    for (id, function) in flow.functions.iter() {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, _)| emitted_functions.contains(id))
+    {
         let name = if function.external.is_some() {
             if function.exported {
                 return Err(unsupported(&function.name, "exported external functions"));
@@ -71,10 +69,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         };
         names.insert(id, implementation_name);
     }
-    let main_entry = flow
-        .functions
-        .iter()
-        .find(|(_, function)| function.exported && function.name == "main");
+    let main_entry = flow.functions.iter().find(|(id, function)| {
+        emitted_functions.contains(id) && function.exported && function.name == "main"
+    });
     if let Some((_, function)) = main_entry
         && !function.params.is_empty()
     {
@@ -97,7 +94,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         header.blank();
     }
 
-    for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported) {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted_functions.contains(id) && f.exported)
+    {
         if function.suspends {
             return Err(unsupported(
                 &function.name,
@@ -145,14 +146,30 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem])
-        || has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem])
-        || flow
-            .functions
-            .iter()
-            .any(|(_, function)| function.exported && function.fails)
-        || flow.functions.iter().any(|(_, function)| {
-            function
+    let needs_defect_hook = has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I32,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) || has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I64,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) || const_outcomes.values().any(|outcome| {
+        matches!(
+            outcome,
+            ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+        )
+    }) || flow.functions.iter().any(|(id, function)| {
+        if !emitted_functions.contains(&id) {
+            return false;
+        }
+        if function.exported && function.fails {
+            return true;
+        }
+        !function.constant
+            && (function
                 .seqs
                 .iter()
                 .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
@@ -165,8 +182,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                             ..
                         }
                     )
-                })
-        });
+                }))
+    });
     if needs_defect_hook {
         board_header.line(
             "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
@@ -186,6 +203,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     source.blank();
     if has_prim(
         flow,
+        &emitted_functions,
         PrimTy::I32,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
     ) {
@@ -197,27 +215,38 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         source.end_block();
         source.blank();
     }
-    if has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem]) {
+    if has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I32,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) {
         emit_i32_division_helpers(&mut source);
     }
     if has_prim(
         flow,
+        &emitted_functions,
         PrimTy::I64,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
     ) {
         emit_i64_wrap_helper(&mut source);
     }
-    if has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem]) {
+    if has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I64,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) {
         emit_i64_division_helpers(&mut source);
     }
-    if has_dynamic_defect(flow) {
+    if has_dynamic_defect(flow, &emitted_functions) {
         emit_dynamic_defect_kind_helper(&mut source);
     }
 
     for (id, function) in flow
         .functions
         .iter()
-        .filter(|(id, _)| !omitted_consts.contains(id))
+        .filter(|(id, _)| emitted_functions.contains(id))
     {
         let name = &names[&id];
         if function.external.is_some() {
@@ -237,7 +266,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     for (id, function) in flow
         .functions
         .iter()
-        .filter(|(id, _)| !omitted_consts.contains(id))
+        .filter(|(id, _)| emitted_functions.contains(id))
     {
         if function.suspends {
             return Err(unsupported(&function.name, "suspending function bodies"));
@@ -295,6 +324,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                         c_string_literal(message.as_bytes())
                     ));
                 }
+                ConstOutcome::SelfReference { message } => {
+                    let length = u16::try_from(message.len()).map_err(|_| {
+                        unsupported(
+                            &function.name,
+                            "a const defect message longer than the embedded C ABI supports",
+                        )
+                    })?;
+                    source.line(&format!(
+                        "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        c_string_literal(message.as_bytes())
+                    ));
+                }
             }
             source.end_block();
             source.blank();
@@ -327,7 +368,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         source.end_block();
         source.blank();
     }
-    for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported && f.fails) {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted_functions.contains(id) && f.exported && f.fails)
+    {
         emit_fallible_wrapper(
             &layouts,
             function,
@@ -373,6 +418,46 @@ fn emit_local_declarations(layouts: &TypeLayouts<'_>, function: &Function, write
             writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
         }
     }
+}
+
+fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
+    let mut pending: Vec<FnId> = flow
+        .functions
+        .iter()
+        .filter_map(|(id, function)| function.exported.then_some(id))
+        .collect();
+    if pending.is_empty() {
+        pending.extend(
+            flow.functions
+                .iter()
+                .filter_map(|(id, function)| (!function.constant).then_some(id)),
+        );
+    }
+
+    let mut reachable = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        let function = &flow.functions[id];
+        if function.constant {
+            continue;
+        }
+        for (_, statement) in function.stmts.iter() {
+            if let Stmt::Let {
+                value:
+                    Value::Call {
+                        callee: Callee::Direct(callee),
+                        ..
+                    },
+                ..
+            } = statement
+            {
+                pending.push(*callee);
+            }
+        }
+    }
+    reachable
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -1142,15 +1227,17 @@ fn defect_kind_for_message(message: &str) -> &'static str {
     }
 }
 
-fn has_dynamic_defect(flow: &emela_lir::Module) -> bool {
-    flow.functions.iter().any(|(_, function)| {
-        function.seqs.iter().any(|(_, sequence)| {
-            matches!(
-                &sequence.term,
-                Term::Defect(Operand::Var(variable))
-                    if matches!(flow.core.ty(function.vars[*variable].ty), Type::String)
-            )
-        })
+fn has_dynamic_defect(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.seqs.iter().any(|(_, sequence)| {
+                matches!(
+                    &sequence.term,
+                    Term::Defect(Operand::Var(variable))
+                        if matches!(flow.core.ty(function.vars[*variable].ty), Type::String)
+                )
+            })
     })
 }
 
@@ -1811,19 +1898,21 @@ fn emit_i64_division_helpers(writer: &mut Writer) {
     writer.blank();
 }
 
-fn has_prim(flow: &emela_lir::Module, ty: PrimTy, ops: &[PrimOp]) -> bool {
-    flow.functions.iter().any(|(_, function)| {
-        function.stmts.iter().any(|(_, statement)| {
-            matches!(
-                statement,
-                Stmt::Let {
-                    value: Value::Prim {
-                        op, ty: found_ty, ..
-                    },
-                    ..
-                } if *found_ty == ty && ops.contains(op)
-            )
-        })
+fn has_prim(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ty: PrimTy, ops: &[PrimOp]) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Prim {
+                            op, ty: found_ty, ..
+                        },
+                        ..
+                    } if *found_ty == ty && ops.contains(op)
+                )
+            })
     })
 }
 
@@ -2026,27 +2115,28 @@ struct TypeLayouts<'a> {
 }
 
 impl<'a> TypeLayouts<'a> {
-    fn new(flow: &'a emela_lir::Module) -> Result<Self, Vec<Error>> {
+    fn new(flow: &'a emela_lir::Module, emitted: &HashSet<FnId>) -> Result<Self, Vec<Error>> {
         let mut layouts = TypeLayouts {
             core: &flow.core,
             types: flow.core.types.clone(),
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
             error_types: Vec::new(),
-            has_error_abi: flow.functions.iter().any(|(_, function)| {
-                function.fails
-                    || function
-                        .seqs
-                        .iter()
-                        .any(|(_, sequence)| matches!(sequence.term, Term::Fail(_)))
-                    || function.stmts.iter().any(|(_, statement)| match statement {
-                        Stmt::Let { value, .. } => match value {
-                            Value::Call { on_fail, .. } => on_fail.is_some(),
-                            Value::IsError { .. } | Value::AsError { .. } => true,
+            has_error_abi: flow.functions.iter().any(|(id, function)| {
+                emitted.contains(&id)
+                    && (function.fails
+                        || function
+                            .seqs
+                            .iter()
+                            .any(|(_, sequence)| matches!(sequence.term, Term::Fail(_)))
+                        || function.stmts.iter().any(|(_, statement)| match statement {
+                            Stmt::Let { value, .. } => match value {
+                                Value::Call { on_fail, .. } => on_fail.is_some(),
+                                Value::IsError { .. } | Value::AsError { .. } => true,
+                                _ => false,
+                            },
                             _ => false,
-                        },
-                        _ => false,
-                    })
+                        }))
             }),
         };
         let mut states = HashMap::new();
@@ -2063,7 +2153,10 @@ impl<'a> TypeLayouts<'a> {
                 layouts.error_types.push((id, ty));
             }
         }
-        for (_, function) in flow.functions.iter() {
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
             layouts.collect(function.ret, &function.name, &mut states)?;
             for (_, variable) in function.vars.iter() {
                 layouts.collect(variable.ty, &function.name, &mut states)?;

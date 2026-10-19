@@ -98,6 +98,71 @@ fn statically_evaluates_const_arithmetic() {
 }
 
 #[test]
+fn evaluates_direct_helper_calls_inside_const_functions() {
+    let core = emela_core::Module::new();
+    let mut helper = FnBuilder::new(&core, "twice");
+    helper.set_ret(TypeId::INT);
+    let value = helper.param("value", TypeId::INT);
+    let result = helper.assign(
+        "result",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Mul,
+            ty: PrimTy::I32,
+            args: vec![value.into(), Const::Int(2).into()],
+        },
+    );
+    helper.term(Term::Return(Some(result.into())));
+    let helper = helper.finish();
+    let mut flow = Module::new(core);
+    let helper_id = flow.add(helper);
+
+    let mut constant = FnBuilder::new(&flow.core, "ANSWER_FROM_HELPER");
+    constant.set_ret(TypeId::INT).set_constant();
+    let value = constant.assign(
+        "value",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(helper_id),
+            args: vec![Const::Int(21).into()],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    constant.term(Term::Return(Some(value.into())));
+    let constant_id = flow.add(constant.finish());
+
+    let mut consumer = FnBuilder::new(&flow.core, "answer_from_helper");
+    consumer.set_ret(TypeId::INT).set_exported();
+    let answer = consumer.assign(
+        "answer",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(constant_id),
+            args: Vec::new(),
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    consumer.term(Term::Return(Some(answer.into())));
+    flow.add(consumer.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate const helper call");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("return INT32_C(42);"));
+    assert!(!source.contains("emela_fn_0"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_answer_from_helper_2() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_a_static_string_const_as_a_view() {
     let core = emela_core::Module::new();
     let mut constant = FnBuilder::new(&core, "GREETING");
