@@ -219,6 +219,67 @@ fn compiles_core_int_add_with_twos_complement_wraparound() {
     );
 }
 
+#[test]
+fn emits_int32_division_and_remainder_with_emela_semantics() {
+    for (op, args, expected) in [
+        (
+            PrimOp::Div,
+            vec![Const::Int(-7), Const::Int(3)],
+            "-INT32_C(2)",
+        ),
+        (
+            PrimOp::Rem,
+            vec![Const::Int(-7), Const::Int(3)],
+            "-INT32_C(1)",
+        ),
+        (
+            PrimOp::Div,
+            vec![Const::Int(i32::MIN), Const::Int(-1)],
+            "INT32_MIN",
+        ),
+        (
+            PrimOp::Rem,
+            vec![Const::Int(i32::MIN), Const::Int(-1)],
+            "INT32_C(0)",
+        ),
+    ] {
+        let output = compile_i32_prim(op, args, TypeId::INT);
+        let harness = format!(
+            "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ (void)kind; (void)message; (void)length; exit(1); }}\nint main(void) {{ return emela_export_probe_0() == {expected} ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
+fn int32_division_by_zero_calls_the_board_defect_hook() {
+    let output = compile_i32_prim(PrimOp::Div, vec![Const::Int(7), Const::Int(0)], TypeId::INT);
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_DIVISION_BY_ZERO && length == UINT16_C(17) && memcmp(message, \"division by zero\", 17) == 0) exit(0); exit(1); }\nint main(void) { (void)emela_export_probe_0(); return 1; }\n",
+    );
+}
+
+fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "probe");
+    builder.set_ret(result_type).set_exported();
+    let result = builder.assign(
+        "result",
+        result_type,
+        Value::Prim {
+            op,
+            ty: PrimTy::I32,
+            args: args.into_iter().map(Operand::Const).collect(),
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    compile_flow(&flow, &Options::default()).expect("emit Int32 primitive")
+}
+
 fn compile_and_run(output: Output, harness_source: &str) {
     let temp = TempDir::new();
     for file in output.files {

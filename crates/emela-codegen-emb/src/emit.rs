@@ -77,13 +77,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     source.line(&format!("#include \"{HEADER_FILE}\""));
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.blank();
-    source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
-    source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
-    source.line("return (int32_t)bits;");
-    source.end_block();
-    source.line("return -INT32_C(1) - (int32_t)(UINT32_MAX - bits);");
-    source.end_block();
-    source.blank();
+    if has_prim(flow, &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg]) {
+        source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
+        source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
+        source.line("return (int32_t)bits;");
+        source.end_block();
+        source.line("return -INT32_C(1) - (int32_t)(UINT32_MAX - bits);");
+        source.end_block();
+        source.blank();
+    }
+    if has_prim(flow, &[PrimOp::Div, PrimOp::Rem]) {
+        emit_i32_division_helpers(&mut source);
+    }
 
     for (id, function) in flow.functions.iter() {
         if function.fails || function.suspends {
@@ -223,9 +228,52 @@ fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<Stri
         (PrimOp::Le, [lhs, rhs]) => comparison_expression(lhs, "<=", rhs),
         (PrimOp::Gt, [lhs, rhs]) => comparison_expression(lhs, ">", rhs),
         (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
-        (PrimOp::Div | PrimOp::Rem, _) => Err("Int32 division or remainder primitive"),
+        (PrimOp::Div, [lhs, rhs]) => Ok(format!("emela_i32_div({lhs}, {rhs})")),
+        (PrimOp::Rem, [lhs, rhs]) => Ok(format!("emela_i32_rem({lhs}, {rhs})")),
         _ => Err("Value::Prim with an invalid arity"),
     }
+}
+
+fn emit_i32_division_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
+    writer.begin_block("if (rhs == INT32_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(17));",
+    );
+    writer.end_block();
+    writer.begin_block("if (lhs == INT32_MIN && rhs == -INT32_C(1))");
+    writer.line("return INT32_MIN;");
+    writer.end_block();
+    writer.line("return lhs / rhs;");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
+    writer.begin_block("if (rhs == INT32_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(17));",
+    );
+    writer.end_block();
+    writer.begin_block("if (lhs == INT32_MIN && rhs == -INT32_C(1))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("return lhs % rhs;");
+    writer.end_block();
+    writer.blank();
+}
+
+fn has_prim(flow: &emela_lir::Module, ops: &[PrimOp]) -> bool {
+    flow.functions.iter().any(|(_, function)| {
+        function.stmts.iter().any(|(_, statement)| {
+            matches!(
+                statement,
+                Stmt::Let {
+                    value: Value::Prim { op, .. },
+                    ..
+                } if ops.contains(op)
+            )
+        })
+    })
 }
 
 fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'static str> {
