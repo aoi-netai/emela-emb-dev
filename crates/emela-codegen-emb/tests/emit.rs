@@ -416,6 +416,40 @@ fn int64_conversions_preserve_sign_and_keep_the_low_32_bits() {
 }
 
 #[test]
+fn int_checked_add_returns_some_or_none_at_int_boundaries() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let option = flow.core.option_enum();
+    let option_int = flow.core.enum_type(option, vec![TypeId::INT]);
+    let mut builder = FnBuilder::new(&flow.core, "int_checked_add");
+    builder.set_ret(option_int).set_exported();
+    let left = builder.param("left", TypeId::INT);
+    let right = builder.param("right", TypeId::INT);
+    let result = builder.assign(
+        "result",
+        option_int,
+        Value::Builtin {
+            op: Builtin::IntCheckedAdd,
+            args: vec![left.into(), right.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    flow.add(builder.finish());
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int.checked_add");
+    let c_type = format!("emela_type_{}", option_int.index());
+    let harness = format!(
+        "#include \"emela_embedded.h\"\nint main(void) {{ {c_type} value = emela_export_int_checked_add_0(INT32_MAX, 1); if (value.tag != INT32_C({})) return 1; value = emela_export_int_checked_add_0(INT32_MIN, -1); if (value.tag != INT32_C({})) return 2; value = emela_export_int_checked_add_0(INT32_MAX, 0); if (value.tag != INT32_C({}) || value.payload.v{}.f0 != INT32_MAX) return 3; value = emela_export_int_checked_add_0(-2, 1); if (value.tag != INT32_C({}) || value.payload.v{}.f0 != -1) return 4; return 0; }}\n",
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_NONE,
+        emela_core::OPTION_SOME,
+        emela_core::OPTION_SOME,
+        emela_core::OPTION_SOME,
+        emela_core::OPTION_SOME,
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");

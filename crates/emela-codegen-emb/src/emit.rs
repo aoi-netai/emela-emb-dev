@@ -1162,6 +1162,92 @@ fn operand_is_int64(layouts: &TypeLayouts<'_>, function: &Function, operand: &Op
     }
 }
 
+fn option_payload_type(layouts: &TypeLayouts<'_>, ty: TypeId) -> Option<TypeId> {
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return None;
+    };
+    let definition = &layouts.core.enums[enum_id];
+    if definition.name != "Option" {
+        return None;
+    }
+    let some_index = definition
+        .variants
+        .iter()
+        .position(|variant| variant.name == "Some")?;
+    let fields = layouts.enum_fields(ty)?.get(some_index)?;
+    (fields.len() == 1).then_some(fields[0])
+}
+
+fn option_variant_expression(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    ty: TypeId,
+    variant_name: &str,
+    value: Option<&str>,
+) -> Result<String, Vec<Error>> {
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option builtin result is not an enum",
+        ));
+    };
+    let definition = &layouts.core.enums[enum_id];
+    if definition.name != "Option" {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option builtin result has the wrong enum type",
+        ));
+    }
+    let Some(variant_index) = definition
+        .variants
+        .iter()
+        .position(|variant| variant.name == variant_name)
+    else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option enum is missing a required variant",
+        ));
+    };
+    let Some(fields) = layouts
+        .enum_fields(ty)
+        .and_then(|variants| variants.get(variant_index))
+    else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option result has no inline enum layout",
+        ));
+    };
+    let mut initializers = vec![format!(".tag = {}", int32_literal(variant_index as i32))];
+    match value {
+        Some(value) if fields.len() == 1 && layouts.type_repr(fields[0]) != Repr::Void => {
+            initializers.push(format!(".payload.v{variant_index}.f0 = {value}"));
+        }
+        Some(_) => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "Option Some payload does not match its runtime representation",
+            ));
+        }
+        None if fields
+            .iter()
+            .all(|field| layouts.type_repr(*field) == Repr::Void) =>
+        {
+            initializers.push(format!(".payload.v{variant_index}._unit = UINT8_C(0)"));
+        }
+        None => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "Option None variant unexpectedly carries a runtime payload",
+            ));
+        }
+    }
+    Ok(format!(
+        "({}){{ {} }}",
+        layouts.c_type(ty),
+        initializers.join(", ")
+    ))
+}
+
 fn emit_builtin(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1180,6 +1266,7 @@ fn emit_builtin(
         Builtin::StringTrim => (1, Type::String),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
         Builtin::IntBitNot => (1, Type::Int),
+        Builtin::IntCheckedAdd => (2, Type::Int),
         Builtin::IntShiftLeft | Builtin::IntShiftRight | Builtin::IntShiftRightUnsigned => {
             (2, Type::Int)
         }
@@ -1211,6 +1298,9 @@ fn emit_builtin(
         | Builtin::IntShiftRightUnsigned => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntCheckedAdd => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             operand_is_int64(layouts, function, &args[0])
                 && operand_is_int(layouts, function, &args[1])
@@ -1239,7 +1329,13 @@ fn emit_builtin(
             &format!("builtin {op:?} has no result destination"),
         ));
     };
-    if layouts.types[function.vars[dst].ty] != result_type {
+    let result_matches = if op == Builtin::IntCheckedAdd {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::Int))
+    } else {
+        layouts.types[function.vars[dst].ty] == result_type
+    };
+    if !result_matches {
         return Err(invalid_flow_ir(
             &function.name,
             &format!("builtin {op:?} has a result with the wrong type"),
@@ -1251,6 +1347,35 @@ fn emit_builtin(
         .map(operand_expression)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
+    if op == Builtin::IntCheckedAdd {
+        let ty = function.vars[dst].ty;
+        let sum_name = format!("{}_checked_sum", variable_name(dst));
+        writer.decl(
+            "int64_t",
+            &sum_name,
+            Some(&format!(
+                "((int64_t)({}) + (int64_t)({}))",
+                expressions[0], expressions[1]
+            )),
+        );
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        let some = option_variant_expression(
+            layouts,
+            function,
+            ty,
+            "Some",
+            Some(&format!("(int32_t){sum_name}")),
+        )?;
+        writer.begin_block(&format!(
+            "if ({sum_name} < (int64_t)INT32_MIN || {sum_name} > (int64_t)INT32_MAX)"
+        ));
+        writer.assign(&variable_name(dst), &none);
+        writer.end_block();
+        writer.begin_block("else");
+        writer.assign(&variable_name(dst), &some);
+        writer.end_block();
+        return Ok(());
+    }
     if matches!(
         op,
         Builtin::IntShiftLeft
