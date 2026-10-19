@@ -5,6 +5,7 @@
 
 mod const_eval;
 mod emit;
+mod float_parse;
 mod heap;
 mod unicode_grapheme;
 mod writer;

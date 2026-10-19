@@ -424,6 +424,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_int_parse(flow, &emitted_functions) {
         emit_int_parse_helper(&mut source);
     }
+    if has_runtime_float_parse(flow, &emitted_functions) {
+        crate::float_parse::emit_runtime(&mut source);
+    }
 
     for (id, function) in flow
         .functions
@@ -1973,23 +1976,33 @@ fn emit_builtin(
     if op == Builtin::FloatParse {
         let ty = function.vars[dst].ty;
         let none = option_variant_expression(layouts, function, ty, "None", None)?;
-        let Some(Operand::Const(Const::String(value))) = args.first() else {
-            return Err(unsupported(
-                &function.name,
-                "dynamic Float.parse requires an allocation-free bounded decimal parser",
+        if let Some(Operand::Const(Const::String(value))) = args.first() {
+            let expression = match const_eval::parse_float(value) {
+                Some(parsed) => option_variant_expression(
+                    layouts,
+                    function,
+                    ty,
+                    "Some",
+                    Some(&float_literal(parsed)),
+                )?,
+                None => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            let parsed_name = format!("{}_parsed", variable_name(dst));
+            let some =
+                option_variant_expression(layouts, function, ty, "Some", Some(&parsed_name))?;
+            writer.decl("double", &parsed_name, None);
+            writer.begin_block(&format!(
+                "if (emela_emb_float_parse({}, &{parsed_name}))",
+                expressions[0]
             ));
-        };
-        let expression = match const_eval::parse_float(value) {
-            Some(parsed) => option_variant_expression(
-                layouts,
-                function,
-                ty,
-                "Some",
-                Some(&float_literal(parsed)),
-            )?,
-            None => none,
-        };
-        writer.assign(&variable_name(dst), &expression);
+            writer.assign(&variable_name(dst), &some);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+        }
         return Ok(());
     }
     if op == Builtin::StringFromCodePoint {
@@ -5324,6 +5337,26 @@ fn has_runtime_int_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> b
                     Stmt::Let {
                         value: Value::Builtin {
                             op: Builtin::IntParse,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_float_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::FloatParse,
                             args,
                         },
                         ..

@@ -2137,7 +2137,7 @@ fn statically_parses_float_literals_with_the_float_parse_grammar() {
 }
 
 #[test]
-fn dynamic_float_formatting_and_parsing_report_the_runtime_requirement() {
+fn dynamic_float_formatting_requires_a_runtime_but_float_parse_uses_the_bounded_parser() {
     let mut flow = Module::new(emela_core::Module::new());
     let mut format = FnBuilder::new(&flow.core, "dynamic_float_to_string");
     format.set_ret(TypeId::INT).set_exported();
@@ -2187,13 +2187,148 @@ fn dynamic_float_formatting_and_parsing_report_the_runtime_requirement() {
     parse.term(Term::Return(Some(result.into())));
     flow.add(parse.finish());
 
-    let error = compile_flow(&flow, &Options::default()).expect_err("reject dynamic Float.parse");
-    assert_eq!(error[0].kind, ErrorKind::Unsupported);
-    assert!(
-        error[0]
-            .message
-            .contains("allocation-free bounded decimal parser")
+    let output = compile_flow(&flow, &Options::default()).expect("emit dynamic Float.parse");
+    let generated_source = output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated C source");
+    assert!(!generated_source.contents.contains("strtod"));
+    assert!(!generated_source.contents.contains("malloc"));
+    let c_type = format!("emela_type_{}", option_float.index());
+    let midpoint = "1.00000000000000011102230246251565404236316680908203125";
+    let mut tie_with_long_zero_tail = midpoint.to_owned();
+    tie_with_long_zero_tail.push_str(&"0".repeat(1200));
+    let mut above_tie_with_long_tail = tie_with_long_zero_tail.clone();
+    above_tie_with_long_tail.push('1');
+    let mut cases = vec![
+        ("+12.5e-1".to_owned(), Some(1.25_f64)),
+        ("NaN".to_owned(), Some(f64::NAN)),
+        ("Infinity".to_owned(), Some(f64::INFINITY)),
+        ("+Infinity".to_owned(), Some(f64::INFINITY)),
+        ("-Infinity".to_owned(), Some(f64::NEG_INFINITY)),
+        ("-0".to_owned(), Some(-0.0_f64)),
+        ("1e999".to_owned(), Some(f64::INFINITY)),
+        ("-1e999".to_owned(), Some(f64::NEG_INFINITY)),
+        ("1e-999".to_owned(), Some(0.0_f64)),
+        ("-1e-999".to_owned(), Some(-0.0_f64)),
+        (
+            "1.00000000000000011102230246251565404236316680908203125".to_owned(),
+            Some(1.0_f64),
+        ),
+        (
+            "1.00000000000000011102230246251565404236316680908203126".to_owned(),
+            Some(f64::from_bits(1.0_f64.to_bits() + 1)),
+        ),
+        (
+            "2.2250738585072014e-308".to_owned(),
+            Some(2.2250738585072014e-308_f64),
+        ),
+        (
+            "4.9406564584124654e-324".to_owned(),
+            Some(f64::from_bits(1)),
+        ),
+        ("2.4703282292062327e-324".to_owned(), Some(0.0_f64)),
+        (
+            "2.4703282292062328e-324".to_owned(),
+            Some(f64::from_bits(1)),
+        ),
+        ("1.7976931348623157e308".to_owned(), Some(f64::MAX)),
+        ("1.7976931348623159e308".to_owned(), Some(f64::INFINITY)),
+        (tie_with_long_zero_tail, Some(1.0_f64)),
+        (
+            above_tie_with_long_tail,
+            Some(f64::from_bits(1.0_f64.to_bits() + 1)),
+        ),
+        (".5".to_owned(), None),
+        ("1.".to_owned(), None),
+        ("1e".to_owned(), None),
+        ("1e+".to_owned(), None),
+        ("+".to_owned(), None),
+        ("+NaN".to_owned(), None),
+        ("NaN ".to_owned(), None),
+        ("Infinityx".to_owned(), None),
+        (" 1".to_owned(), None),
+        ("".to_owned(), None),
+        ("1\0x".to_owned(), None),
+    ];
+    cases.extend((0..128).map(|index| {
+        let significand = (index as u64)
+            .wrapping_mul(7_919_287_331)
+            .wrapping_add(1_234_567);
+        let exponent = (index % 641) as i32 - 340;
+        let text = format!(
+            "{}{}e{exponent}",
+            if index % 2 == 0 { "-" } else { "" },
+            significand
+        );
+        let expected = text.parse::<f64>().expect("Rust parses generated decimal");
+        (text, Some(expected))
+    }));
+    let mut state = 0x6a09_e667_f3bc_c909_u64;
+    for index in 0..16 {
+        let digit_count = 801 + index * 37;
+        let mut digits = String::with_capacity(digit_count);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        digits.push(char::from(b'1' + (state % 9) as u8));
+        for _ in 1..digit_count {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            digits.push(char::from(b'0' + (state >> 32) as u8 % 10));
+        }
+        let decimal_order = (index as i32 * 41) - 300;
+        let exponent = decimal_order - digit_count as i32 + 1;
+        let text = format!("{digits}e{exponent}");
+        let expected = text.parse::<f64>().expect("Rust parses long decimal");
+        cases.push((text, Some(expected)));
+    }
+
+    let mut harness = String::from(
+        "#include <math.h>\n#include <stdint.h>\n#include \"emela_embedded.h\"\nstatic uint64_t bits(double value) { union { double value; uint64_t bits; } converted; converted.value = value; return converted.bits; }\n",
     );
+    let mut statements = String::new();
+    for (index, (text, expected)) in cases.iter().enumerate() {
+        let bytes = text.as_bytes();
+        let values = if bytes.is_empty() {
+            "UINT8_C(0)".to_owned()
+        } else {
+            bytes
+                .iter()
+                .map(|byte| format!("UINT8_C(0x{byte:02x})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        harness.push_str(&format!(
+            "static const uint8_t input_{index}[] = {{ {values} }};\n"
+        ));
+        statements.push_str(&format!(
+            "  {c_type} value_{index} = emela_export_dynamic_float_parse_0((EmelaString){{ .data = (const char *)input_{index}, .length = UINT16_C({}), .owner = 0 }});\n",
+            bytes.len()
+        ));
+        match expected {
+            Some(expected) if expected.is_nan() => statements.push_str(&format!(
+                "  if (value_{index}.tag != INT32_C(0) || !isnan(value_{index}.payload.v0.f0)) return {};\n",
+                (index % 250) + 1
+            )),
+            Some(expected) => statements.push_str(&format!(
+                "  if (value_{index}.tag != INT32_C(0) || bits(value_{index}.payload.v0.f0) != UINT64_C(0x{:016x})) return {};\n",
+                expected.to_bits(),
+                (index % 250) + 1
+            )),
+            None => statements.push_str(&format!(
+                "  if (value_{index}.tag != INT32_C({})) return {};\n",
+                emela_core::OPTION_NONE,
+                (index % 250) + 1
+            )),
+        }
+    }
+    harness.push_str("int main(void) {\n");
+    harness.push_str(&statements);
+    harness.push_str("  return 0;\n}\n");
+    compile_and_run(output, &harness);
 }
 
 #[test]
