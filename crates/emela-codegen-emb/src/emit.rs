@@ -173,6 +173,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }) || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
         || has_runtime_int_string(flow, &emitted_functions)
+        || has_runtime_string_from_code_point(flow, &emitted_functions)
         || has_builtin(
             flow,
             &emitted_functions,
@@ -584,6 +585,17 @@ impl StringBufferPlan {
                     buffer_producers.insert(*dst);
                     producer_positions.insert(*dst, statement_id);
                 }
+                Value::Builtin {
+                    op: Builtin::StringFromCodePoint,
+                    args,
+                } if args.len() == 1
+                    && matches!(args[0], Operand::Var(_))
+                    && option_payload_type(layouts, function.vars[*dst].ty)
+                        .is_some_and(|ty| matches!(layouts.types[ty], Type::String)) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
                 _ => {}
             }
         }
@@ -750,7 +762,16 @@ impl StringBufferPlan {
                 else {
                     continue;
                 };
-                if !matches!(layouts.types[function.vars[*dst].ty], Type::String) {
+                let is_string = matches!(layouts.types[function.vars[*dst].ty], Type::String);
+                let is_codepoint_option = matches!(
+                    value,
+                    Value::Builtin {
+                        op: Builtin::StringFromCodePoint,
+                        ..
+                    }
+                ) && option_payload_type(layouts, function.vars[*dst].ty)
+                    .is_some_and(|ty| matches!(layouts.types[ty], Type::String));
+                if !is_string && !is_codepoint_option {
                     continue;
                 }
                 let bound = match value {
@@ -783,6 +804,10 @@ impl StringBufferPlan {
                         (_, Builtin::Int64ToString) => 20.min(usize::from(capacity)),
                         _ => unreachable!(),
                     },
+                    Value::Builtin {
+                        op: Builtin::StringFromCodePoint,
+                        ..
+                    } => 4.min(usize::from(capacity)),
                     _ => usize::from(capacity),
                 };
                 let bound = match value {
@@ -1291,6 +1316,7 @@ fn emit_builtin(
             (2, Type::Bool)
         }
         Builtin::StringTrim => (1, Type::String),
+        Builtin::StringFromCodePoint => (1, Type::String),
         Builtin::IntToString => (1, Type::String),
         Builtin::IntParse => (1, Type::Int),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
@@ -1334,6 +1360,9 @@ fn emit_builtin(
         Builtin::IntToString => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::StringFromCodePoint => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::IntParse => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1371,6 +1400,9 @@ fn emit_builtin(
     let result_matches = if matches!(op, Builtin::IntCheckedAdd | Builtin::IntParse) {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::Int))
+    } else if op == Builtin::StringFromCodePoint {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::String))
     } else {
         layouts.types[function.vars[dst].ty] == result_type
     };
@@ -1442,6 +1474,124 @@ fn emit_builtin(
             writer.end_block();
             writer.begin_block("else");
             writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+        }
+        return Ok(());
+    }
+    if op == Builtin::StringFromCodePoint {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        if let Operand::Const(Const::Int(value)) = &args[0] {
+            let expression = match u32::try_from(*value).ok().and_then(char::from_u32) {
+                Some(character) => {
+                    let string = constant_expression(&Const::String(character.to_string()))
+                        .map_err(|variant| unsupported(&function.name, variant))?
+                        .ok_or_else(|| {
+                            invalid_flow_ir(
+                                &function.name,
+                                "String.from_code_point constant has no C expression",
+                            )
+                        })?;
+                    option_variant_expression(layouts, function, ty, "Some", Some(&string))?
+                }
+                None => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "dynamic String.from_code_point has no planned output buffer",
+                ));
+            };
+            let codepoint = &expressions[0];
+            let value_name = format!("{}_code_point", variable_name(dst));
+            let length_name = format!("{}_byte_length", variable_name(dst));
+            let string_value =
+                format!("(EmelaString){{ .data = {buffer}, .length = (uint16_t){length_name} }}");
+            let some =
+                option_variant_expression(layouts, function, ty, "Some", Some(&string_value))?;
+            writer.begin_block(&format!(
+                "if ({codepoint} < INT32_C(0) || {codepoint} > INT32_C(0x10ffff) || ({codepoint} >= INT32_C(0xd800) && {codepoint} <= INT32_C(0xdfff)))"
+            ));
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.decl(
+                "uint32_t",
+                &value_name,
+                Some(&format!("(uint32_t)({codepoint})")),
+            );
+            writer.decl("uint16_t", &length_name, None);
+            writer.begin_block(&format!("if ({value_name} <= UINT32_C(0x7f))"));
+            writer.assign(&length_name, "UINT16_C(1)");
+            writer.end_block();
+            writer.begin_block(&format!("else if ({value_name} <= UINT32_C(0x7ff))"));
+            writer.assign(&length_name, "UINT16_C(2)");
+            writer.end_block();
+            writer.begin_block(&format!("else if ({value_name} <= UINT32_C(0xffff))"));
+            writer.assign(&length_name, "UINT16_C(3)");
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&length_name, "UINT16_C(4)");
+            writer.end_block();
+            writer.begin_block(&format!("if ({length_name} > UINT16_C({capacity}))"));
+            writer.line(
+                "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+            );
+            writer.end_block();
+            writer.begin_block(&format!("if ({length_name} == UINT16_C(1))"));
+            writer.assign(&format!("{buffer}[0]"), &format!("(char){value_name}"));
+            writer.end_block();
+            writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[2]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[2]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[3]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.assign(&variable_name(dst), &some);
             writer.end_block();
         }
         return Ok(());
@@ -3779,6 +3929,26 @@ fn has_runtime_int_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> b
                     Stmt::Let {
                         value: Value::Builtin {
                             op: Builtin::IntParse,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_string_from_code_point(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::StringFromCodePoint,
                             args,
                         },
                         ..

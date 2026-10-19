@@ -483,6 +483,152 @@ fn int_parse_accepts_decimal_signs_and_rejects_invalid_or_overflowing_text() {
 }
 
 #[test]
+fn string_from_code_point_encodes_valid_scalars_and_rejects_invalid_ones() {
+    let mut core = emela_core::Module::new();
+    let option = core.option_enum();
+    let option_string = core.enum_type(option, vec![TypeId::STRING]);
+    let mut builder = FnBuilder::new(&core, "code_point_matches");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let code_point = builder.param("code_point", TypeId::INT);
+    let expected = builder.param("expected", TypeId::STRING);
+    let value = builder.assign(
+        "value",
+        option_string,
+        Value::Builtin {
+            op: Builtin::StringFromCodePoint,
+            args: vec![code_point.into()],
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(value));
+    let is_some = builder.assign(
+        "is_some",
+        TypeId::BOOL,
+        Value::Prim {
+            op: PrimOp::Eq,
+            ty: emela_lir::PrimTy::I32,
+            args: vec![
+                tag.into(),
+                Const::Int(emela_core::OPTION_SOME as i32).into(),
+            ],
+        },
+    );
+    let result = builder.var("result", TypeId::BOOL);
+    builder.if_(
+        Some(result),
+        is_some,
+        |some| {
+            let string = some.assign(
+                "string",
+                TypeId::STRING,
+                Value::Field {
+                    base: value,
+                    ctor: CtorRef {
+                        enum_id: option,
+                        variant: emela_core::OPTION_SOME,
+                    },
+                    index: 0,
+                },
+            );
+            let matches = some.assign(
+                "matches",
+                TypeId::BOOL,
+                Value::Builtin {
+                    op: Builtin::StringContains,
+                    args: vec![string.into(), expected.into()],
+                },
+            );
+            some.term(Term::Yield(Some(matches.into())));
+        },
+        |none| none.term(Term::Yield(Some(Const::Bool(false).into()))),
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String.from_code_point");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("char emela_string_buffer_0[4];"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nstatic EmelaString text(const char *data, uint16_t length) { return (EmelaString){ .data = data, .length = length }; }\nint main(void) { if (!emela_export_code_point_matches_0(65, text(\"A\", 1))) return 1; if (!emela_export_code_point_matches_0(INT32_C(0x20ac), text(\"\\xe2\\x82\\xac\", 3))) return 2; if (!emela_export_code_point_matches_0(INT32_C(0x1f642), text(\"\\xf0\\x9f\\x99\\x82\", 4))) return 3; if (!emela_export_code_point_matches_0(0, text(\"\\x00\", 1))) return 4; if (emela_export_code_point_matches_0(-1, text(\"\", 0))) return 5; if (emela_export_code_point_matches_0(INT32_C(0xd800), text(\"\", 0))) return 6; if (emela_export_code_point_matches_0(INT32_C(0x110000), text(\"\", 0))) return 7; return 0; }\n",
+    );
+}
+
+#[test]
+fn statically_encodes_string_from_code_point_without_stack_scratch() {
+    let mut core = emela_core::Module::new();
+    let option = core.option_enum();
+    let option_string = core.enum_type(option, vec![TypeId::STRING]);
+    let mut builder = FnBuilder::new(&core, "static_code_point");
+    builder.set_ret(option_string).set_exported();
+    let value = builder.assign(
+        "value",
+        option_string,
+        Value::Builtin {
+            op: Builtin::StringFromCodePoint,
+            args: vec![Const::Int(0x1f642).into()],
+        },
+    );
+    builder.term(Term::Return(Some(value.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("fold code point to literal");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(!source.contains("char emela_string_buffer_"));
+    let c_type = format!("emela_type_{}", option_string.index());
+    let harness = format!(
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {c_type} value = emela_export_static_code_point_0(); return value.tag == INT32_C({}) && value.payload.v{}.f0.length == UINT16_C(4) && memcmp(value.payload.v{}.f0.data, \"\\xf0\\x9f\\x99\\x82\", 4) == 0 ? 0 : 1; }}\n",
+        emela_core::OPTION_SOME,
+        emela_core::OPTION_SOME,
+        emela_core::OPTION_SOME,
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn dynamic_string_from_code_point_checks_capacity_before_writing() {
+    let mut core = emela_core::Module::new();
+    let option = core.option_enum();
+    let option_string = core.enum_type(option, vec![TypeId::STRING]);
+    let mut builder = FnBuilder::new(&core, "code_point_tag");
+    builder.set_ret(TypeId::INT).set_exported();
+    let code_point = builder.param("code_point", TypeId::INT);
+    let value = builder.assign(
+        "value",
+        option_string,
+        Value::Builtin {
+            op: Builtin::StringFromCodePoint,
+            args: vec![code_point.into()],
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(value));
+    builder.term(Term::Return(Some(tag.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_string_capacity(2))
+        .expect("emit capacity-bounded code point output");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_STRING_CAPACITY && length == UINT16_C(24) && memcmp(message, \"string capacity exceeded\", length) == 0) exit(0); exit(1); }\nint main(void) { (void)emela_export_code_point_tag_0(INT32_C(0x20ac)); return 2; }\n",
+    );
+}
+
+#[test]
 fn int_to_string_uses_small_scratch_and_matches_signed_decimal_output() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "int_to_string_matches");
