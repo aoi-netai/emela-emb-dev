@@ -217,6 +217,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         || !string_output_functions.is_empty()
         || has_builtin(flow, &emitted_functions, &[Builtin::StringLength])
         || has_builtin(flow, &emitted_functions, &[Builtin::StringJoin])
+        || has_indirect_call(flow, &emitted_functions)
         || has_runtime_string_from_code_point(flow, &emitted_functions)
         || has_builtin(
             flow,
@@ -2968,6 +2969,85 @@ fn emit_cell_builtin(
     Ok(())
 }
 
+fn emit_indirect_call(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    callee: VarId,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Type::Fn(function_type) = layouts.types[function.vars[callee].ty].clone() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "indirect call target is not a function value",
+        ));
+    };
+    if function_type.fails || function_type.suspends || function_type.ev {
+        return Err(unsupported(
+            &function.name,
+            "indirect call with failure, suspend, or effect evidence",
+        ));
+    }
+    let parameter_types: Vec<TypeId> = function_type
+        .params
+        .into_iter()
+        .filter(|&parameter| layouts.type_repr(parameter) != Repr::Void)
+        .collect();
+    if args.len() != parameter_types.len() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!(
+                "indirect call has {} arguments, expected {}",
+                args.len(),
+                parameter_types.len()
+            ),
+        ));
+    }
+
+    let mut call_args = Vec::new();
+    for (&parameter_type, argument) in parameter_types.iter().zip(args) {
+        if operand_type(function, argument) != Some(parameter_type) {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "indirect call argument has the wrong type",
+            ));
+        }
+        call_args.push(
+            operand_expression(argument).map_err(|variant| unsupported(&function.name, variant))?,
+        );
+    }
+
+    match dst {
+        None => {}
+        Some(_) if layouts.type_repr(function_type.ret) == Repr::Void => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "void indirect call has a result destination",
+            ));
+        }
+        Some(result) if function.vars[result].ty != function_type.ret => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "indirect call result has the wrong type",
+            ));
+        }
+        Some(_) => {}
+    }
+
+    let callee_name = variable_name(callee);
+    writer.begin_block(&format!("if ({callee_name} == NULL)"));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"null function value\", UINT16_C(19));");
+    writer.end_block();
+    let expression = format!("{callee_name}({})", call_args.join(", "));
+    if let Some(result) = dst {
+        writer.assign(&variable_name(result), &expression);
+    } else {
+        writer.line(&format!("{expression};"));
+    }
+    Ok(())
+}
+
 fn emit_public_string_ownership(writer: &mut Writer) {
     writer.begin_block("void emela_embedded_retain_string(const EmelaString *value)");
     writer.begin_block("if (value != NULL)");
@@ -3687,6 +3767,14 @@ fn emit_statement_inner(
                     if output_scope {
                         writer.end_block();
                     }
+                }
+                Value::Call {
+                    callee: Callee::Indirect(callee),
+                    args,
+                    suspends: false,
+                    on_fail: None,
+                } => {
+                    emit_indirect_call(layouts, function, *dst, *callee, args, writer)?;
                 }
                 Value::Call { .. } => {
                     return Err(unsupported(&function.name, "indirect or suspending calls"));
@@ -6026,6 +6114,27 @@ fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin
                         value: Value::Builtin { op, .. },
                         ..
                     } if ops.contains(op)
+                )
+            })
+    })
+}
+
+fn has_indirect_call(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Call {
+                            callee: Callee::Indirect(_),
+                            suspends: false,
+                            on_fail: None,
+                            ..
+                        },
+                        ..
+                    }
                 )
             })
     })
