@@ -2137,7 +2137,160 @@ fn statically_parses_float_literals_with_the_float_parse_grammar() {
 }
 
 #[test]
-fn dynamic_float_formatting_requires_a_runtime_but_float_parse_uses_the_bounded_parser() {
+fn dynamic_float_to_string_matches_const_formatting_in_caller_owned_buffers() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut formatter = FnBuilder::new(&flow.core, "dynamic_float_format");
+    formatter.set_ret(TypeId::STRING).set_exported();
+    let input = formatter.param("input", TypeId::FLOAT);
+    let rendered = formatter.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::FloatToString,
+            args: vec![input.into()],
+        },
+    );
+    formatter.term(Term::Return(Some(rendered.into())));
+    let formatter_id = flow.add(formatter.finish());
+
+    let mut forward = FnBuilder::new(&flow.core, "forward_dynamic_float_format");
+    forward.set_ret(TypeId::STRING).set_exported();
+    let input = forward.param("input", TypeId::FLOAT);
+    let rendered = forward.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Call {
+            callee: Callee::Direct(formatter_id),
+            args: vec![input.into()],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    forward.term(Term::Return(Some(rendered.into())));
+    flow.add(forward.finish());
+
+    let mut samples = vec![
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1.0e-7,
+        1.0e-6,
+        1.0e-5,
+        1.0e20,
+        1.0e21,
+        f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        f64::from_bits(0x000f_ffff_ffff_ffff),
+        f64::MAX,
+        -f64::MAX,
+        -0.0000012345678901234567,
+    ];
+    let mut state = 0x8f31_76a9_24d5_c0b7_u64;
+    while samples.len() < 146 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        samples.push(f64::from_bits(state));
+    }
+
+    let mut expected_symbols = Vec::with_capacity(samples.len());
+    for (index, value) in samples.iter().copied().enumerate() {
+        let mut expected = FnBuilder::new(&flow.core, &format!("expected_float_{index}"));
+        expected
+            .set_ret(TypeId::STRING)
+            .set_exported()
+            .set_constant();
+        let rendered = expected.assign(
+            "rendered",
+            TypeId::STRING,
+            Value::Builtin {
+                op: Builtin::FloatToString,
+                args: vec![Const::Float(value).into()],
+            },
+        );
+        expected.term(Term::Return(Some(rendered.into())));
+        let id = flow.add(expected.finish());
+        expected_symbols.push(format!(
+            "emela_export_expected_float_{index}_{}",
+            u32::from(id.into_raw())
+        ));
+    }
+
+    let mut append = FnBuilder::new(&flow.core, "append_dynamic_float_format");
+    append.set_ret(TypeId::STRING).set_exported();
+    let input = append.param("input", TypeId::FLOAT);
+    let rendered = append.assign(
+        "rendered",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::FloatToString,
+            args: vec![input.into()],
+        },
+    );
+    let suffixed = append.assign(
+        "suffixed",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![rendered.into(), Const::String("!".to_owned()).into()],
+        },
+    );
+    append.term(Term::Return(Some(suffixed.into())));
+    let append_id = flow.add(append.finish());
+    let append_symbol = format!(
+        "emela_export_append_dynamic_float_format_{}",
+        u32::from(append_id.into_raw())
+    );
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit dynamic Float formatting");
+    let header = output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.h")
+        .expect("generated C header");
+    assert!(header.contents.contains(
+        "EmelaString emela_export_dynamic_float_format_0(double emela_v_0, char *emela_string_output, uint16_t emela_string_capacity);"
+    ));
+    assert!(header.contents.contains(
+        "EmelaString emela_export_forward_dynamic_float_format_1(double emela_v_0, char *emela_string_output, uint16_t emela_string_capacity);"
+    ));
+    assert!(header.contents.contains(&format!(
+        "EmelaString {append_symbol}(double emela_v_0, char *emela_string_output, uint16_t emela_string_capacity);"
+    )));
+    let source = output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated C source");
+    assert!(!source.contents.contains("char emela_string_buffer_0["));
+    assert!(!source.contents.contains("snprintf"));
+    assert!(!source.contents.contains("malloc"));
+
+    let mut harness = String::from(
+        "#include <setjmp.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic jmp_buf defect_target;\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; if (kind == EMELA_DEFECT_STRING_CAPACITY) longjmp(defect_target, 1); exit(3); }\nint main(void) {\n",
+    );
+    for (index, value) in samples.iter().enumerate() {
+        let bits = value.to_bits();
+        harness.push_str(&format!(
+            "  union {{ uint64_t bits; double value; }} input_{index} = {{ .bits = UINT64_C(0x{bits:016x}) }};\n  char output_{index}[64];\n  EmelaString expected_{index} = {}();\n  EmelaString direct_{index} = emela_export_dynamic_float_format_0(input_{index}.value, output_{index}, UINT16_C(64));\n  if (direct_{index}.data != output_{index} || direct_{index}.length != expected_{index}.length || memcmp(direct_{index}.data, expected_{index}.data, direct_{index}.length) != 0) {{ fprintf(stderr, \"float {index} actual=%.*s expected=%.*s\\n\", (int)direct_{index}.length, direct_{index}.data, (int)expected_{index}.length, expected_{index}.data); return 1; }}\n  EmelaString forwarded_{index} = emela_export_forward_dynamic_float_format_1(input_{index}.value, output_{index}, UINT16_C(64));\n  if (forwarded_{index}.data != output_{index} || forwarded_{index}.length != expected_{index}.length || memcmp(forwarded_{index}.data, expected_{index}.data, forwarded_{index}.length) != 0) return 2;\n",
+            expected_symbols[index]
+        ));
+    }
+    harness.push_str(&format!(
+        "  char appended_output[64]; EmelaString appended = {append_symbol}(-0.0000012345678901234567, appended_output, UINT16_C(64));\n  if (appended.data != appended_output || appended.length != UINT16_C(26) || memcmp(appended.data, \"-0.0000012345678901234567!\", UINT16_C(26)) != 0) return 3;\n"
+    ));
+    harness.push_str(
+        "  if (setjmp(defect_target) == 0) { char small_output[24]; (void)emela_export_dynamic_float_format_0(-0.0000012345678901234567, small_output, UINT16_C(24)); return 4; }\n  return 0;\n}\n",
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn dynamic_float_formatting_uses_a_bounded_runtime_and_float_parse_uses_the_bounded_parser() {
     let mut flow = Module::new(emela_core::Module::new());
     let mut format = FnBuilder::new(&flow.core, "dynamic_float_to_string");
     format.set_ret(TypeId::INT).set_exported();
@@ -2161,13 +2314,22 @@ fn dynamic_float_formatting_requires_a_runtime_but_float_parse_uses_the_bounded_
     format.term(Term::Return(Some(length.into())));
     flow.add(format.finish());
 
-    let error =
-        compile_flow(&flow, &Options::default()).expect_err("reject dynamic Float.to_string");
-    assert_eq!(error[0].kind, ErrorKind::Unsupported);
+    let output = compile_flow(&flow, &Options::default()).expect("emit dynamic Float.to_string");
+    let generated_source = output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated C source");
     assert!(
-        error[0]
-            .message
-            .contains("allocation-free shortest-decimal runtime")
+        generated_source
+            .contents
+            .contains("char emela_string_buffer_0[25];")
+    );
+    assert!(!generated_source.contents.contains("snprintf"));
+    assert!(!generated_source.contents.contains("malloc"));
+    compile_and_run(
+        output,
+        "#include <math.h>\n#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(5); }\nint main(void) { if (emela_export_dynamic_float_to_string_0(1.0e-6) != INT32_C(8)) return 1; if (emela_export_dynamic_float_to_string_0(-0.0000012345678901234567) != INT32_C(25)) return 2; if (emela_export_dynamic_float_to_string_0(-INFINITY) != INT32_C(9)) return 3; if (emela_export_dynamic_float_to_string_0(NAN) != INT32_C(3)) return 4; return 0; }\n",
     );
 
     let mut flow = Module::new(emela_core::Module::new());
@@ -3325,7 +3487,7 @@ int main(void) {
 }
 
 #[test]
-fn rejects_dynamic_string_append_that_returns_its_stack_buffer() {
+fn returns_dynamic_string_append_into_the_callers_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "return_appended");
     builder.set_ret(TypeId::STRING).set_exported();
@@ -3343,10 +3505,12 @@ fn rejects_dynamic_string_append_that_returns_its_stack_buffer() {
     let mut flow = Module::new(core);
     flow.add(function);
 
-    let errors = compile_flow(&flow, &Options::default()).expect_err("reject an escaping buffer");
-    assert!(errors.iter().any(|error| {
-        error.kind == ErrorKind::Unsupported && error.message.contains("outlive its function stack")
-    }));
+    let output =
+        compile_flow(&flow, &Options::default()).expect("return into caller-owned storage");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { char output[8]; EmelaString input = { .data = \"ab\", .length = UINT16_C(2) }; EmelaString value = emela_export_return_appended_0(input, output, UINT16_C(8)); return value.data == output && value.length == UINT16_C(3) && memcmp(output, \"abx\", 3) == 0 ? 0 : 1; }\n",
+    );
 }
 
 #[test]
