@@ -13,6 +13,7 @@ fn main() {
     let mut core = Module::new();
     let main = core.declare("main", true);
     let compute = core.declare("renode_smoke_compute", false);
+    let divide = core.declare("renode_smoke_divide", false);
     let input = core.local("input", TypeId::INT);
     let is_large = core.local("is_large", TypeId::BOOL);
     core.define(
@@ -28,6 +29,13 @@ fn main() {
                 build::bin(BinOp::Add, OpTy::Int, build::var(input), build::int(24)),
             ),
         ),
+    );
+    let divisor = core.local("divisor", TypeId::INT);
+    core.define(
+        divide,
+        vec![divisor],
+        TypeId::INT,
+        build::bin(BinOp::Div, OpTy::Int, build::int(21), build::var(divisor)),
     );
     let signal = core.declare("renode_smoke_signal", false);
     let signal_value = core.local("value", TypeId::INT);
@@ -46,6 +54,7 @@ fn main() {
     let first_signal = core.local("first_signal", TypeId::UNIT);
     let second_result = core.local("second_result", TypeId::INT);
     let second_signal = core.local("second_signal", TypeId::UNIT);
+    let defect_result = core.local("defect_result", TypeId::INT);
     core.define(
         main,
         Vec::new(),
@@ -62,7 +71,11 @@ fn main() {
                     build::let_(
                         second_signal,
                         build::call(signal, vec![build::var(second_result)]),
-                        build::unit(),
+                        build::let_(
+                            defect_result,
+                            build::call(divide, vec![build::int(0)]),
+                            build::unit(),
+                        ),
                     ),
                 ),
             ),

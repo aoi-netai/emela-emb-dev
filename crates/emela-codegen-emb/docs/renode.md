@@ -1,6 +1,6 @@
 # Renodeでのembedded backend smoke確認
 
-この手順では、現行の `emela-codegen-emb` が生成したCをSTM32F446向けにクロスビルドし、Renode上で実行する。生成Cのentry、整数演算、比較、`Let`、`If`の両分岐、内部関数呼び出し、board hook、外部C関数までを確認する。
+この手順では、現行の `emela-codegen-emb` が生成したCをSTM32F446向けにクロスビルドし、Renode上で実行する。生成Cのentry、整数演算、比較、`Let`、`If`の両分岐、内部関数呼び出し、ゼロ除算時のboard defect hook、外部C関数までを確認する。
 
 過去の [`emela-fix-259/examples/embedded-bus`](../../../../emela-fix-259/examples/embedded-bus) は、ボード設定やRenode構成を調べる参考資料として使う。その `run.sh` は当時の `emela-cli` と旧backendをビルドするため、現行 `emela-codegen-emb` の確認には使わない。このcrateのsmoke fixtureは現在のbackend APIを直接呼び出す。
 
@@ -47,7 +47,7 @@ bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 1. [`examples/renode_smoke.rs`](../examples/renode_smoke.rs) を `cargo run` し、CoreからFlow IRを経由してCを生成する。
 2. 生成C、board fixture、CMSIS system source、F446 startupをCortex-M4向けにcompileし、ELFとmap fileを作る。
 3. STM32F4 platformでRenodeを起動し、ELFを100 ms相当実行する。
-4. `GPIOA_ODR` のPA5・PA6 bitがHighになったことを確認する。PA5は条件の真側で42、PA6は偽側で34を受け取ったことを示す。
+4. `GPIOA_ODR` のPA5・PA6・PA7 bitがHighになったことを確認する。PA5は条件の真側で42、PA6は偽側で34を受け取ったこと、PA7はdivision-by-zero defect hookが期待したkindとmessageを受け取ったことを示す。異常値はPA8で示す。
 
 主な出力は `EMELA_EMB_RENODE_OUT` 以下に保存される。
 
@@ -58,11 +58,11 @@ bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 | `firmware.map` | linker map |
 | `renode.log` | Renode実行ログ |
 
-正常終了時には、最後に `PASS: generated Emela entry exercised both branches, GPIOA_ODR=0x00000060` が表示される。
+正常終了時には、最後に `PASS: generated Emela entry exercised both branches and the defect hook, GPIOA_ODR=0x000000e0` が表示される。
 
 ## 確認範囲と制約
 
-このfixtureのEmela `main` は内部関数を21と10で呼び、内部関数は比較結果に応じてそれぞれ42と34を返す。その値を外部C関数 `renode_smoke_signal` に渡す。board側はPA5・PA6をGPIO outputに設定し、受け取った値と順序が期待どおりなら各pinをBSRR経由でHighにする。不一致時にはPA7をHighにするため、GPIOA ODRの値から両分岐の結果を確認できる。
+このfixtureのEmela `main` は内部関数を21と10で呼び、内部関数は比較結果に応じてそれぞれ42と34を返す。その値を外部C関数 `renode_smoke_signal` に渡す。board側はPA5・PA6をGPIO outputに設定し、受け取った値と順序が期待どおりなら各pinをBSRR経由でHighにする。不一致時にはPA8をHighにする。続けて実行時のゼロ除算を起こし、`emela_board_defect` がkindとmessageを検査してPA7をHighにし、停止する。GPIOA ODRの値から両分岐とdefect hookの結果を確認できる。
 
 CMSIS startupの `Reset_Handler` はCの `main()` を呼ぶ一方、embedded backendは `emela_embedded_start()` を生成する。そのためfixtureのboard Cは `main()` shimを持ち、そこから `emela_embedded_start()` を呼ぶ。このshimはアプリケーション統合側の役割である。
 

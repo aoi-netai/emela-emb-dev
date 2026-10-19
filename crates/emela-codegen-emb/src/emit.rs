@@ -488,7 +488,7 @@ fn emit_i32_division_helpers(writer: &mut Writer) {
     writer.begin_block("static inline int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
-        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(17));",
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
     );
     writer.end_block();
     writer.begin_block("if (lhs == INT32_MIN && rhs == -INT32_C(1))");
@@ -501,7 +501,7 @@ fn emit_i32_division_helpers(writer: &mut Writer) {
     writer.begin_block("static inline int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
-        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(17));",
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
     );
     writer.end_block();
     writer.begin_block("if (lhs == INT32_MIN && rhs == -INT32_C(1))");

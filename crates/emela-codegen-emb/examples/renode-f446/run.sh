@@ -124,8 +124,8 @@ except StopIteration:
     raise SystemExit("FAIL: Renode did not print the GPIOA ODR value")
 
 value = int(value_line, 16)
-expected = (1 << 5) | (1 << 6)
+expected = (1 << 5) | (1 << 6) | (1 << 7)
 if value != expected:
     raise SystemExit(f"FAIL: expected GPIOA_ODR=0x{expected:08x}, got 0x{value:08x}")
-print(f"PASS: generated Emela entry exercised both branches, GPIOA_ODR=0x{value:08x}")
+print(f"PASS: generated Emela entry exercised both branches and the defect hook, GPIOA_ODR=0x{value:08x}")
 PY
