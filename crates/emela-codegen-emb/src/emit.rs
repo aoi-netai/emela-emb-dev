@@ -122,6 +122,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     header.line("#include <stdint.h>");
     header.blank();
     layouts.emit_string_declaration(&mut header);
+    if layouts.has_error_abi {
+        header.line("typedef struct EmelaError EmelaError;");
+        header.blank();
+    }
     layouts.emit_declarations(&mut header);
     layouts.emit_error_declaration(&mut header);
     if !layouts.aggregates.is_empty() {
@@ -1689,8 +1693,7 @@ fn validate_function_value_types(
             }
             _ => false,
         };
-        if function_type.fails
-            || function_type.suspends
+        if function_type.suspends
             || function_type.ev
             || function_type.sets.is_some()
             || !scalar(function_type.ret)
@@ -2979,7 +2982,15 @@ fn emit_indirect_call(
     dst: Option<VarId>,
     callee: VarId,
     args: &[Operand],
+    on_fail: Option<OnFail>,
     writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
     let Type::Fn(function_type) = layouts.types[function.vars[callee].ty].clone() else {
         return Err(invalid_flow_ir(
@@ -2987,10 +2998,16 @@ fn emit_indirect_call(
             "indirect call target is not a function value",
         ));
     };
-    if function_type.fails || function_type.suspends || function_type.ev {
+    if function_type.suspends || function_type.ev {
         return Err(unsupported(
             &function.name,
-            "indirect call with failure, suspend, or effect evidence",
+            "indirect call with suspend or effect evidence",
+        ));
+    }
+    if function_type.fails != on_fail.is_some() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "indirect call failure edge does not match its function type",
         ));
     }
     let parameter_types: Vec<TypeId> = function_type
@@ -3043,11 +3060,42 @@ fn emit_indirect_call(
     writer.begin_block(&format!("if ({callee_name} == NULL)"));
     writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"null function value\", UINT16_C(19));");
     writer.end_block();
-    let expression = format!("{callee_name}({})", call_args.join(", "));
-    if let Some(result) = dst {
-        writer.assign(&variable_name(result), &expression);
+    if let Some(edge) = on_fail {
+        let error_name = format!("emela_indirect_error_{}", *next_temp);
+        *next_temp += 1;
+        writer.begin_block("");
+        writer.decl("EmelaError", &error_name, Some("{0}"));
+        call_args.push(format!("&{error_name}"));
+        let expression = format!("{callee_name}({})", call_args.join(", "));
+        if let Some(result) = dst {
+            writer.assign(&variable_name(result), &expression);
+        } else {
+            writer.line(&format!("{expression};"));
+        }
+        writer.begin_block(&format!("if ({error_name}.tag != UINT32_C(0))"));
+        emit_call_failure_edge(
+            layouts,
+            function,
+            edge,
+            &error_name,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        )?;
+        writer.end_block();
+        writer.end_block();
     } else {
-        writer.line(&format!("{expression};"));
+        let expression = format!("{callee_name}({})", call_args.join(", "));
+        if let Some(result) = dst {
+            writer.assign(&variable_name(result), &expression);
+        } else {
+            writer.line(&format!("{expression};"));
+        }
     }
     Ok(())
 }
@@ -3776,9 +3824,24 @@ fn emit_statement_inner(
                     callee: Callee::Indirect(callee),
                     args,
                     suspends: false,
-                    on_fail: None,
+                    on_fail,
                 } => {
-                    emit_indirect_call(layouts, function, *dst, *callee, args, writer)?;
+                    emit_indirect_call(
+                        layouts,
+                        function,
+                        *dst,
+                        *callee,
+                        args,
+                        *on_fail,
+                        writer,
+                        names,
+                        string_buffers,
+                        loops,
+                        blocks,
+                        protects,
+                        next_temp,
+                        next_label,
+                    )?;
                 }
                 Value::Call { .. } => {
                     return Err(unsupported(&function.name, "indirect or suspending calls"));
@@ -6678,6 +6741,18 @@ impl<'a> TypeLayouts<'a> {
             }),
         };
         let mut states = HashMap::new();
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
+            layouts.collect(function.ret, &function.name, &mut states)?;
+            for (_, variable) in function.vars.iter() {
+                layouts.collect(variable.ty, &function.name, &mut states)?;
+            }
+        }
+        layouts.has_error_abi |= layouts.function_types.iter().any(
+            |&ty| matches!(&layouts.types[ty], Type::Fn(function_type) if function_type.fails),
+        );
         if layouts.has_error_abi {
             let error_ids: Vec<EnumId> = flow
                 .core
@@ -6689,15 +6764,6 @@ impl<'a> TypeLayouts<'a> {
                 let ty = layouts.types.enum_type(id, Vec::new());
                 layouts.collect(ty, "EmelaError", &mut states)?;
                 layouts.error_types.push((id, ty));
-            }
-        }
-        for (id, function) in flow.functions.iter() {
-            if !emitted.contains(&id) {
-                continue;
-            }
-            layouts.collect(function.ret, &function.name, &mut states)?;
-            for (_, variable) in function.vars.iter() {
-                layouts.collect(variable.ty, &function.name, &mut states)?;
             }
         }
         let mut index = 0;
@@ -7360,12 +7426,15 @@ impl<'a> TypeLayouts<'a> {
             let Type::Fn(function_type) = self.types[ty].clone() else {
                 unreachable!("function type registry contains a non-function")
             };
-            let parameters = function_type
+            let mut parameters = function_type
                 .params
                 .iter()
                 .filter(|&&parameter| self.type_repr(parameter) != Repr::Void)
                 .map(|&parameter| self.c_type(parameter))
                 .collect::<Vec<_>>();
+            if function_type.fails {
+                parameters.push("EmelaError *".to_owned());
+            }
             let parameters = if parameters.is_empty() {
                 "void".to_owned()
             } else {
@@ -7448,7 +7517,7 @@ impl<'a> TypeLayouts<'a> {
         if !self.has_error_abi {
             return;
         }
-        writer.line("typedef struct {");
+        writer.line("struct EmelaError {");
         writer.line("  uint32_t tag;");
         writer.line("  union {");
         if self.error_types.is_empty() {
@@ -7463,7 +7532,7 @@ impl<'a> TypeLayouts<'a> {
             }
         }
         writer.line("  } payload;");
-        writer.line("} EmelaError;");
+        writer.line("};");
         writer.blank();
     }
 }
