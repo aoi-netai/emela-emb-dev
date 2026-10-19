@@ -26,6 +26,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     let emitted_functions = runtime_reachable(flow);
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
+    validate_function_value_types(&layouts, &emitted_functions, flow)?;
+    validate_function_refs(flow, &emitted_functions, &layouts)?;
     validate_local_cells(flow, &emitted_functions, &layouts)?;
     let heap_required = flow.functions.iter().any(|(id, function)| {
         emitted_functions.contains(&id) && function_needs_heap(function, &layouts)
@@ -1666,6 +1668,108 @@ fn value_references_any_cell(value: &Value, cells: &HashSet<VarId>) -> bool {
     found
 }
 
+fn validate_function_value_types(
+    layouts: &TypeLayouts<'_>,
+    emitted: &HashSet<FnId>,
+    flow: &emela_lir::Module,
+) -> Result<(), Vec<Error>> {
+    for &ty in &layouts.function_types {
+        let Type::Fn(function_type) = layouts.types[ty].clone() else {
+            unreachable!("function type registry contains a non-function")
+        };
+        let scalar = |ty| match layouts.types[ty] {
+            Type::Int | Type::Int64 | Type::Float | Type::Bool | Type::Unit => true,
+            Type::Enum(enum_id, _) => {
+                layouts.enum_is_i32(enum_id) || layouts.core.enums[enum_id].external
+            }
+            _ => false,
+        };
+        if function_type.fails
+            || function_type.suspends
+            || function_type.ev
+            || function_type.sets.is_some()
+            || !scalar(function_type.ret)
+            || function_type
+                .params
+                .iter()
+                .any(|&parameter| !scalar(parameter))
+        {
+            let owner = flow
+                .functions
+                .iter()
+                .find(|(id, function)| {
+                    emitted.contains(id)
+                        && (function.ret == ty
+                            || function.vars.iter().any(|(_, variable)| variable.ty == ty))
+                })
+                .map_or("function value", |(_, function)| function.name.as_str());
+            return Err(unsupported(
+                owner,
+                "function values outside the non-failing scalar function ABI",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_refs(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    layouts: &TypeLayouts<'_>,
+) -> Result<(), Vec<Error>> {
+    for (function_id, function) in flow.functions.iter() {
+        if !emitted.contains(&function_id) {
+            continue;
+        }
+        for (_, statement) in function.stmts.iter() {
+            let Stmt::Let {
+                dst,
+                value: Value::FnRef(target),
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            let Some(dst) = dst else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "FnRef has no function-value destination",
+                ));
+            };
+            let Type::Fn(function_type) = layouts.types[function.vars[*dst].ty].clone() else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "FnRef destination is not a function value",
+                ));
+            };
+            let target_function = &flow.functions[*target];
+            let expected_params: Vec<TypeId> = function_type
+                .params
+                .into_iter()
+                .filter(|&parameter| layouts.type_repr(parameter) != Repr::Void)
+                .collect();
+            let target_params: Vec<TypeId> = target_function
+                .params
+                .iter()
+                .map(|&parameter| target_function.vars[parameter].ty)
+                .collect();
+            if expected_params != target_params
+                || function_type.ret != target_function.ret
+                || function_type.fails != target_function.fails
+                || function_type.suspends != target_function.suspends
+                || function_type.ev
+                || target_function.env.is_some()
+            {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "FnRef type does not match the referenced function ABI",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn operand_references_cell(operand: &Operand, cells: &HashSet<VarId>) -> bool {
     matches!(operand, Operand::Var(variable) if cells.contains(variable))
 }
@@ -1772,16 +1876,15 @@ fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
             continue;
         }
         for (_, statement) in function.stmts.iter() {
-            if let Stmt::Let {
-                value:
+            if let Stmt::Let { value, .. } = statement {
+                match value {
                     Value::Call {
                         callee: Callee::Direct(callee),
                         ..
-                    },
-                ..
-            } = statement
-            {
-                pending.push(*callee);
+                    }
+                    | Value::FnRef(callee) => pending.push(*callee),
+                    _ => {}
+                }
             }
         }
     }
@@ -3632,6 +3735,27 @@ fn emit_statement_inner(
                 }
                 Value::ListTail(list) => {
                     emit_list_tail(layouts, function, *dst, *list, writer)?;
+                }
+                Value::FnRef(target) => {
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "FnRef has no function-value destination",
+                        ));
+                    };
+                    let Type::Fn(_) = layouts.types[function.vars[*dst].ty] else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "FnRef destination is not a function value",
+                        ));
+                    };
+                    let name = names.get(target).ok_or_else(|| {
+                        invalid_flow_ir(
+                            &function.name,
+                            "FnRef target is not reachable for C emission",
+                        )
+                    })?;
+                    writer.assign(&variable_name(*dst), name);
                 }
                 Value::IsError { error, enum_id } => {
                     if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
@@ -6404,6 +6528,7 @@ struct TypeLayouts<'a> {
     recursive_box_ids: HashMap<TypeId, usize>,
     list_types: Vec<TypeId>,
     list_ids: HashMap<TypeId, usize>,
+    function_types: Vec<TypeId>,
     error_types: Vec<(EnumId, TypeId)>,
     has_error_abi: bool,
 }
@@ -6420,6 +6545,7 @@ impl<'a> TypeLayouts<'a> {
             recursive_box_ids: HashMap::new(),
             list_types: Vec::new(),
             list_ids: HashMap::new(),
+            function_types: Vec::new(),
             error_types: Vec::new(),
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
@@ -6550,6 +6676,12 @@ impl<'a> TypeLayouts<'a> {
             self.collect(content, function, states)?;
             return Ok(());
         }
+        if matches!(self.types[ty], Type::Fn(_)) {
+            if !self.function_types.contains(&ty) {
+                self.function_types.push(ty);
+            }
+            return Ok(());
+        }
         if matches!(self.types[ty], Type::List(_)) {
             if !self.list_ids.contains_key(&ty) {
                 let index = self.list_types.len();
@@ -6664,6 +6796,7 @@ impl<'a> TypeLayouts<'a> {
             Type::Unit | Type::Never | Type::Set(_) => "void".to_owned(),
             Type::String => "EmelaString".to_owned(),
             Type::Tuple(_) => type_name(ty),
+            Type::Fn(_) => function_type_name(ty),
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
             Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
             Type::Any if self.has_error_abi => "EmelaError".to_owned(),
@@ -7110,6 +7243,30 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn emit_declarations(&self, writer: &mut Writer) {
+        for &ty in &self.function_types {
+            let Type::Fn(function_type) = self.types[ty].clone() else {
+                unreachable!("function type registry contains a non-function")
+            };
+            let parameters = function_type
+                .params
+                .iter()
+                .filter(|&&parameter| self.type_repr(parameter) != Repr::Void)
+                .map(|&parameter| self.c_type(parameter))
+                .collect::<Vec<_>>();
+            let parameters = if parameters.is_empty() {
+                "void".to_owned()
+            } else {
+                parameters.join(", ")
+            };
+            writer.line(&format!(
+                "typedef {} (*{})({parameters});",
+                self.c_type(function_type.ret),
+                function_type_name(ty)
+            ));
+        }
+        if !self.function_types.is_empty() {
+            writer.blank();
+        }
         for aggregate in &self.aggregates {
             writer.line("typedef struct {");
             match &aggregate.kind {
@@ -7200,6 +7357,10 @@ impl<'a> TypeLayouts<'a> {
 
 fn type_name(ty: TypeId) -> String {
     format!("emela_type_{}", ty.index())
+}
+
+fn function_type_name(ty: TypeId) -> String {
+    format!("emela_function_type_{}", ty.index())
 }
 
 fn c_type(repr: Repr) -> &'static str {
