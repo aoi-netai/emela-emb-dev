@@ -294,6 +294,46 @@ fn int64_bitwise_builtins_match_signed_64_bit_semantics() {
 }
 
 #[test]
+fn int_shift_builtins_handle_width_and_negative_amount_boundaries() {
+    let mut flow = Module::new(emela_core::Module::new());
+    for (name, op) in [
+        ("int_shift_left", Builtin::IntShiftLeft),
+        ("int_shift_right", Builtin::IntShiftRight),
+        ("int_shift_right_unsigned", Builtin::IntShiftRightUnsigned),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(TypeId::INT).set_exported();
+        let value = builder.param("value", TypeId::INT);
+        let by = builder.param("by", TypeId::INT);
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Builtin {
+                op,
+                args: vec![value.into(), by.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int shift builtins");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("emela_i32_shift_left"));
+    assert!(source.contains("emela_i32_shift_right_unsigned"));
+    assert!(source.contains("emela_emb_negative_shift_defect"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { static const char expected[] = \"negative shift amount: -2147483648\"; if (kind == EMELA_DEFECT_NEGATIVE_SHIFT && length == sizeof expected - 1 && memcmp(message, expected, length) == 0) exit(0); exit(1); }\nint main(void) { if (emela_export_int_shift_left_0(-1, 1) != -2 || emela_export_int_shift_left_0(1, 32) != 0 || emela_export_int_shift_right_1(-9, 2) != -3 || emela_export_int_shift_right_1(-9, 32) != -1 || emela_export_int_shift_right_1(9, 32) != 0 || emela_export_int_shift_right_unsigned_2(-1, 1) != INT32_MAX || emela_export_int_shift_right_unsigned_2(-1, 32) != 0) return 2; (void)emela_export_int_shift_left_0(1, INT32_MIN); return 3; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");

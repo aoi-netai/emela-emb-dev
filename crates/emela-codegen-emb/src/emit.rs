@@ -172,6 +172,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         )
     }) || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[
+                Builtin::IntShiftLeft,
+                Builtin::IntShiftRight,
+                Builtin::IntShiftRightUnsigned,
+                Builtin::Int64ShiftLeft,
+                Builtin::Int64ShiftRight,
+                Builtin::Int64ShiftRightUnsigned,
+            ],
+        )
         || flow.functions.iter().any(|(id, function)| {
             if !emitted_functions.contains(&id) {
                 return false;
@@ -215,12 +227,32 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
     source.blank();
+    let has_int_shift = has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::IntShiftLeft,
+            Builtin::IntShiftRight,
+            Builtin::IntShiftRightUnsigned,
+        ],
+    );
+    let has_shift = has_int_shift
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[
+                Builtin::Int64ShiftLeft,
+                Builtin::Int64ShiftRight,
+                Builtin::Int64ShiftRightUnsigned,
+            ],
+        );
     if has_prim(
         flow,
         &emitted_functions,
         PrimTy::I32,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
-    ) {
+    ) || has_int_shift
+    {
         source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
         source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
         source.line("return (int32_t)bits;");
@@ -228,6 +260,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         source.line("return -INT32_C(1) - (int32_t)(UINT32_MAX - bits);");
         source.end_block();
         source.blank();
+    }
+    if has_int_shift {
+        emit_i32_shift_helpers(&mut source);
+    }
+    if has_shift {
+        emit_negative_shift_helper(&mut source);
     }
     if has_prim(
         flow,
@@ -1137,6 +1175,9 @@ fn emit_builtin(
         Builtin::StringTrim => (1, Type::String),
         Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
         Builtin::IntBitNot => (1, Type::Int),
+        Builtin::IntShiftLeft | Builtin::IntShiftRight | Builtin::IntShiftRightUnsigned => {
+            (2, Type::Int)
+        }
         Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
         Builtin::Int64BitNot => (1, Type::Int64),
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
@@ -1151,7 +1192,13 @@ fn emit_builtin(
         ));
     }
     let arguments_match = match op {
-        Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor | Builtin::IntBitNot => args
+        Builtin::IntBitAnd
+        | Builtin::IntBitOr
+        | Builtin::IntBitXor
+        | Builtin::IntBitNot
+        | Builtin::IntShiftLeft
+        | Builtin::IntShiftRight
+        | Builtin::IntShiftRightUnsigned => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
         Builtin::Int64BitAnd
@@ -1188,6 +1235,17 @@ fn emit_builtin(
         .map(operand_expression)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
+    if matches!(
+        op,
+        Builtin::IntShiftLeft | Builtin::IntShiftRight | Builtin::IntShiftRightUnsigned
+    ) {
+        writer.begin_block(&format!("if ({} < INT32_C(0))", expressions[1]));
+        writer.line(&format!(
+            "emela_emb_negative_shift_defect({});",
+            expressions[1]
+        ));
+        writer.end_block();
+    }
     let expression = match op {
         Builtin::StringAppend => {
             if let [
@@ -1226,6 +1284,18 @@ fn emit_builtin(
         Builtin::IntBitOr => format!("({} | {})", expressions[0], expressions[1]),
         Builtin::IntBitXor => format!("({} ^ {})", expressions[0], expressions[1]),
         Builtin::IntBitNot => format!("(~{})", expressions[0]),
+        Builtin::IntShiftLeft => format!(
+            "emela_i32_shift_left({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::IntShiftRight => format!(
+            "emela_i32_shift_right({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::IntShiftRightUnsigned => format!(
+            "emela_i32_shift_right_unsigned({}, {})",
+            expressions[0], expressions[1]
+        ),
         Builtin::Int64BitAnd => format!("({} & {})", expressions[0], expressions[1]),
         Builtin::Int64BitOr => format!("({} | {})", expressions[0], expressions[1]),
         Builtin::Int64BitXor => format!("({} ^ {})", expressions[0], expressions[1]),
@@ -3121,6 +3191,65 @@ fn primitive_f64_expression(op: PrimOp, args: &[String]) -> Result<String, &'sta
         (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
         _ => Err("Value::Prim with an invalid arity"),
     }
+}
+
+fn emit_i32_shift_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_i32_shift_left(int32_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits((uint32_t)value << (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int32_t emela_i32_shift_right(int32_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return value < INT32_C(0) ? -INT32_C(1) : INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t shifted = (uint32_t)value >> (uint32_t)by;");
+    writer.begin_block("if (by > INT32_C(0) && value < INT32_C(0))");
+    writer.line("shifted |= UINT32_MAX << (UINT32_C(32) - (uint32_t)by);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits(shifted);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline int32_t emela_i32_shift_right_unsigned(int32_t value, int32_t by)",
+    );
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits((uint32_t)value >> (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_negative_shift_helper(writer: &mut Writer) {
+    writer.begin_block("static inline void emela_emb_negative_shift_defect(int32_t amount)");
+    writer.line("char message[48];");
+    writer.line("static const char prefix[] = \"negative shift amount: \";");
+    writer.line("uint16_t prefix_length = (uint16_t)(sizeof prefix - 1);");
+    writer.line("uint32_t magnitude = (uint32_t)(-(amount + INT32_C(1))) + UINT32_C(1);");
+    writer.line("char *digits = message + sizeof message;");
+    writer.begin_block("do");
+    writer.line("*--digits = (char)('0' + magnitude % UINT32_C(10));");
+    writer.line("magnitude /= UINT32_C(10);");
+    writer.end_block();
+    writer.line("while (magnitude != UINT32_C(0));");
+    writer.line("*--digits = '-';");
+    writer.line("uint16_t number_length = (uint16_t)((message + sizeof message) - digits);");
+    writer.begin_block("for (uint16_t i = 0; i < prefix_length; ++i)");
+    writer.line("message[i] = prefix[i];");
+    writer.end_block();
+    writer.begin_block("for (uint16_t i = 0; i < number_length; ++i)");
+    writer.line("message[prefix_length + i] = digits[i];");
+    writer.end_block();
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_NEGATIVE_SHIFT, message, (uint16_t)(prefix_length + number_length));",
+    );
+    writer.end_block();
+    writer.blank();
 }
 
 fn emit_i32_division_helpers(writer: &mut Writer) {
