@@ -1707,6 +1707,7 @@ fn emit_builtin(
     let (arity, result_type) = match op {
         Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
+        Builtin::StringChars => (1, Type::List(TypeId::STRING)),
         Builtin::StringCodePoints => (1, Type::List(TypeId::INT)),
         Builtin::StringJoin => (2, Type::String),
         Builtin::StringSplit => (2, Type::List(TypeId::STRING)),
@@ -1775,6 +1776,7 @@ fn emit_builtin(
         Builtin::StringFromCodePoint => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::StringChars => operand_is_string(layouts, function, &args[0]),
         Builtin::StringCodePoints => operand_is_string(layouts, function, &args[0]),
         Builtin::StringSplit => args
             .iter()
@@ -1836,6 +1838,11 @@ fn emit_builtin(
             layouts.types[function.vars[dst].ty],
             Type::List(TypeId::STRING)
         )
+    } else if op == Builtin::StringChars {
+        matches!(
+            layouts.types[function.vars[dst].ty],
+            Type::List(TypeId::STRING)
+        )
     } else {
         layouts.types[function.vars[dst].ty] == result_type
     };
@@ -1867,6 +1874,10 @@ fn emit_builtin(
             &expressions[1],
             writer,
         )?;
+        return Ok(());
+    }
+    if op == Builtin::StringChars {
+        emit_string_chars(layouts, function, dst, &expressions[0], writer)?;
         return Ok(());
     }
     if op == Builtin::StringJoin {
@@ -3606,6 +3617,120 @@ fn emit_string_split_push(
     writer.assign(&format!("{last}->tail"), node_name);
     writer.end_block();
     writer.assign(last, node_name);
+}
+
+fn emit_string_chars(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::STRING)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringChars destination is not List[String]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_chars_input_{suffix}");
+    let validation_index_name = format!("emela_string_chars_validation_index_{suffix}");
+    let copy_index_name = format!("emela_string_chars_copy_index_{suffix}");
+    let bytes_name = format!("emela_string_chars_bytes_{suffix}");
+    let owner_name = format!("emela_string_chars_owner_{suffix}");
+    let owner_created_name = format!("emela_string_chars_owner_created_{suffix}");
+    let head_name = format!("emela_string_chars_head_{suffix}");
+    let last_name = format!("emela_string_chars_last_{suffix}");
+    let node_name = format!("emela_string_chars_node_{suffix}");
+    let offset_name = format!("emela_string_chars_offset_{suffix}");
+    let length_name = format!("emela_string_chars_length_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let string_owner_kind = layouts.string_owner_kind();
+    let defect = b"String.chars on non-ASCII input needs Unicode grapheme tables";
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &validation_index_name, Some("UINT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({validation_index_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if ((uint8_t){input_name}.data[{validation_index_name}] >= UINT8_C(0x80))"
+    ));
+    writer.line(&format!(
+        "emela_board_defect(EMELA_DEFECT_UNSUPPORTED_UNICODE, {}, UINT16_C({}));",
+        c_string_literal(defect),
+        defect.len()
+    ));
+    writer.end_block();
+    writer.line(&format!("++{validation_index_name};"));
+    writer.end_block();
+
+    writer.decl(
+        "const char *",
+        &bytes_name,
+        Some(&format!("{input_name}.data")),
+    );
+    writer.decl("void *", &owner_name, Some(&format!("{input_name}.owner")));
+    writer.decl("int", &owner_created_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "if ({owner_name} == NULL && {input_name}.length != UINT16_C(0))"
+    ));
+    writer.assign(
+        &owner_name,
+        &format!("emela_heap_allocate((size_t){input_name}.length, UINT32_C({string_owner_kind}))"),
+    );
+    writer.assign(&bytes_name, &format!("(const char *){owner_name}"));
+    writer.decl("uint32_t", &copy_index_name, Some("UINT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({copy_index_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.line(&format!(
+        "((char *){owner_name})[{copy_index_name}] = {input_name}.data[{copy_index_name}];"
+    ));
+    writer.line(&format!("++{copy_index_name};"));
+    writer.end_block();
+    writer.assign(&owner_created_name, "INT32_C(1)");
+    writer.end_block();
+    writer.begin_block(&format!("if ({bytes_name} == NULL)"));
+    writer.assign(&bytes_name, "\"\"");
+    writer.end_block();
+
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &length_name, Some("UINT32_C(1)"));
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.assign(&length_name, "UINT32_C(1)");
+    writer.begin_block(&format!(
+        "if ({bytes_name}[{offset_name}] == '\\r' && {offset_name} + UINT32_C(1) < (uint32_t){input_name}.length && {bytes_name}[{offset_name} + UINT32_C(1)] == '\\n')"
+    ));
+    writer.assign(&length_name, "UINT32_C(2)");
+    writer.end_block();
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &offset_name,
+        &length_name,
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    writer.line(&format!("{offset_name} += {length_name};"));
+    writer.end_block();
+    writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
+    writer.line(&format!("emela_heap_release({owner_name});"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
+    Ok(())
 }
 
 fn emit_string_join(

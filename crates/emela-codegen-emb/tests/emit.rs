@@ -962,6 +962,146 @@ fn string_code_points_builds_and_releases_a_list_in_code_point_order() {
 }
 
 #[test]
+fn string_chars_handles_ascii_and_crlf_as_graphemes() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let chars = {
+        let mut builder = FnBuilder::new(&core, "string_chars");
+        builder.set_ret(list_string).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let chars = builder.assign(
+            "chars",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringChars,
+                args: vec![input.into()],
+            },
+        );
+        builder.term(Term::Return(Some(chars.into())));
+        builder.finish()
+    };
+    let signature = {
+        let mut builder = FnBuilder::new(&core, "chars_signature");
+        builder.set_ret(TypeId::INT).set_exported();
+        let chars = builder.param("chars", list_string);
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(chars));
+        let rest = builder.assign("rest", list_string, Value::ListTail(chars));
+        let second = builder.assign("second", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::STRING, Value::ListHead(rest));
+        let first_matches = builder.assign(
+            "first_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![first.into(), Const::String("a".to_owned()).into()],
+            },
+        );
+        let second_length = builder.assign(
+            "second_length",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![second.into()],
+            },
+        );
+        let second_matches = builder.assign(
+            "second_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![second.into(), Const::String("\r\n".to_owned()).into()],
+            },
+        );
+        let third_matches = builder.assign(
+            "third_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![third.into(), Const::String("b".to_owned()).into()],
+            },
+        );
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_matches.into(), Const::Int(1000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_length.into(), Const::Int(100).into()],
+            },
+        );
+        let second_match_scaled = builder.assign(
+            "second_match_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_matches.into(), Const::Int(10).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let first_three = builder.assign(
+            "first_three",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), second_match_scaled.into()],
+            },
+        );
+        let packed = builder.assign(
+            "packed",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_three.into(), third_matches.into()],
+            },
+        );
+        builder.term(Term::Return(Some(packed.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(chars);
+    flow.add(signature);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit constrained String.chars");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char unsupported[] = \"String.chars on non-ASCII input needs Unicode grapheme tables\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_UNSUPPORTED_UNICODE && length == sizeof unsupported - 1 && memcmp(message, unsupported, length) == 0 ? 0 : 3); }\nint main(void) { for (int i = 0; i < 1000; ++i) { char input[] = \"a\\r\\nb\"; EmelaString source = { .data = input, .length = UINT16_C(4) }; void *chars = emela_export_string_chars_0(source); memset(input, 'x', sizeof input - 1); if (emela_export_chars_signature_1(chars) != INT32_C(1211)) return 1; emela_embedded_release(chars); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_string_chars_0(empty) != NULL) return 2; EmelaString non_ascii = { .data = \"\\xce\\xb2\", .length = UINT16_C(2) }; (void)emela_export_string_chars_0(non_ascii); return 4; }\n",
+    );
+
+    let exhausted = compile_flow(&flow, &Options::default().with_heap_bytes(64))
+        .expect("emit String.chars with a small fixed heap");
+    compile_and_run(
+        exhausted,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 3); }\nint main(void) { char input[] = \"a\\r\\nb\"; EmelaString source = { .data = input, .length = UINT16_C(4) }; (void)emela_export_string_chars_0(source); return 4; }\n",
+    );
+}
+
+#[test]
 fn string_split_keeps_views_alive_after_copying_the_source() {
     let mut core = emela_core::Module::new();
     let list_string = core.types.intern(Type::List(TypeId::STRING));
