@@ -377,6 +377,45 @@ fn int64_shift_builtins_handle_width_and_negative_amount_boundaries() {
 }
 
 #[test]
+fn int64_conversions_preserve_sign_and_keep_the_low_32_bits() {
+    let mut flow = Module::new(emela_core::Module::new());
+    for (name, op, input_type, result_type) in [
+        (
+            "int64_from_int",
+            Builtin::Int64FromInt,
+            TypeId::INT,
+            TypeId::INT64,
+        ),
+        (
+            "int64_to_int",
+            Builtin::Int64ToInt,
+            TypeId::INT64,
+            TypeId::INT,
+        ),
+    ] {
+        let mut builder = FnBuilder::new(&flow.core, name);
+        builder.set_ret(result_type).set_exported();
+        let input = builder.param("input", input_type);
+        let result = builder.assign(
+            "result",
+            result_type,
+            Value::Builtin {
+                op,
+                args: vec![input.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        flow.add(builder.finish());
+    }
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int64 conversions");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_int64_from_int_0(INT32_MIN) == INT64_C(-2147483648) && emela_export_int64_from_int_0(INT32_MAX) == INT64_C(2147483647) && emela_export_int64_to_int_1(INT64_C(0x123456789)) == INT32_C(0x23456789) && emela_export_int64_to_int_1(INT64_C(-1)) == INT32_C(-1) && emela_export_int64_to_int_1(INT64_MIN) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");

@@ -252,6 +252,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         PrimTy::I32,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
     ) || has_int_shift
+        || has_builtin(flow, &emitted_functions, &[Builtin::Int64ToInt])
     {
         source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
         source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
@@ -1187,6 +1188,8 @@ fn emit_builtin(
         Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
             (2, Type::Int64)
         }
+        Builtin::Int64FromInt => (1, Type::Int64),
+        Builtin::Int64ToInt => (1, Type::Int),
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
     };
     if args.len() != arity {
@@ -1218,6 +1221,8 @@ fn emit_builtin(
         | Builtin::Int64BitNot => args
             .iter()
             .all(|operand| operand_is_int64(layouts, function, operand)),
+        Builtin::Int64FromInt => operand_is_int(layouts, function, &args[0]),
+        Builtin::Int64ToInt => operand_is_int64(layouts, function, &args[0]),
         _ => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1328,6 +1333,10 @@ fn emit_builtin(
         Builtin::Int64BitOr => format!("({} | {})", expressions[0], expressions[1]),
         Builtin::Int64BitXor => format!("({} ^ {})", expressions[0], expressions[1]),
         Builtin::Int64BitNot => format!("(~{})", expressions[0]),
+        Builtin::Int64FromInt => format!("((int64_t)({}))", expressions[0]),
+        Builtin::Int64ToInt => {
+            format!("emela_i32_from_bits((uint32_t)({}))", expressions[0])
+        }
         Builtin::StringContains => format!(
             "emela_emb_string_contains({}, {})",
             expressions[0], expressions[1]
