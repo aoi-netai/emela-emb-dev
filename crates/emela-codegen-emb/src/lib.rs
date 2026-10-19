@@ -9,6 +9,7 @@ mod float_parse;
 mod float_to_string;
 mod heap;
 mod static_closure;
+mod static_handler;
 mod unicode_grapheme;
 mod writer;
 
