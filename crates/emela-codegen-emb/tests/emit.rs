@@ -563,6 +563,84 @@ fn int_to_string_capacity_overflow_uses_the_board_defect_hook() {
 }
 
 #[test]
+fn int64_to_string_uses_twenty_byte_scratch_and_matches_decimal_output() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "int64_to_string_matches");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::INT64);
+    let expected = builder.param("expected", TypeId::STRING);
+    let actual = builder.assign(
+        "actual",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::Int64ToString,
+            args: vec![input.into()],
+        },
+    );
+    let matches = builder.assign(
+        "matches",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![actual.into(), expected.into()],
+        },
+    );
+    builder.term(Term::Return(Some(matches.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit Int64.to_string");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("char emela_string_buffer_0[20];"));
+    assert!(source.contains("emela_emb_int_to_string"));
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString min = { .data = \"-9223372036854775808\", .length = UINT16_C(20) }; EmelaString max = { .data = \"9223372036854775807\", .length = UINT16_C(19) }; EmelaString zero = { .data = \"0\", .length = UINT16_C(1) }; return emela_export_int64_to_string_matches_0(INT64_MIN, min) && emela_export_int64_to_string_matches_0(INT64_MAX, max) && emela_export_int64_to_string_matches_0(INT64_C(0), zero) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_int64_to_string_without_runtime_scratch() {
+    let core = emela_core::Module::new();
+    let mut constant = FnBuilder::new(&core, "INT64_MIN_TEXT");
+    constant
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    let text = constant.assign(
+        "text",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::Int64ToString,
+            args: vec![Const::Int64(i64::MIN).into()],
+        },
+    );
+    constant.term(Term::Return(Some(text.into())));
+    let function = constant.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate Int64.to_string const");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(!source.contains("emela_emb_int_to_string"));
+    compile_and_run(
+        output,
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_INT64_MIN_TEXT_0(); return value.length == UINT16_C(20) && memcmp(value.data, \"-9223372036854775808\", 20) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "string_append_contains");
