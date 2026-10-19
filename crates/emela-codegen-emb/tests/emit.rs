@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
 use emela_core::{BinOp, CtorRef, EnumDef, OpTy, TypeId, VariantDef};
-use emela_lir::{Const, FnBuilder, Module, Operand, PrimOp, PrimTy, Term, Value};
+use emela_lir::{
+    CaseKey, Const, FnBuilder, Module, Operand, PrimOp, PrimTy, SwitchOn, Term, Value,
+};
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -416,6 +418,149 @@ fn reads_tuple_fields_and_ignores_unit_projections() {
     compile_and_run(
         output,
         "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_tuple_field_0() == INT32_C(1) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn emits_and_runs_int32_and_int64_literal_switches() {
+    let core = emela_core::Module::new();
+    let mut int_builder = FnBuilder::new(&core, "choose_int");
+    let int_input = int_builder.param("input", TypeId::INT);
+    int_builder.set_ret(TypeId::INT).set_exported();
+    let int_result = int_builder.var("result", TypeId::INT);
+    let int_min = int_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(11)))));
+    });
+    let int_zero = int_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(22)))));
+    });
+    let int_default = int_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(33)))));
+    });
+    int_builder.switch(
+        Some(int_result),
+        SwitchOn::Lit(int_input),
+        vec![
+            (CaseKey::Lit(Const::Int(i32::MIN)), int_min),
+            (CaseKey::Lit(Const::Int(0)), int_zero),
+        ],
+        Some(int_default),
+    );
+    int_builder.term(Term::Return(Some(Operand::Var(int_result))));
+    let int_function = int_builder.finish();
+
+    let mut int64_builder = FnBuilder::new(&core, "choose_int64");
+    let int64_input = int64_builder.param("input", TypeId::INT64);
+    int64_builder.set_ret(TypeId::INT).set_exported();
+    let int64_result = int64_builder.var("result", TypeId::INT);
+    let int64_min = int64_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(44)))));
+    });
+    let int64_max = int64_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(55)))));
+    });
+    let int64_default = int64_builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(66)))));
+    });
+    int64_builder.switch(
+        Some(int64_result),
+        SwitchOn::Lit(int64_input),
+        vec![
+            (CaseKey::Lit(Const::Int64(i64::MIN)), int64_min),
+            (CaseKey::Lit(Const::Int64(i64::MAX)), int64_max),
+        ],
+        Some(int64_default),
+    );
+    int64_builder.term(Term::Return(Some(Operand::Var(int64_result))));
+    let int64_function = int64_builder.finish();
+
+    let mut flow = Module::new(core);
+    flow.add(int_function);
+    flow.add(int64_function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit literal switches");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_choose_int_0(INT32_MIN) == INT32_C(11) && emela_export_choose_int_0(INT32_C(0)) == INT32_C(22) && emela_export_choose_int_0(INT32_C(1)) == INT32_C(33) && emela_export_choose_int64_1(INT64_MIN) == INT32_C(44) && emela_export_choose_int64_1(INT64_MAX) == INT32_C(55) && emela_export_choose_int64_1(INT64_C(0)) == INT32_C(66) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Maybe".to_owned(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![TypeId::INT64]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, Vec::new());
+    let mut builder = FnBuilder::new(&core, "classify");
+    let input = builder.param("input", enum_ty);
+    builder.set_ret(TypeId::INT).set_exported();
+    let result = builder.var("result", TypeId::INT);
+    let some = builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(71)))));
+    });
+    let none = builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(82)))));
+    });
+    builder.switch(
+        Some(result),
+        SwitchOn::Tag(input),
+        vec![(CaseKey::Variant(0), some), (CaseKey::Variant(1), none)],
+        None,
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit enum tag switch");
+    let enum_c_type = format!("emela_type_{}", enum_ty.index());
+    let harness = format!(
+        "#include <stdint.h>\n#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ if (kind == EMELA_DEFECT_NO_MATCH && length == UINT16_C(8) && memcmp(message, \"no match\", 8) == 0) exit(0); exit(1); }}\nint main(void) {{ {enum_c_type} some = {{ .tag = INT32_C(0), .payload.v0.f0 = INT64_C(7) }}; {enum_c_type} none = {{ .tag = INT32_C(1) }}; if (emela_export_classify_0(some) != INT32_C(71) || emela_export_classify_0(none) != INT32_C(82)) return 1; {enum_c_type} invalid = {{ .tag = INT32_C(7) }}; (void)emela_export_classify_0(invalid); return 2; }}\n"
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn emits_and_runs_switches_on_nullary_enum_representations() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Color".to_owned(),
+        params: 0,
+        variants: vec![VariantDef::unit("Red"), VariantDef::unit("Blue")],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, Vec::new());
+    let mut builder = FnBuilder::new(&core, "color_code");
+    let input = builder.param("input", enum_ty);
+    builder.set_ret(TypeId::INT).set_exported();
+    let result = builder.var("result", TypeId::INT);
+    let red = builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(3)))));
+    });
+    let blue = builder.seq(|builder| {
+        builder.term(Term::Yield(Some(Operand::Const(Const::Int(5)))));
+    });
+    builder.switch(
+        Some(result),
+        SwitchOn::Tag(input),
+        vec![(CaseKey::Variant(0), red), (CaseKey::Variant(1), blue)],
+        None,
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit nullary enum switch");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { return emela_export_color_code_0(INT32_C(0)) == INT32_C(3) && emela_export_color_code_0(INT32_C(1)) == INT32_C(5) ? 0 : 1; }\n",
     );
 }
 

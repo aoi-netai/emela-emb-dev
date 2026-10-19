@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use emela_core::{CtorRef, Type, TypeId, TypeTable};
-use emela_lir::{Callee, FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
+use emela_lir::{
+    Callee, CaseKey, Const, FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, SwitchOn, Term,
+    Value, VarId,
+};
 
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
@@ -100,6 +103,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                 .seqs
                 .iter()
                 .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
+                || function.stmts.iter().any(|(_, statement)| {
+                    matches!(
+                        statement,
+                        Stmt::Switch {
+                            on: SwitchOn::Tag(_),
+                            default: None,
+                            ..
+                        }
+                    )
+                })
         });
     if needs_defect_hook {
         board_header.line(
@@ -350,8 +363,126 @@ fn emit_statement(
             writer.end_block();
             Ok(())
         }
+        Stmt::Switch {
+            dst,
+            on,
+            cases,
+            default,
+        } => emit_switch(layouts, function, *dst, *on, cases, *default, writer, names),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
+}
+
+fn emit_switch(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    on: SwitchOn,
+    cases: &[emela_lir::Case],
+    default: Option<emela_lir::SeqId>,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+) -> Result<(), Vec<Error>> {
+    let (scrutinee, tag_switch) = match on {
+        SwitchOn::Tag(value) => {
+            let ty = function.vars[value].ty;
+            let Type::Enum(enum_id, _) = layouts.types[ty] else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "tag switch scrutinee is not an enum",
+                ));
+            };
+            if layouts.enum_is_i32(enum_id) {
+                (variable_name(value), true)
+            } else if layouts.enum_fields(ty).is_some() {
+                (format!("{}.tag", variable_name(value)), true)
+            } else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "tag switch enum has no supported C representation",
+                ));
+            }
+        }
+        SwitchOn::Lit(value) => {
+            let ty = function.vars[value].ty;
+            if !matches!(layouts.types[ty], Type::Int | Type::Int64) {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "literal switch scrutinee is not Int or Int64",
+                ));
+            }
+            (variable_name(value), false)
+        }
+    };
+
+    if !tag_switch && default.is_none() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "literal switch has no default sequence",
+        ));
+    }
+
+    writer.begin_block(&format!("switch ({scrutinee})"));
+    for case in cases {
+        let label = match (&case.key, on) {
+            (CaseKey::Variant(variant), SwitchOn::Tag(value)) => {
+                let ty = function.vars[value].ty;
+                let Type::Enum(enum_id, _) = layouts.types[ty] else {
+                    unreachable!("tag switch was validated above")
+                };
+                if *variant >= layouts.core.enums[enum_id].variants.len() {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "tag switch variant is out of range",
+                    ));
+                }
+                let tag = i32::try_from(*variant).map_err(|_| {
+                    invalid_flow_ir(&function.name, "tag switch variant does not fit Int32")
+                })?;
+                int32_literal(tag)
+            }
+            (CaseKey::Lit(Const::Int(value)), SwitchOn::Lit(scrutinee))
+                if matches!(layouts.types[function.vars[scrutinee].ty], Type::Int) =>
+            {
+                int32_literal(*value)
+            }
+            (CaseKey::Lit(Const::Int64(value)), SwitchOn::Lit(scrutinee))
+                if matches!(layouts.types[function.vars[scrutinee].ty], Type::Int64) =>
+            {
+                int64_literal(*value)
+            }
+            _ => {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "switch case key does not match its scrutinee",
+                ));
+            }
+        };
+        writer.begin_block(&format!("case {label}:"));
+        emit_compound_sequence(layouts, function, case.body, dst, writer, names)?;
+        writer.line("break;");
+        writer.end_block();
+    }
+
+    if let Some(default) = default {
+        writer.begin_block("default:");
+        emit_compound_sequence(layouts, function, default, dst, writer, names)?;
+        writer.line("break;");
+        writer.end_block();
+    } else {
+        writer.begin_block("default:");
+        writer.line("emela_board_defect(EMELA_DEFECT_NO_MATCH, \"no match\", UINT16_C(8));");
+        writer.end_block();
+    }
+    writer.end_block();
+    Ok(())
+}
+
+fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
+    vec![Error {
+        kind: ErrorKind::InvalidFlowIr,
+        message: format!("invalid Flow IR in function `{function}`: {reason}"),
+    }]
 }
 
 fn emit_compound_sequence(
