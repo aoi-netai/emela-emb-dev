@@ -568,6 +568,278 @@ fn requires_fixed_heap_capacity_for_managed_aggregate_values() {
 }
 
 #[test]
+fn boxes_recursive_enum_fields_and_releases_deep_values_iteratively() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Chain".to_owned(),
+        params: 0,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let chain_ty = core.enum_type(enum_id, Vec::new());
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Link", vec![chain_ty]),
+    ];
+
+    let mut builder = FnBuilder::new(&core, "recursive_chain");
+    builder.set_ret(TypeId::INT).set_exported();
+    let current = builder.var("current", chain_ty);
+    let depth = builder.var("depth", TypeId::INT);
+    let result = builder.var("result", TypeId::INT);
+    let end = builder.assign(
+        "end",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    builder.loop_(
+        Some(result),
+        vec![(current, end.into()), (depth, Const::Int(0).into())],
+        |loop_| {
+            let is_deep = loop_.assign(
+                "is_deep",
+                TypeId::BOOL,
+                Value::Prim {
+                    op: PrimOp::Eq,
+                    ty: PrimTy::I32,
+                    args: vec![depth.into(), Const::Int(128).into()],
+                },
+            );
+            let branch = loop_.var("branch", TypeId::INT);
+            loop_.if_(
+                Some(branch),
+                is_deep,
+                |done| {
+                    let child = done.assign(
+                        "child",
+                        chain_ty,
+                        Value::Field {
+                            base: current,
+                            ctor: CtorRef {
+                                enum_id,
+                                variant: 1,
+                            },
+                            index: 0,
+                        },
+                    );
+                    let child_tag = done.assign("child_tag", TypeId::INT, Value::Tag(child));
+                    done.term(Term::Yield(Some(child_tag.into())));
+                },
+                |more| {
+                    let next = more.assign(
+                        "next",
+                        chain_ty,
+                        Value::Make {
+                            ctor: CtorRef {
+                                enum_id,
+                                variant: 1,
+                            },
+                            args: vec![current.into()],
+                        },
+                    );
+                    let next_depth = more.assign(
+                        "next_depth",
+                        TypeId::INT,
+                        Value::Prim {
+                            op: PrimOp::Add,
+                            ty: PrimTy::I32,
+                            args: vec![depth.into(), Const::Int(1).into()],
+                        },
+                    );
+                    more.term(Term::Recur(vec![next.into(), next_depth.into()]));
+                },
+            );
+            loop_.term(Term::Yield(Some(branch.into())));
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let no_heap = compile_flow(&flow, &Options::default())
+        .expect_err("recursive enum boxes require a configured fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+    let isr = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(8192)
+            .with_isr_entry("recursive_chain"),
+    )
+    .expect_err("reject recursive heap values reachable from an ISR");
+    assert!(isr[0].message.contains("heap-backed value"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(8192))
+        .expect("emit a boxed recursive enum");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("emela_heap_allocate(sizeof(emela_type_"));
+    assert!(source.contains("emela_heap_drain(pending, tail)"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 100; i++) if (emela_export_recursive_chain_0() != INT32_C(1)) return 2; return 0; }\n",
+    );
+
+    let exhausted = compile_flow(&flow, &Options::default().with_heap_bytes(1))
+        .expect("emit recursive boxes with an intentionally undersized heap");
+    compile_and_run(
+        exhausted,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 1); }\nint main(void) { (void)emela_export_recursive_chain_0(); return 2; }\n",
+    );
+}
+
+#[test]
+fn rejects_recursive_enum_types_that_change_type_arguments() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Growing".to_owned(),
+        params: 1,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let parameter = core.type_param(0);
+    let nested_parameter = core.list(parameter);
+    let nested_type = core.enum_type(enum_id, vec![nested_parameter]);
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Next", vec![nested_type]),
+    ];
+    let concrete_type = core.enum_type(enum_id, vec![TypeId::INT]);
+    let mut builder = FnBuilder::new(&core, "growing_enum");
+    builder.set_ret(concrete_type).set_exported();
+    let value = builder.assign(
+        "value",
+        concrete_type,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    builder.term(Term::Return(Some(value.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect_err("reject infinitely expanding generic recursive layouts");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("changes its type arguments"));
+}
+
+#[test]
+fn boxes_recursive_fields_nested_inside_tuples() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "TupleChain".to_owned(),
+        params: 0,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let chain_ty = core.enum_type(enum_id, Vec::new());
+    let tuple_ty = core.tuple(vec![TypeId::INT, chain_ty]);
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Link", vec![tuple_ty]),
+    ];
+
+    let mut builder = FnBuilder::new(&core, "tuple_recursive_field");
+    builder.set_ret(TypeId::INT).set_exported();
+    let end = builder.assign(
+        "end",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    let tuple = builder.assign(
+        "tuple",
+        tuple_ty,
+        Value::Tuple(vec![Const::Int(7).into(), end.into()]),
+    );
+    let link = builder.assign(
+        "link",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 1,
+            },
+            args: vec![tuple.into()],
+        },
+    );
+    let payload = builder.assign(
+        "payload",
+        tuple_ty,
+        Value::Field {
+            base: link,
+            ctor: CtorRef {
+                enum_id,
+                variant: 1,
+            },
+            index: 0,
+        },
+    );
+    let number = builder.assign(
+        "number",
+        TypeId::INT,
+        Value::TupleGet {
+            base: payload,
+            index: 0,
+        },
+    );
+    let child = builder.assign(
+        "child",
+        chain_ty,
+        Value::TupleGet {
+            base: payload,
+            index: 1,
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(child));
+    let result = builder.assign(
+        "result",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![number.into(), tag.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit a recursive edge nested in a tuple");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_tuple_recursive_field_0() != INT32_C(7)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
 fn allocates_and_releases_lists_in_the_fixed_heap() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));
@@ -4091,7 +4363,7 @@ fn rejects_unknown_or_heap_using_isr_entries() {
             .with_isr_entry("list_interrupt"),
     )
     .expect_err("reject heap-backed List values reachable from an ISR");
-    assert!(errors[0].message.contains("heap-backed List"));
+    assert!(errors[0].message.contains("heap-backed value"));
 }
 
 #[test]

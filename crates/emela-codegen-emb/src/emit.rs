@@ -27,19 +27,19 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let emitted_functions = runtime_reachable(flow);
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
     let heap_required = flow.functions.iter().any(|(id, function)| {
-        emitted_functions.contains(&id) && function_needs_list_heap(function, &layouts)
+        emitted_functions.contains(&id) && function_needs_heap(function, &layouts)
     });
     if options.heap_bytes() == 0 && heap_required {
         let (_, function) = flow
             .functions
             .iter()
             .find(|(id, function)| {
-                emitted_functions.contains(id) && function_needs_list_heap(function, &layouts)
+                emitted_functions.contains(id) && function_needs_heap(function, &layouts)
             })
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
-            "heap-backed List operations with heap_bytes = 0; configure Options::with_heap_bytes",
+            "heap-backed List or recursive values with heap_bytes = 0; configure Options::with_heap_bytes",
         ));
     }
     let mut const_outcomes = HashMap::new();
@@ -1371,11 +1371,11 @@ fn validate_isr_function(
     }
     if std::iter::once(function.ret)
         .chain(function.vars.iter().map(|(_, variable)| variable.ty))
-        .any(|ty| layouts.contains_list_ref(ty, &mut HashSet::new()))
+        .any(|ty| layouts.contains_heap_ref(ty, &mut HashSet::new()))
     {
         return Err(unsupported(
             &function.name,
-            &format!("heap-backed List value reachable from ISR entry `{entry_name}`"),
+            &format!("heap-backed value reachable from ISR entry `{entry_name}`"),
         ));
     }
 
@@ -1438,7 +1438,7 @@ fn validate_isr_function(
     Ok(())
 }
 
-fn function_needs_list_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
+fn function_needs_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
         let Stmt::Let {
@@ -3929,15 +3929,17 @@ fn emit_make(
             continue;
         }
         represented = true;
-        if layouts.is_managed_value(*field_ty) {
-            emit_retain_operand(layouts, function, arg, writer);
-        }
-        let expression =
-            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
-        writer.assign(
+        emit_aggregate_field_store(
+            layouts,
+            function,
+            ty,
+            ctor.variant,
+            index,
+            *field_ty,
+            arg,
             &format!("{target}.payload.v{}.f{index}", ctor.variant),
-            &expression,
-        );
+            writer,
+        )?;
     }
     if !represented {
         writer.assign(
@@ -4008,10 +4010,13 @@ fn emit_field(
         }]);
     }
     if let Some(dst) = dst {
-        writer.assign(
-            &variable_name(dst),
-            &format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant),
-        );
+        let access = format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant);
+        let expression = if layouts.is_recursive_box_field(base_ty, ctor.variant, index) {
+            format!("*(({} *){access})", layouts.c_type(field_ty))
+        } else {
+            access
+        };
+        writer.assign(&variable_name(dst), &expression);
     }
     Ok(())
 }
@@ -4092,12 +4097,17 @@ fn emit_tuple(
             continue;
         }
         represented = true;
-        if layouts.is_managed_value(field_ty) {
-            emit_retain_operand(layouts, function, arg, writer);
-        }
-        let expression =
-            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
-        writer.assign(&format!("{target}.f{index}"), &expression);
+        emit_aggregate_field_store(
+            layouts,
+            function,
+            ty,
+            0,
+            index,
+            field_ty,
+            arg,
+            &format!("{target}.f{index}"),
+            writer,
+        )?;
     }
     if !represented {
         writer.assign(&format!("{target}._unit"), "UINT8_C(0)");
@@ -4143,10 +4153,50 @@ fn emit_tuple_get(
         }]);
     }
     if let Some(dst) = dst {
+        let access = format!("{}.f{index}", variable_name(base));
+        let expression = if layouts.is_recursive_box_field(base_ty, 0, index) {
+            format!("*(({} *){access})", layouts.c_type(field_ty))
+        } else {
+            access
+        };
+        writer.assign(&variable_name(dst), &expression);
+    }
+    Ok(())
+}
+
+fn emit_aggregate_field_store(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    owner_ty: TypeId,
+    variant: usize,
+    field: usize,
+    field_ty: TypeId,
+    value: &Operand,
+    target: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let expression = operand_expression(value).map_err(|kind| unsupported(&function.name, kind))?;
+    if layouts.is_recursive_box_field(owner_ty, variant, field) {
+        let box_kind = layouts.recursive_box_kind(field_ty).ok_or_else(|| {
+            invalid_flow_ir(
+                &function.name,
+                "recursive aggregate field has no heap box layout",
+            )
+        })?;
+        if layouts.is_managed_value(field_ty) {
+            emit_retain_operand(layouts, function, value, writer);
+        }
+        let field_type = layouts.c_type(field_ty);
         writer.assign(
-            &variable_name(dst),
-            &format!("{}.f{index}", variable_name(base)),
+            target,
+            &format!("emela_heap_allocate(sizeof({field_type}), UINT32_C({box_kind}))"),
         );
+        writer.assign(&format!("*(({field_type} *){target})"), &expression);
+    } else {
+        if layouts.is_managed_value(field_ty) {
+            emit_retain_operand(layouts, function, value, writer);
+        }
+        writer.assign(target, &expression);
     }
     Ok(())
 }
@@ -4891,6 +4941,9 @@ struct TypeLayouts<'a> {
     types: TypeTable,
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
+    recursive_edges: HashSet<(TypeId, usize, usize)>,
+    recursive_box_types: Vec<TypeId>,
+    recursive_box_ids: HashMap<TypeId, usize>,
     list_types: Vec<TypeId>,
     list_ids: HashMap<TypeId, usize>,
     error_types: Vec<(EnumId, TypeId)>,
@@ -4904,6 +4957,9 @@ impl<'a> TypeLayouts<'a> {
             types: flow.core.types.clone(),
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
+            recursive_edges: HashSet::new(),
+            recursive_box_types: Vec::new(),
+            recursive_box_ids: HashMap::new(),
             list_types: Vec::new(),
             list_ids: HashMap::new(),
             error_types: Vec::new(),
@@ -4937,16 +4993,6 @@ impl<'a> TypeLayouts<'a> {
                 layouts.collect(ty, "EmelaError", &mut states)?;
                 layouts.error_types.push((id, ty));
             }
-            if layouts
-                .error_types
-                .iter()
-                .any(|(_, ty)| layouts.contains_list_ref(*ty, &mut HashSet::new()))
-            {
-                return Err(unsupported(
-                    "EmelaError",
-                    "error enum values containing a List reference",
-                ));
-            }
         }
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id) {
@@ -4966,6 +5012,33 @@ impl<'a> TypeLayouts<'a> {
             layouts.collect(element, "List element", &mut states)?;
             index += 1;
         }
+        for aggregate in &layouts.aggregates {
+            let fields = match &aggregate.kind {
+                AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+                AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+            };
+            for (variant, fields) in fields.into_iter().enumerate() {
+                for (field, &field_ty) in fields.iter().enumerate() {
+                    if layouts
+                        .recursive_edges
+                        .contains(&(aggregate.ty, variant, field))
+                        && !layouts.recursive_box_ids.contains_key(&field_ty)
+                    {
+                        let index = layouts.recursive_box_types.len();
+                        layouts.recursive_box_types.push(field_ty);
+                        layouts.recursive_box_ids.insert(field_ty, index);
+                    }
+                }
+            }
+        }
+        for (_, ty) in &layouts.error_types {
+            if layouts.is_managed_value(*ty) {
+                return Err(unsupported(
+                    "EmelaError",
+                    "error enum values containing a heap reference",
+                ));
+            }
+        }
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id) {
                 continue;
@@ -4978,7 +5051,7 @@ impl<'a> TypeLayouts<'a> {
             types.push(function.ret);
             types.extend(layouts.list_types.iter().copied());
             for ty in types {
-                if !layouts.contains_list_ref(ty, &mut HashSet::new()) {
+                if !layouts.contains_heap_ref(ty, &mut HashSet::new()) {
                     continue;
                 }
                 match layouts.types[ty].clone() {
@@ -4999,7 +5072,7 @@ impl<'a> TypeLayouts<'a> {
                     Type::Enum(enum_id, _) if layouts.core.enums[enum_id].error => {
                         return Err(unsupported(
                             &function.name,
-                            "error enum values that contain a List reference",
+                            "error enum values that contain a heap reference",
                         ));
                     }
                     Type::Tuple(_) | Type::Enum(_, _)
@@ -5062,6 +5135,19 @@ impl<'a> TypeLayouts<'a> {
             return Ok(());
         };
 
+        if let Type::Enum(enum_id, _) = self.types[ty]
+            && states.iter().any(|(active_ty, state)| {
+                *state == 1
+                    && *active_ty != ty
+                    && matches!(self.types[*active_ty], Type::Enum(active_id, _) if active_id == enum_id)
+            })
+        {
+            return Err(unsupported(
+                function,
+                "recursive enum type that changes its type arguments",
+            ));
+        }
+
         match states.get(&ty) {
             Some(2) => return Ok(()),
             Some(1) => {
@@ -5074,13 +5160,20 @@ impl<'a> TypeLayouts<'a> {
         }
         states.insert(ty, 1);
 
-        let fields: Vec<TypeId> = match &kind {
-            AggregateKind::Tuple(fields) => fields.clone(),
-            AggregateKind::Enum(variants) => variants.iter().flatten().copied().collect(),
+        let variants = match &kind {
+            AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+            AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
         };
-        for field in fields {
-            if self.type_repr(field) != Repr::Void {
-                self.collect(field, function, states)?;
+        for (variant, fields) in variants.into_iter().enumerate() {
+            for (index, &field) in fields.iter().enumerate() {
+                if self.type_repr(field) == Repr::Void {
+                    continue;
+                }
+                if matches!(states.get(&field), Some(1)) {
+                    self.recursive_edges.insert((ty, variant, index));
+                } else {
+                    self.collect(field, function, states)?;
+                }
             }
         }
 
@@ -5164,45 +5257,43 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn is_managed_value(&self, ty: TypeId) -> bool {
-        self.contains_list_ref(ty, &mut HashSet::new())
+        self.contains_heap_ref(ty, &mut HashSet::new())
     }
 
-    fn contains_list_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        let mut types = self.types.clone();
-        self.contains_list_ref_with_types(&mut types, ty, seen)
-    }
-
-    fn contains_list_ref_with_types(
-        &self,
-        types: &mut TypeTable,
-        ty: TypeId,
-        seen: &mut HashSet<TypeId>,
-    ) -> bool {
+    fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if matches!(self.types[ty], Type::List(_)) {
+            return true;
+        }
         if !seen.insert(ty) {
             return false;
         }
-        match types[ty].clone() {
-            Type::List(_) => true,
-            Type::Tuple(fields) => fields
-                .into_iter()
-                .any(|field| self.contains_list_ref_with_types(types, field, seen)),
-            Type::Enum(enum_id, args) => self.core.enums[enum_id].variants.iter().any(|variant| {
-                variant.tys.iter().any(|&field| {
-                    let field = types.subst(field, &args);
-                    self.contains_list_ref_with_types(types, field, seen)
-                })
+        let Some(&aggregate_index) = self.aggregate_ids.get(&ty) else {
+            return false;
+        };
+        let aggregate = &self.aggregates[aggregate_index];
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => fields.iter().enumerate().any(|(index, &field)| {
+                self.recursive_edges.contains(&(ty, 0, index))
+                    || self.contains_heap_ref(field, seen)
             }),
-            Type::Any => self.core.enums.iter().any(|(_, enum_def)| {
-                enum_def.error
-                    && enum_def.variants.iter().any(|variant| {
-                        variant
-                            .tys
-                            .iter()
-                            .any(|&field| self.contains_list_ref_with_types(types, field, seen))
+            AggregateKind::Enum(variants) => {
+                variants.iter().enumerate().any(|(variant, fields)| {
+                    fields.iter().enumerate().any(|(index, &field)| {
+                        self.recursive_edges.contains(&(ty, variant, index))
+                            || self.contains_heap_ref(field, seen)
                     })
-            }),
-            _ => false,
+                })
+            }
         }
+    }
+
+    fn is_recursive_box_field(&self, owner: TypeId, variant: usize, field: usize) -> bool {
+        self.recursive_edges.contains(&(owner, variant, field))
+    }
+
+    fn recursive_box_kind(&self, ty: TypeId) -> Option<u32> {
+        let index = *self.recursive_box_ids.get(&ty)?;
+        u32::try_from(self.list_types.len() + index).ok()
     }
 
     fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize> {
@@ -5285,6 +5376,10 @@ impl<'a> TypeLayouts<'a> {
         match &aggregate.kind {
             AggregateKind::Tuple(fields) => {
                 for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                        writer.line(&format!("emela_heap_retain(value->f{index});"));
+                        continue;
+                    }
                     if self.is_managed_value(field_ty) {
                         self.emit_retain_value_expression(
                             field_ty,
@@ -5300,6 +5395,12 @@ impl<'a> TypeLayouts<'a> {
                     writer.line(&format!("case INT32_C({variant}):"));
                     writer.begin_block("");
                     for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_recursive_box_field(aggregate.ty, variant, index) {
+                            writer.line(&format!(
+                                "emela_heap_retain(value->payload.v{variant}.f{index});"
+                            ));
+                            continue;
+                        }
                         if self.is_managed_value(field_ty) {
                             self.emit_retain_value_expression(
                                 field_ty,
@@ -5324,6 +5425,12 @@ impl<'a> TypeLayouts<'a> {
         match &aggregate.kind {
             AggregateKind::Tuple(fields) => {
                 for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                        writer.line(&format!(
+                            "emela_heap_enqueue(value->f{index}, pending, tail);"
+                        ));
+                        continue;
+                    }
                     if self.is_managed_value(field_ty) {
                         self.emit_enqueue_value_expression(
                             field_ty,
@@ -5341,6 +5448,12 @@ impl<'a> TypeLayouts<'a> {
                     writer.line(&format!("case INT32_C({variant}):"));
                     writer.begin_block("");
                     for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_recursive_box_field(aggregate.ty, variant, index) {
+                            writer.line(&format!(
+                                "emela_heap_enqueue(value->payload.v{variant}.f{index}, pending, tail);"
+                            ));
+                            continue;
+                        }
                         if self.is_managed_value(field_ty) {
                             self.emit_enqueue_value_expression(
                                 field_ty,
@@ -5387,6 +5500,21 @@ impl<'a> TypeLayouts<'a> {
                 );
             }
             writer.line("emela_heap_enqueue(node->tail, pending, tail);");
+            writer.line("break;");
+            writer.end_block();
+        }
+        for &box_ty in &self.recursive_box_types {
+            let box_index = self.recursive_box_ids[&box_ty];
+            let kind = self.list_types.len() + box_index;
+            let aggregate_index = self
+                .aggregate_helper_index(box_ty)
+                .expect("recursive box payload must have an ownership helper");
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{aggregate_index}((const {} *)value, pending, tail);",
+                self.c_type(box_ty)
+            ));
             writer.line("break;");
             writer.end_block();
         }
@@ -5474,7 +5602,12 @@ impl<'a> TypeLayouts<'a> {
                             continue;
                         }
                         represented = true;
-                        writer.line(&format!("  {} f{index};", self.c_type(field)));
+                        let field_type = if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                            "void *".to_owned()
+                        } else {
+                            self.c_type(field)
+                        };
+                        writer.line(&format!("  {field_type} f{index};"));
                     }
                     if !represented {
                         writer.line("  uint8_t _unit;");
@@ -5489,7 +5622,16 @@ impl<'a> TypeLayouts<'a> {
                             .enumerate()
                             .filter(|(_, field)| self.type_repr(**field) != Repr::Void)
                             .map(|(field_index, field)| {
-                                format!("{} f{field_index};", self.c_type(*field))
+                                let field_type = if self.is_recursive_box_field(
+                                    aggregate.ty,
+                                    variant_index,
+                                    field_index,
+                                ) {
+                                    "void *".to_owned()
+                                } else {
+                                    self.c_type(*field)
+                                };
+                                format!("{field_type} f{field_index};")
                             })
                             .collect::<Vec<_>>();
                         let body = if represented_fields.is_empty() {
