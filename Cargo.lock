@@ -251,6 +251,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "emela-codegen-emb"
+version = "0.21.0"
+dependencies = [
+ "emela-core",
+ "emela-lir",
+]
+
+[[package]]
 name = "emela-codegen-js"
 version = "0.21.0"
 dependencies = [
