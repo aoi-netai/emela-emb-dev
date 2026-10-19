@@ -230,6 +230,117 @@ fn emits_and_runs_int32_primitive_operations() {
 }
 
 #[test]
+fn emits_and_runs_int64_primitive_operations_with_wrapping_semantics() {
+    let cases = [
+        (
+            PrimOp::Add,
+            vec![Const::Int64(i64::MAX), Const::Int64(1)],
+            TypeId::INT64,
+            "INT64_MIN",
+        ),
+        (
+            PrimOp::Sub,
+            vec![Const::Int64(i64::MIN), Const::Int64(1)],
+            TypeId::INT64,
+            "INT64_MAX",
+        ),
+        (
+            PrimOp::Mul,
+            vec![Const::Int64(i64::MAX), Const::Int64(2)],
+            TypeId::INT64,
+            "-INT64_C(2)",
+        ),
+        (
+            PrimOp::Neg,
+            vec![Const::Int64(i64::MIN)],
+            TypeId::INT64,
+            "INT64_MIN",
+        ),
+        (
+            PrimOp::Div,
+            vec![Const::Int64(-7), Const::Int64(3)],
+            TypeId::INT64,
+            "-INT64_C(2)",
+        ),
+        (
+            PrimOp::Rem,
+            vec![Const::Int64(-7), Const::Int64(3)],
+            TypeId::INT64,
+            "-INT64_C(1)",
+        ),
+        (
+            PrimOp::Div,
+            vec![Const::Int64(i64::MIN), Const::Int64(-1)],
+            TypeId::INT64,
+            "INT64_MIN",
+        ),
+        (
+            PrimOp::Rem,
+            vec![Const::Int64(i64::MIN), Const::Int64(-1)],
+            TypeId::INT64,
+            "INT64_C(0)",
+        ),
+        (
+            PrimOp::Eq,
+            vec![Const::Int64(i64::MIN), Const::Int64(i64::MIN)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Ne,
+            vec![Const::Int64(1), Const::Int64(2)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Lt,
+            vec![Const::Int64(-2), Const::Int64(-1)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Le,
+            vec![Const::Int64(2), Const::Int64(2)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Gt,
+            vec![Const::Int64(3), Const::Int64(2)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Ge,
+            vec![Const::Int64(i64::MAX), Const::Int64(i64::MIN)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+    ];
+
+    for (op, args, result_type, expected) in cases {
+        let output = compile_i64_prim(op, args, result_type);
+        let harness = format!(
+            "#include <stdint.h>\n#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ (void)kind; (void)message; (void)length; exit(1); }}\nint main(void) {{ return emela_export_probe_0() == {expected} ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
+fn int64_division_by_zero_calls_the_board_defect_hook() {
+    let output = compile_i64_prim(
+        PrimOp::Div,
+        vec![Const::Int64(7), Const::Int64(0)],
+        TypeId::INT64,
+    );
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { if (kind == EMELA_DEFECT_DIVISION_BY_ZERO && length == UINT16_C(16) && memcmp(message, \"division by zero\", 16) == 0) exit(0); exit(1); }\nint main(void) { (void)emela_export_probe_0(); return 1; }\n",
+    );
+}
+
+#[test]
 fn compiles_core_int_add_with_twos_complement_wraparound() {
     let mut core = emela_core::Module::new();
     let main = core.declare("main", true);
@@ -423,6 +534,26 @@ fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output
     let mut flow = Module::new(core);
     flow.add(function);
     compile_flow(&flow, &Options::default()).expect("emit Int32 primitive")
+}
+
+fn compile_i64_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "probe");
+    builder.set_ret(result_type).set_exported();
+    let result = builder.assign(
+        "result",
+        result_type,
+        Value::Prim {
+            op,
+            ty: PrimTy::I64,
+            args: args.into_iter().map(Operand::Const).collect(),
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    compile_flow(&flow, &Options::default()).expect("emit Int64 primitive")
 }
 
 fn compile_constant_function(name: &str, return_type: TypeId, value: Const) -> Output {

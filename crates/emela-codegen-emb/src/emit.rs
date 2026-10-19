@@ -87,7 +87,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_prim(flow, &[PrimOp::Div, PrimOp::Rem])
+    let needs_defect_hook = has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem])
+        || has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem])
         || flow.functions.iter().any(|(_, function)| {
             function
                 .seqs
@@ -111,7 +112,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
     source.blank();
-    if has_prim(flow, &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg]) {
+    if has_prim(
+        flow,
+        PrimTy::I32,
+        &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
+    ) {
         source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
         source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
         source.line("return (int32_t)bits;");
@@ -120,8 +125,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         source.end_block();
         source.blank();
     }
-    if has_prim(flow, &[PrimOp::Div, PrimOp::Rem]) {
+    if has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem]) {
         emit_i32_division_helpers(&mut source);
+    }
+    if has_prim(
+        flow,
+        PrimTy::I64,
+        &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
+    ) {
+        emit_i64_wrap_helper(&mut source);
+    }
+    if has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem]) {
+        emit_i64_division_helpers(&mut source);
     }
 
     for (id, function) in flow.functions.iter() {
@@ -449,15 +464,19 @@ fn is_c_identifier(value: &str) -> bool {
 }
 
 fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<String, &'static str> {
-    if ty != PrimTy::I32 {
-        return Err("non-Int32 Value::Prim");
-    }
-
     let args: Vec<String> = args
         .iter()
         .map(operand_expression)
         .collect::<Result<_, _>>()?;
-    match (op, args.as_slice()) {
+    match ty {
+        PrimTy::I32 => primitive_i32_expression(op, args.as_slice()),
+        PrimTy::I64 => primitive_i64_expression(op, args.as_slice()),
+        _ => Err("unsupported Value::Prim type"),
+    }
+}
+
+fn primitive_i32_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {
+    match (op, args) {
         (PrimOp::Add, [lhs, rhs]) => Ok(format!(
             "emela_i32_from_bits((uint32_t)((uint64_t)(uint32_t)({lhs}) + (uint64_t)(uint32_t)({rhs})))"
         )),
@@ -481,6 +500,32 @@ fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<Stri
         (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
         (PrimOp::Div, [lhs, rhs]) => Ok(format!("emela_i32_div({lhs}, {rhs})")),
         (PrimOp::Rem, [lhs, rhs]) => Ok(format!("emela_i32_rem({lhs}, {rhs})")),
+        _ => Err("Value::Prim with an invalid arity"),
+    }
+}
+
+fn primitive_i64_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {
+    match (op, args) {
+        (PrimOp::Add, [lhs, rhs]) => Ok(format!(
+            "emela_i64_from_bits((uint64_t)({lhs}) + (uint64_t)({rhs}))"
+        )),
+        (PrimOp::Sub, [lhs, rhs]) => Ok(format!(
+            "emela_i64_from_bits((uint64_t)({lhs}) - (uint64_t)({rhs}))"
+        )),
+        (PrimOp::Mul, [lhs, rhs]) => Ok(format!(
+            "emela_i64_from_bits((uint64_t)({lhs}) * (uint64_t)({rhs}))"
+        )),
+        (PrimOp::Neg, [value]) => Ok(format!(
+            "emela_i64_from_bits(UINT64_C(0) - (uint64_t)({value}))"
+        )),
+        (PrimOp::Eq, [lhs, rhs]) => comparison_expression(lhs, "==", rhs),
+        (PrimOp::Ne, [lhs, rhs]) => comparison_expression(lhs, "!=", rhs),
+        (PrimOp::Lt, [lhs, rhs]) => comparison_expression(lhs, "<", rhs),
+        (PrimOp::Le, [lhs, rhs]) => comparison_expression(lhs, "<=", rhs),
+        (PrimOp::Gt, [lhs, rhs]) => comparison_expression(lhs, ">", rhs),
+        (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
+        (PrimOp::Div, [lhs, rhs]) => Ok(format!("emela_i64_div({lhs}, {rhs})")),
+        (PrimOp::Rem, [lhs, rhs]) => Ok(format!("emela_i64_rem({lhs}, {rhs})")),
         _ => Err("Value::Prim with an invalid arity"),
     }
 }
@@ -513,15 +558,55 @@ fn emit_i32_division_helpers(writer: &mut Writer) {
     writer.blank();
 }
 
-fn has_prim(flow: &emela_lir::Module, ops: &[PrimOp]) -> bool {
+fn emit_i64_wrap_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int64_t emela_i64_from_bits(uint64_t bits)");
+    writer.begin_block("if (bits <= (uint64_t)INT64_MAX)");
+    writer.line("return (int64_t)bits;");
+    writer.end_block();
+    writer.line("return -INT64_C(1) - (int64_t)(UINT64_MAX - bits);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_i64_division_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int64_t emela_i64_div(int64_t lhs, int64_t rhs)");
+    writer.begin_block("if (rhs == INT64_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
+    );
+    writer.end_block();
+    writer.begin_block("if (lhs == INT64_MIN && rhs == -INT64_C(1))");
+    writer.line("return INT64_MIN;");
+    writer.end_block();
+    writer.line("return lhs / rhs;");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int64_t emela_i64_rem(int64_t lhs, int64_t rhs)");
+    writer.begin_block("if (rhs == INT64_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
+    );
+    writer.end_block();
+    writer.begin_block("if (lhs == INT64_MIN && rhs == -INT64_C(1))");
+    writer.line("return INT64_C(0);");
+    writer.end_block();
+    writer.line("return lhs % rhs;");
+    writer.end_block();
+    writer.blank();
+}
+
+fn has_prim(flow: &emela_lir::Module, ty: PrimTy, ops: &[PrimOp]) -> bool {
     flow.functions.iter().any(|(_, function)| {
         function.stmts.iter().any(|(_, statement)| {
             matches!(
                 statement,
                 Stmt::Let {
-                    value: Value::Prim { op, .. },
+                    value: Value::Prim {
+                        op, ty: found_ty, ..
+                    },
                     ..
-                } if ops.contains(op)
+                } if *found_ty == ty && ops.contains(op)
             )
         })
     })
