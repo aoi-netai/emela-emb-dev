@@ -179,8 +179,22 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         (Builtin::StringEndsWith, [Const::String(value), Const::String(suffix)]) => {
             Ok(Const::Bool(value.ends_with(suffix.as_str())))
         }
+        (Builtin::StringTrim, [Const::String(value)]) => Ok(Const::String(
+            value
+                .trim_matches(|character: char| is_white_space(character as u32))
+                .to_owned(),
+        )),
         _ => Err("const body contains an unsupported builtin or builtin operand"),
     }
+}
+
+fn is_white_space(code_point: u32) -> bool {
+    (0x0009..=0x000d).contains(&code_point)
+        || matches!(
+            code_point,
+            0x0020 | 0x0085 | 0x00a0 | 0x1680 | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000
+        )
+        || (0x2000..=0x200a).contains(&code_point)
 }
 
 fn operand_value(operand: &Operand, values: &HashMap<VarId, Const>) -> Result<Const, &'static str> {

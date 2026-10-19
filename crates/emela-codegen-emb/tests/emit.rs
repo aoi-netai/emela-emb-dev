@@ -303,6 +303,60 @@ fn statically_evaluates_string_search_builtins_in_const_functions() {
 }
 
 #[test]
+fn string_trim_returns_a_unicode_whitespace_view() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_trim");
+    builder.set_ret(TypeId::STRING).set_exported();
+    let value = builder.param("value", TypeId::STRING);
+    let trimmed = builder.assign(
+        "trimmed",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringTrim,
+            args: vec![value.into()],
+        },
+    );
+    builder.term(Term::Return(Some(trimmed.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String.trim");
+    compile_and_run(
+        output,
+        "#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { EmelaString input = { .data = \"\\t\\xc2\\xa0\\xe3\\x80\\x80\" \"a\\xe2\\x82\\xac\" \"b\\xe2\\x80\\xaf\\r\\n\", .length = UINT16_C(16) }; EmelaString value = emela_export_string_trim_0(input); if (value.length != UINT16_C(5) || memcmp(value.data, \"a\\xe2\\x82\\xac\" \"b\", 5) != 0) return 1; EmelaString whitespace = { .data = \" \\xe2\\x80\\xa8\\xe3\\x80\\x80\", .length = UINT16_C(7) }; if (emela_export_string_trim_0(whitespace).length != UINT16_C(0)) return 2; EmelaString bom = { .data = \" \\xef\\xbb\\xbf \", .length = UINT16_C(5) }; value = emela_export_string_trim_0(bom); if (value.length != UINT16_C(3) || memcmp(value.data, \"\\xef\\xbb\\xbf\", 3) != 0) return 3; EmelaString empty = { .data = 0, .length = UINT16_C(0) }; if (emela_export_string_trim_0(empty).length != UINT16_C(0)) return 4; return 0; }\n",
+    );
+}
+
+#[test]
+fn statically_evaluates_string_trim_with_the_fixed_whitespace_set() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "TRIMMED");
+    builder
+        .set_ret(TypeId::STRING)
+        .set_exported()
+        .set_constant();
+    let trimmed = builder.assign(
+        "trimmed",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringTrim,
+            args: vec![Const::String("\t\u{00a0}\u{3000}x\u{202f}\n".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(trimmed.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("evaluate String.trim");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { EmelaString value = emela_export_TRIMMED_0(); return value.length == UINT16_C(1) && value.data[0] == 'x' ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn defers_a_statically_known_const_defect_until_reference() {
     let core = emela_core::Module::new();
     let mut constant = FnBuilder::new(&core, "BROKEN");

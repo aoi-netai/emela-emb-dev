@@ -262,6 +262,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
         emit_string_ends_with_helper(&mut source);
     }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
+        emit_string_trim_helper(&mut source);
+    }
 
     for (id, function) in flow
         .functions
@@ -518,6 +521,7 @@ fn emit_builtin(
         Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
             (2, Type::Bool)
         }
+        Builtin::StringTrim => (1, Type::String),
         _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
     };
     if args.len() != arity {
@@ -570,6 +574,7 @@ fn emit_builtin(
             "emela_emb_string_ends_with({}, {})",
             expressions[0], expressions[1]
         ),
+        Builtin::StringTrim => format!("emela_emb_string_trim({})", expressions[0]),
         _ => unreachable!("builtin was validated above"),
     };
     writer.assign(&variable_name(dst), &expression);
@@ -631,6 +636,113 @@ fn emit_string_ends_with_helper(writer: &mut Writer) {
     writer.end_block();
     writer.line("uint32_t offset = (uint32_t)value.length - suffix.length;");
     writer.line("return emela_emb_string_matches_at(value, suffix, offset);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_trim_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
+    );
+    writer.begin_block("if (offset >= (uint32_t)value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("const uint8_t first = (uint8_t)value.data[offset];");
+    writer.begin_block("if (first <= UINT8_C(0x7f))");
+    writer.line("*code_point = first;");
+    writer.line("*width = UINT32_C(1);");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.line("uint32_t count;");
+    writer.line("uint32_t decoded;");
+    writer.begin_block("if (first >= UINT8_C(0xc2) && first <= UINT8_C(0xdf))");
+    writer.line("count = UINT32_C(2);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x1f));");
+    writer.end_block();
+    writer.line("else if (first >= UINT8_C(0xe0) && first <= UINT8_C(0xef))");
+    writer.begin_block("");
+    writer.line("count = UINT32_C(3);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x0f));");
+    writer.end_block();
+    writer.line("else if (first >= UINT8_C(0xf0) && first <= UINT8_C(0xf4))");
+    writer.begin_block("");
+    writer.line("count = UINT32_C(4);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x07));");
+    writer.end_block();
+    writer.line("else");
+    writer.begin_block("");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("if (offset + count > (uint32_t)value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = UINT32_C(1); i < count; ++i)");
+    writer.line("const uint8_t next = (uint8_t)value.data[offset + i];");
+    writer.begin_block("if ((next & UINT8_C(0xc0)) != UINT8_C(0x80))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("decoded = (decoded << 6) | (uint32_t)(next & UINT8_C(0x3f));");
+    writer.end_block();
+    writer.begin_block(
+        "if (count == UINT32_C(3) && (decoded < UINT32_C(0x800) || (decoded >= UINT32_C(0xd800) && decoded <= UINT32_C(0xdfff))))",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block(
+        "if (count == UINT32_C(4) && (decoded < UINT32_C(0x10000) || decoded > UINT32_C(0x10ffff)))",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("*code_point = decoded;");
+    writer.line("*width = count;");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
+    writer.line(
+        "return (code_point >= UINT32_C(0x0009) && code_point <= UINT32_C(0x000d)) || code_point == UINT32_C(0x0020) || code_point == UINT32_C(0x0085) || code_point == UINT32_C(0x00a0) || code_point == UINT32_C(0x1680) || (code_point >= UINT32_C(0x2000) && code_point <= UINT32_C(0x200a)) || code_point == UINT32_C(0x2028) || code_point == UINT32_C(0x2029) || code_point == UINT32_C(0x202f) || code_point == UINT32_C(0x205f) || code_point == UINT32_C(0x3000);",
+    );
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline EmelaString emela_emb_string_trim(EmelaString value)");
+    writer.begin_block("if (value.length == UINT16_C(0))");
+    writer.line("return value;");
+    writer.end_block();
+    writer.line("uint32_t start = UINT32_C(0);");
+    writer.line("uint32_t end = (uint32_t)value.length;");
+    writer.line("uint32_t code_point;");
+    writer.line("uint32_t width;");
+    writer.begin_block("while (start < end)");
+    writer.begin_block("if (!emela_emb_utf8_decode(value, start, &code_point, &width))");
+    writer.line("break;");
+    writer.end_block();
+    writer.begin_block("if (!emela_emb_is_white_space(code_point))");
+    writer.line("break;");
+    writer.end_block();
+    writer.line("start += width;");
+    writer.end_block();
+    writer.begin_block("while (end > start)");
+    writer.line("uint32_t begin = end - UINT32_C(1);");
+    writer.begin_block(
+        "while (begin > start && ((uint8_t)value.data[begin] & UINT8_C(0xc0)) == UINT8_C(0x80))",
+    );
+    writer.line("--begin;");
+    writer.end_block();
+    writer.begin_block(
+        "if (!emela_emb_utf8_decode(value, begin, &code_point, &width) || begin + width != end)",
+    );
+    writer.line("break;");
+    writer.end_block();
+    writer.begin_block("if (!emela_emb_is_white_space(code_point))");
+    writer.line("break;");
+    writer.end_block();
+    writer.line("end = begin;");
+    writer.end_block();
+    writer.line(
+        "return (EmelaString){ .data = value.data + start, .length = (uint16_t)(end - start) };",
+    );
     writer.end_block();
     writer.blank();
 }
