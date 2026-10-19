@@ -13,7 +13,7 @@ fn emits_c_files_for_an_empty_module() {
             .contents
             .contains("EMELA_DEFECT_DIVISION_BY_ZERO")
     );
-    assert!(output.files[1].contents.contains("emela_board_defect"));
+    assert!(!output.files[1].contents.contains("emela_board_defect"));
     assert_eq!(output.files[2].path, "emela_embedded.c");
     assert!(output.files[2].contents.contains("emela_embedded.h"));
     assert!(output.files[2].contents.contains("emela_board.h"));

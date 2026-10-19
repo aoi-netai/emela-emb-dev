@@ -331,6 +331,36 @@ fn compiles_if_statements_and_boolean_short_circuiting() {
     compile_core_main_and_expect(or_expr, TypeId::BOOL, "INT32_C(1)");
 }
 
+#[test]
+fn embedded_start_runs_board_hooks_around_emela_main() {
+    let mut core = emela_core::Module::new();
+    let main = core.declare("main", true);
+    let marker = core.declare("mark_main", false);
+    core.define_external(
+        marker,
+        Vec::new(),
+        TypeId::UNIT,
+        emela_core::External {
+            bindings: vec![emela_core::ExternalBinding {
+                target: "c".to_owned(),
+                host: emela_core::HostRef::Global("mark_main".to_owned()),
+            }],
+        },
+    );
+    core.define(
+        main,
+        Vec::new(),
+        TypeId::UNIT,
+        emela_core::build::call(marker, Vec::new()),
+    );
+
+    let output = compile(&core, &Options::default()).expect("compile embedded entry");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic int init_count;\nstatic int main_count;\nstatic int idle_count;\nvoid mark_main(void) { main_count += 1; }\nvoid emela_board_init(void) { init_count += 1; }\nvoid emela_board_idle(void) { if (init_count == 1 && main_count == 1) { if (++idle_count == 2) exit(0); return; } exit(1); }\nint main(void) { emela_embedded_start(); return 1; }\n",
+    );
+}
+
 fn compile_core_main_and_expect(expression: emela_core::Expr, result_type: TypeId, expected: &str) {
     let mut core = emela_core::Module::new();
     let main = core.declare("main", true);
@@ -364,11 +394,28 @@ fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output
 
 fn compile_and_run(output: Output, harness_source: &str) {
     let temp = TempDir::new();
+    let needs_board_lifecycle = output.files.iter().any(|file| {
+        file.path == "emela_embedded.c" && file.contents.contains("void emela_embedded_start(void)")
+    });
     for file in output.files {
         fs::write(temp.0.join(file.path), file.contents).expect("write generated C file");
     }
     let harness = temp.0.join("harness.c");
-    fs::write(&harness, harness_source).expect("write C harness");
+    let mut harness_contents = harness_source.to_owned();
+    if needs_board_lifecycle {
+        if !harness_source.contains("emela_board_init(")
+            || !harness_source.contains("emela_board_idle(")
+        {
+            harness_contents.push_str("\n#include \"emela_board.h\"\n");
+        }
+        if !harness_source.contains("emela_board_init(") {
+            harness_contents.push_str("void emela_board_init(void) {}\n");
+        }
+        if !harness_source.contains("emela_board_idle(") {
+            harness_contents.push_str("void emela_board_idle(void) {}\n");
+        }
+    }
+    fs::write(&harness, harness_contents).expect("write C harness");
 
     let executable = temp.0.join("probe");
     let compile = Command::new("cc")

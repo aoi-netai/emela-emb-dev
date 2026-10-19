@@ -22,6 +22,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         };
         names.insert(id, name);
     }
+    let main_entry = flow
+        .functions
+        .iter()
+        .find(|(_, function)| function.exported && function.name == "main");
+    if let Some((_, function)) = main_entry
+        && !function.params.is_empty()
+    {
+        return Err(unsupported(
+            &function.name,
+            "an embedded main function with parameters",
+        ));
+    }
 
     let mut header = Writer::new();
     header.line("#ifndef EMELA_EMBEDDED_H");
@@ -39,6 +51,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         }
         let name = &names[&id];
         header.line(&format!("{};", signature(flow, function, name, false)));
+    }
+    if main_entry.is_some() {
+        header.line("void emela_embedded_start(void);");
     }
 
     header.blank();
@@ -72,11 +87,22 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    board_header.line(
-        "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
-    );
-    board_header.line("void emela_board_init(void);");
-    board_header.line("void emela_board_idle(void);");
+    let needs_defect_hook = has_prim(flow, &[PrimOp::Div, PrimOp::Rem])
+        || flow.functions.iter().any(|(_, function)| {
+            function
+                .seqs
+                .iter()
+                .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
+        });
+    if needs_defect_hook {
+        board_header.line(
+            "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
+        );
+    }
+    if main_entry.is_some() {
+        board_header.line("void emela_board_init(void);");
+        board_header.line("void emela_board_idle(void);");
+    }
     board_header.blank();
     board_header.line("#endif");
 
@@ -141,6 +167,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
             emit_statement(function, &function.stmts[statement], &mut source, &names)?;
         }
         emit_return(flow, function, &sequence.term, &mut source)?;
+        source.end_block();
+        source.blank();
+    }
+    if let Some((id, _function)) = main_entry {
+        let main_name = &names[&id];
+        source.begin_block("void emela_embedded_start(void)");
+        source.line("emela_board_init();");
+        source.line(&format!("(void){main_name}();"));
+        source.begin_block("for (;;)");
+        source.line("emela_board_idle();");
+        source.end_block();
         source.end_block();
         source.blank();
     }
