@@ -41,6 +41,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
+    let has_tasks = suspend::has_tasks(flow, &emitted_functions);
     let layouts = TypeLayouts::new(flow, &emitted_functions, &closures)?;
     for (environment_index, environment) in closures.environments.iter().enumerate() {
         let parent = &flow.functions[environment.parent];
@@ -134,7 +135,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             if function.exported {
                 return Err(unsupported(&function.name, "exported external functions"));
             }
-            validate_external(flow, function)?
+            if function.suspends {
+                suspend::external_symbol(function, options)?
+            } else {
+                validate_external(flow, function)?
+            }
         } else {
             function_name(id, function)
         };
@@ -178,6 +183,19 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     layouts.emit_error_declaration(&mut header);
     if has_scheduler {
         header.line(include_str!("runtime/scheduler.h"));
+    }
+    if has_tasks {
+        header.line(include_str!("runtime/task.h"));
+        for (id, function) in flow
+            .functions
+            .iter()
+            .filter(|(id, f)| emitted_functions.contains(id) && f.suspends && f.external.is_some())
+        {
+            header.line(&format!(
+                "{};",
+                suspend::task_signature(&layouts, function, &names[&id])
+            ));
+        }
     }
     if !layouts.aggregates.is_empty() {
         header.blank();
@@ -338,6 +356,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_op(flow, &emitted_functions, RuntimeOp::DebugPrint) {
         board_header.line("void emela_board_debug(const char *bytes, uint16_t length);");
     }
+    if has_tasks {
+        board_header.line("/* Save/restore interrupt state and serialize task/event access; callable from ISR. */");
+        board_header.line("uint32_t emela_board_event_lock(void);");
+        board_header.line("void emela_board_event_unlock(uint32_t previous_state);");
+    }
     board_header.blank();
     board_header.line("#endif");
 
@@ -348,7 +371,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <stddef.h>");
     source.blank();
     if has_scheduler {
-        suspend::emit_runtime(&mut source, options);
+        suspend::emit_runtime(&mut source, options, has_tasks);
     }
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);

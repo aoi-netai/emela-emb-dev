@@ -29,6 +29,9 @@ static uint32_t emela_ready_head;
 static uint32_t emela_ready_tail;
 static int emela_scheduler_initialized;
 static int emela_scheduler_running;
+#ifdef EMELA_TASK_CAPACITY
+static int emela_task_dispatch_one(void);
+#endif
 
 static _Noreturn void emela_scheduler_invalid(void) {
   emela_board_defect(EMELA_DEFECT_ASSERT, "invalid scheduler state", UINT16_C(23));
@@ -100,7 +103,11 @@ uint32_t emela_scheduler_run(uint32_t budget) {
   if (emela_scheduler_running) emela_scheduler_invalid();
   emela_scheduler_running = 1;
   uint32_t steps = 0;
-  while (steps < budget && emela_ready_head != EMELA_SLOT_NONE) {
+  while (steps < budget) {
+#ifdef EMELA_TASK_CAPACITY
+    if (emela_task_dispatch_one()) { steps++; continue; }
+#endif
+    if (emela_ready_head == EMELA_SLOT_NONE) break;
     emela_fiber *fiber = &emela_fibers[emela_ready_head];
     emela_ready_head = fiber->next;
     if (emela_ready_head == EMELA_SLOT_NONE) emela_ready_tail = EMELA_SLOT_NONE;

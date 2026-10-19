@@ -20,10 +20,10 @@ pub(super) fn validate(
             continue;
         }
         enabled = true;
-        if function.external.is_some() || function.fails || function.constant {
+        if function.fails || function.constant {
             return Err(unsupported(
                 &function.name,
-                "external, failing, or const suspend function (phase 7 follow-up)",
+                "failing or const suspend function (phase 7 follow-up)",
             ));
         }
         if !scalar(&flow.core.types, function.ret)
@@ -99,10 +99,63 @@ pub(super) fn validate(
     {
         return Err(vec![Error { kind: ErrorKind::InvalidOptions, message: "fiber_capacity, frame_capacity, and frame_bytes must be positive for suspend functions".into() }]);
     }
+    if has_tasks(flow, emitted) && (options.task_capacity == 0 || options.event_capacity == 0) {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidOptions,
+            message: "task_capacity and event_capacity must be positive for suspend external calls"
+                .into(),
+        }]);
+    }
     Ok(enabled)
 }
 
-pub(super) fn emit_runtime(writer: &mut Writer, options: &Options) {
+pub(super) fn has_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .any(|(id, f)| emitted.contains(&id) && f.suspends && f.external.is_some())
+}
+
+pub(super) fn external_symbol(
+    function: &Function,
+    options: &Options,
+) -> Result<String, Vec<Error>> {
+    let binding = function
+        .external
+        .as_ref()
+        .and_then(|external| external.binding("c"))
+        .ok_or_else(|| unsupported(&function.name, "suspend external without C binding"))?;
+    let original = match &binding.host {
+        emela_core::HostRef::Global(name) | emela_core::HostRef::Import { name, .. } => name,
+    };
+    let (_, symbol) = options
+        .task_adapters
+        .iter()
+        .find(|(name, _)| name == original)
+        .ok_or_else(|| {
+            unsupported(
+                &function.name,
+                "suspend external needs an explicit Options::with_task_adapter mapping",
+            )
+        })?;
+    if !is_c_identifier(symbol) {
+        return Err(unsupported(&function.name, "invalid C task adapter symbol"));
+    }
+    Ok(symbol.clone())
+}
+
+pub(super) fn task_signature(layouts: &TypeLayouts<'_>, function: &Function, name: &str) -> String {
+    let mut params = vec!["EmelaTask task".to_owned()];
+    params.extend(function.params.iter().map(|id| {
+        format!(
+            "{} {}",
+            layouts.c_type(function.vars[*id].ty),
+            variable_name(*id)
+        )
+    }));
+    format!("void {name}({})", params.join(", "))
+}
+
+pub(super) fn emit_runtime(writer: &mut Writer, options: &Options, tasks: bool) {
     writer.line(&format!(
         "#define EMELA_FIBER_CAPACITY {}",
         options.fiber_capacity
@@ -115,7 +168,20 @@ pub(super) fn emit_runtime(writer: &mut Writer, options: &Options) {
         "#define EMELA_FRAME_BYTES {}",
         options.frame_bytes
     ));
+    if tasks {
+        writer.line(&format!(
+            "#define EMELA_TASK_CAPACITY {}",
+            options.task_capacity
+        ));
+        writer.line(&format!(
+            "#define EMELA_EVENT_CAPACITY {}",
+            options.event_capacity
+        ));
+    }
     writer.line(include_str!("runtime/scheduler.c"));
+    if tasks {
+        writer.line(include_str!("runtime/task.c"));
+    }
 }
 
 fn parameters(layouts: &TypeLayouts<'_>, function: &Function) -> Vec<String> {
@@ -164,7 +230,9 @@ pub(super) fn emit_declarations(
     name: &str,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
-    writer.line(&format!("{};", push_signature(layouts, function, name)));
+    if function.external.is_none() {
+        writer.line(&format!("{};", push_signature(layouts, function, name)));
+    }
     Ok(())
 }
 
@@ -320,6 +388,9 @@ pub(super) fn emit_function(
     options: &Options,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if function.external.is_some() {
+        return Ok(());
+    }
     let mut graph = Graph {
         nodes: vec![],
         blocks: HashMap::new(),
@@ -384,7 +455,35 @@ pub(super) fn emit_function(
                 } = statement
                 {
                     let target_fn = &flow.functions[*target];
-                    if target_fn.suspends {
+                    if target_fn.external.is_some() && target_fn.suspends {
+                        let kind = match layouts.types[target_fn.ret] {
+                            Type::Int | Type::Bool => "INT",
+                            Type::Int64 => "INT64",
+                            Type::Float => "FLOAT",
+                            Type::Unit | Type::Never => "UNIT",
+                            _ => {
+                                return Err(unsupported(
+                                    &function.name,
+                                    "non-scalar external task result",
+                                ));
+                            }
+                        };
+                        let result = dst
+                            .map(|dst| format!("&{}", variable_name(dst)))
+                            .unwrap_or_else(|| "NULL".to_owned());
+                        writer.line(&format!("frame->base.pc = {next};"));
+                        writer.line(&format!(
+                            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind});"
+                        ));
+                        let mut arguments = vec!["task".to_owned()];
+                        arguments.extend(
+                            args.iter()
+                                .map(operand_expression)
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|why| unsupported(&function.name, why))?,
+                        );
+                        writer.line(&format!("{}({});", names[target], arguments.join(", ")));
+                    } else if target_fn.suspends {
                         let mut arguments = vec!["fiber".to_owned()];
                         arguments.extend(
                             args.iter()
