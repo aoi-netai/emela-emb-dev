@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use emela_lir::{FnId, Function, Operand, Repr, Stmt, Term, Value, VarId};
+use emela_lir::{FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
 
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
@@ -38,6 +38,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
 
     let mut source = Writer::new();
     source.line(&format!("#include \"{HEADER_FILE}\""));
+    source.blank();
+    source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
+    source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
+    source.line("return (int32_t)bits;");
+    source.end_block();
+    source.line("return -INT32_C(1) - (int32_t)(UINT32_MAX - bits);");
+    source.end_block();
     source.blank();
 
     for (id, function) in flow.functions.iter() {
@@ -93,7 +100,7 @@ fn emit_statement(
     match statement {
         Stmt::Let {
             dst,
-            value: Value::Const(value),
+            value,
             on_defect,
             on_suspend,
         } => {
@@ -106,28 +113,81 @@ fn emit_statement(
                     ),
                 }]);
             }
-            let expression = constant_expression(value)
-                .map_err(|kind| unsupported(&function.name, &format!("{kind} in Value::Const")))?;
-            match (dst, expression) {
-                (Some(dst), Some(expression)) => {
-                    writer.assign(&variable_name(*dst), &expression);
+            match value {
+                Value::Const(value) => {
+                    let expression = constant_expression(value).map_err(|kind| {
+                        unsupported(&function.name, &format!("{kind} in Value::Const"))
+                    })?;
+                    match (dst, expression) {
+                        (Some(dst), Some(expression)) => {
+                            writer.assign(&variable_name(*dst), &expression);
+                        }
+                        (None, None) => {}
+                        (Some(_), None) => {
+                            return Err(vec![Error {
+                                kind: ErrorKind::InvalidFlowIr,
+                                message: format!(
+                                    "invalid Flow IR in function `{}`: Unit constant has a destination",
+                                    function.name
+                                ),
+                            }]);
+                        }
+                        (None, Some(_)) => {}
+                    }
                 }
-                (None, None) => {}
-                (Some(_), None) => {
-                    return Err(vec![Error {
-                        kind: ErrorKind::InvalidFlowIr,
-                        message: format!(
-                            "invalid Flow IR in function `{}`: Unit constant has a destination",
-                            function.name
-                        ),
-                    }]);
+                Value::Prim { op, ty, args } => {
+                    let expression = primitive_expression(*op, *ty, args)
+                        .map_err(|variant| unsupported(&function.name, variant))?;
+                    if let Some(dst) = dst {
+                        writer.assign(&variable_name(*dst), &expression);
+                    }
                 }
-                (None, Some(_)) => {}
+                other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
         }
         other => Err(unsupported(&function.name, statement_name(other))),
     }
+}
+
+fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<String, &'static str> {
+    if ty != PrimTy::I32 {
+        return Err("non-Int32 Value::Prim");
+    }
+
+    let args: Vec<String> = args
+        .iter()
+        .map(operand_expression)
+        .collect::<Result<_, _>>()?;
+    match (op, args.as_slice()) {
+        (PrimOp::Add, [lhs, rhs]) => Ok(format!(
+            "emela_i32_from_bits((uint32_t)((uint64_t)(uint32_t)({lhs}) + (uint64_t)(uint32_t)({rhs})))"
+        )),
+        (PrimOp::Sub, [lhs, rhs]) => Ok(format!(
+            "emela_i32_from_bits((uint32_t)((uint64_t)(uint32_t)({lhs}) - (uint64_t)(uint32_t)({rhs})))"
+        )),
+        (PrimOp::Mul, [lhs, rhs]) => Ok(format!(
+            "emela_i32_from_bits((uint32_t)((uint64_t)(uint32_t)({lhs}) * (uint64_t)(uint32_t)({rhs})))"
+        )),
+        (PrimOp::Neg, [value]) => Ok(format!(
+            "emela_i32_from_bits((uint32_t)(UINT64_C(0) - (uint64_t)(uint32_t)({value})))"
+        )),
+        (PrimOp::Not, [value]) => Ok(format!(
+            "(({value}) == INT32_C(0) ? INT32_C(1) : INT32_C(0))"
+        )),
+        (PrimOp::Eq, [lhs, rhs]) => comparison_expression(lhs, "==", rhs),
+        (PrimOp::Ne, [lhs, rhs]) => comparison_expression(lhs, "!=", rhs),
+        (PrimOp::Lt, [lhs, rhs]) => comparison_expression(lhs, "<", rhs),
+        (PrimOp::Le, [lhs, rhs]) => comparison_expression(lhs, "<=", rhs),
+        (PrimOp::Gt, [lhs, rhs]) => comparison_expression(lhs, ">", rhs),
+        (PrimOp::Ge, [lhs, rhs]) => comparison_expression(lhs, ">=", rhs),
+        (PrimOp::Div | PrimOp::Rem, _) => Err("Int32 division or remainder primitive"),
+        _ => Err("Value::Prim with an invalid arity"),
+    }
+}
+
+fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'static str> {
+    Ok(format!("(({lhs}) {op} ({rhs}) ? INT32_C(1) : INT32_C(0))"))
 }
 
 fn emit_return(
@@ -261,6 +321,36 @@ fn statement_name(statement: &emela_lir::Stmt) -> &'static str {
         emela_lir::Stmt::Protect { .. } => "Stmt::Protect",
         emela_lir::Stmt::Dup(_) => "Stmt::Dup",
         emela_lir::Stmt::Drop(_) => "Stmt::Drop",
+    }
+}
+
+fn value_name(value: &Value) -> &'static str {
+    match value {
+        Value::Const(_) => "Value::Const",
+        Value::Prim { .. } => "Value::Prim",
+        Value::Call { .. } => "Value::Call",
+        Value::Builtin { .. } => "Value::Builtin",
+        Value::Make { .. } => "Value::Make",
+        Value::Field { .. } => "Value::Field",
+        Value::Tag(_) => "Value::Tag",
+        Value::Tuple(_) => "Value::Tuple",
+        Value::TupleGet { .. } => "Value::TupleGet",
+        Value::List { .. } => "Value::List",
+        Value::ListIsEmpty(_) => "Value::ListIsEmpty",
+        Value::ListHead(_) => "Value::ListHead",
+        Value::ListTail(_) => "Value::ListTail",
+        Value::FnRef(_) => "Value::FnRef",
+        Value::Closure(_) => "Value::Closure",
+        Value::MakeClosure { .. } => "Value::MakeClosure",
+        Value::EnvGet { .. } => "Value::EnvGet",
+        Value::EvLookup { .. } => "Value::EvLookup",
+        Value::EvExtend { .. } => "Value::EvExtend",
+        Value::Handler { .. } => "Value::Handler",
+        Value::Fiber { .. } => "Value::Fiber",
+        Value::IsError { .. } => "Value::IsError",
+        Value::AsError { .. } => "Value::AsError",
+        Value::Runtime { .. } => "Value::Runtime",
+        Value::Coerce { .. } => "Value::Coerce",
     }
 }
 

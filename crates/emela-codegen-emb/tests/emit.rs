@@ -4,8 +4,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
-use emela_core::TypeId;
-use emela_lir::{Const, FnBuilder, Module, Operand, Term};
+use emela_core::{BinOp, OpTy, TypeId};
+use emela_lir::{Const, FnBuilder, Module, Operand, PrimOp, PrimTy, Term, Value};
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -90,6 +90,132 @@ fn compiles_core_bool_and_unit_constants() {
     compile_and_run(
         unit_output,
         "#include \"emela_embedded.h\"\nint main(void) { emela_export_main_0(); return 0; }\n",
+    );
+}
+
+#[test]
+fn emits_and_runs_int32_primitive_operations() {
+    let cases = [
+        (
+            PrimOp::Add,
+            vec![Const::Int(i32::MAX), Const::Int(1)],
+            TypeId::INT,
+            "INT32_MIN",
+        ),
+        (
+            PrimOp::Sub,
+            vec![Const::Int(i32::MIN), Const::Int(1)],
+            TypeId::INT,
+            "INT32_MAX",
+        ),
+        (
+            PrimOp::Mul,
+            vec![Const::Int(i32::MAX), Const::Int(2)],
+            TypeId::INT,
+            "-INT32_C(2)",
+        ),
+        (
+            PrimOp::Neg,
+            vec![Const::Int(i32::MIN)],
+            TypeId::INT,
+            "INT32_MIN",
+        ),
+        (
+            PrimOp::Not,
+            vec![Const::Bool(false)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Not,
+            vec![Const::Bool(true)],
+            TypeId::BOOL,
+            "INT32_C(0)",
+        ),
+        (
+            PrimOp::Eq,
+            vec![Const::Int(42), Const::Int(42)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Ne,
+            vec![Const::Int(42), Const::Int(41)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Lt,
+            vec![Const::Int(-2), Const::Int(-1)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Le,
+            vec![Const::Int(2), Const::Int(2)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Gt,
+            vec![Const::Int(3), Const::Int(2)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+        (
+            PrimOp::Ge,
+            vec![Const::Int(-1), Const::Int(-1)],
+            TypeId::BOOL,
+            "INT32_C(1)",
+        ),
+    ];
+
+    for (op, args, result_type, expected) in cases {
+        let core = emela_core::Module::new();
+        let mut builder = FnBuilder::new(&core, "probe");
+        builder.set_ret(result_type).set_exported();
+        let result = builder.assign(
+            "result",
+            result_type,
+            Value::Prim {
+                op,
+                ty: PrimTy::I32,
+                args: args.into_iter().map(Operand::Const).collect(),
+            },
+        );
+        builder.term(Term::Return(Some(Operand::Var(result))));
+        let function = builder.finish();
+        let mut flow = Module::new(core);
+        flow.add(function);
+
+        let output = compile_flow(&flow, &Options::default()).expect("emit Int32 primitive");
+        let harness = format!(
+            "#include \"emela_embedded.h\"\nint main(void) {{ return emela_export_probe_0() == {expected} ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
+fn compiles_core_int_add_with_twos_complement_wraparound() {
+    let mut core = emela_core::Module::new();
+    let main = core.declare("main", true);
+    core.define(
+        main,
+        Vec::new(),
+        TypeId::INT,
+        emela_core::build::bin(
+            BinOp::Add,
+            OpTy::Int,
+            emela_core::build::int(i32::MAX),
+            emela_core::build::int(1),
+        ),
+    );
+
+    let output = compile(&core, &Options::default()).expect("compile Core Int addition");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { return emela_export_main_0() == INT32_MIN ? 0 : 1; }\n",
     );
 }
 
