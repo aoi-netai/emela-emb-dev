@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use emela_core::{CtorRef, EnumId, Type, TypeId, TypeTable};
+use emela_core::{Builtin, CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
     Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr, Stmt,
     SwitchOn, Term, Value, VarId,
@@ -475,6 +475,16 @@ fn directly_calls(caller: &Function, target: FnId) -> bool {
     })
 }
 
+fn operand_is_string(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::String(_)) => true,
+        Operand::Var(variable) => {
+            matches!(layouts.types[function.vars[*variable].ty], Type::String)
+        }
+        _ => false,
+    }
+}
+
 fn emit_statement(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -531,6 +541,44 @@ fn emit_statement(
                     if let Some(dst) = dst {
                         writer.assign(&variable_name(*dst), &expression);
                     }
+                }
+                Value::Builtin {
+                    op: Builtin::StringByteSize,
+                    args,
+                } => {
+                    let [value] = args.as_slice() else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "StringByteSize must have one argument",
+                        ));
+                    };
+                    if !operand_is_string(layouts, function, value) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "StringByteSize argument is not a String",
+                        ));
+                    }
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "StringByteSize has no Int destination",
+                        ));
+                    };
+                    if !matches!(layouts.types[function.vars[*dst].ty], Type::Int) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "StringByteSize destination is not an Int",
+                        ));
+                    }
+                    let expression = operand_expression(value)
+                        .map_err(|variant| unsupported(&function.name, variant))?;
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!("(int32_t)(({expression}).length)"),
+                    );
+                }
+                Value::Builtin { op, .. } => {
+                    return Err(unsupported(&function.name, &format!("builtin {op:?}")));
                 }
                 Value::Call {
                     callee: Callee::Direct(id),

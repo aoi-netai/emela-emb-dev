@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
-    BinOp, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
+    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
 };
 use emela_lir::{
     Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, SwitchOn, Term,
@@ -179,6 +179,39 @@ fn emits_a_static_string_const_as_a_view() {
     compile_and_run(
         output,
         "#include <stdint.h>\n#include <string.h>\n#include \"emela_embedded.h\"\nint main(void) { const unsigned char expected[] = { UINT8_C(0x61), UINT8_C(0x00), UINT8_C(0xc3), UINT8_C(0xa9) }; EmelaString value = emela_export_GREETING_0(); return value.length == UINT16_C(4) && memcmp(value.data, expected, sizeof expected) == 0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn string_byte_size_counts_utf8_bytes_from_a_view() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_byte_size");
+    builder.set_ret(TypeId::INT).set_exported();
+    let value = builder.param("value", TypeId::STRING);
+    let byte_size = builder.assign(
+        "byte_size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![value.into()],
+        },
+    );
+    builder.term(Term::Return(Some(byte_size.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String.byte_size");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains(".length"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { EmelaString value = { .data = \"a\\xc3\\xa9\\xf0\\x9f\\x99\\x82\", .length = UINT16_C(7) }; return emela_export_string_byte_size_0(value) == INT32_C(7) ? 0 : 1; }\n",
     );
 }
 
