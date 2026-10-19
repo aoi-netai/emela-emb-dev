@@ -25,6 +25,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     let mut lowered_flow = crate::static_closure::lower(flow)?;
+    crate::function_coerce::lower(&mut lowered_flow);
     crate::static_handler::lower(&mut lowered_flow);
     crate::verify_flow(&lowered_flow)?;
     let flow = &lowered_flow;
