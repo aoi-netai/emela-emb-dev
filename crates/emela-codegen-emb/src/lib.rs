@@ -6,6 +6,7 @@
 mod const_eval;
 mod emit;
 mod heap;
+mod unicode_grapheme;
 mod writer;
 
 /// Configuration for embedded C generation.

@@ -5,6 +5,8 @@ use emela_lir::{
     Callee, Const, FnId, Function, Module, Operand, PrimOp, PrimTy, Stmt, Term, Value, VarId,
 };
 
+use crate::unicode_grapheme::grapheme_count;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome {
     Value(Const),
@@ -188,6 +190,9 @@ fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str
         (Builtin::StringByteSize, [Const::String(value)]) => i32::try_from(value.len())
             .map(Const::Int)
             .map_err(|_| "String byte size exceeds Int range"),
+        (Builtin::StringLength, [Const::String(value)]) => i32::try_from(grapheme_count(value))
+            .map(Const::Int)
+            .map_err(|_| "String grapheme count exceeds Int range"),
         (Builtin::StringContains, [Const::String(value), Const::String(needle)]) => {
             Ok(Const::Bool(value.contains(needle.as_str())))
         }
@@ -501,7 +506,10 @@ fn defect_kind(message: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::format_float;
+    use emela_core::Builtin;
+    use emela_lir::Const;
+
+    use super::{evaluate_builtin, format_float};
 
     #[test]
     fn formats_float_edges_with_emela_decimal_notation() {
@@ -522,5 +530,16 @@ mod tests {
             assert_eq!(format_float(value), expected);
         }
         assert_eq!(format_float(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn evaluates_unicode_string_length_with_the_pinned_grapheme_data() {
+        assert_eq!(
+            evaluate_builtin(
+                Builtin::StringLength,
+                vec![Const::String("a\u{0308}\r\n👩‍👩‍👧‍👦".to_owned())],
+            ),
+            Ok(Const::Int(3))
+        );
     }
 }

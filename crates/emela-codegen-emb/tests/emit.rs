@@ -962,7 +962,7 @@ fn string_code_points_builds_and_releases_a_list_in_code_point_order() {
 }
 
 #[test]
-fn string_chars_handles_ascii_and_crlf_as_graphemes() {
+fn string_chars_handles_unicode_graphemes() {
     let mut core = emela_core::Module::new();
     let list_string = core.types.intern(Type::List(TypeId::STRING));
     let chars = {
@@ -1018,7 +1018,7 @@ fn string_chars_handles_ascii_and_crlf_as_graphemes() {
             TypeId::BOOL,
             Value::Builtin {
                 op: Builtin::StringContains,
-                args: vec![third.into(), Const::String("b".to_owned()).into()],
+                args: vec![third.into(), Const::String("β".to_owned()).into()],
             },
         );
         let first_scaled = builder.assign(
@@ -1090,7 +1090,7 @@ fn string_chars_handles_ascii_and_crlf_as_graphemes() {
         .expect("emit constrained String.chars");
     compile_and_run(
         output,
-        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char unsupported[] = \"String.chars on non-ASCII input needs Unicode grapheme tables\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_UNSUPPORTED_UNICODE && length == sizeof unsupported - 1 && memcmp(message, unsupported, length) == 0 ? 0 : 3); }\nint main(void) { for (int i = 0; i < 1000; ++i) { char input[] = \"a\\r\\nb\"; EmelaString source = { .data = input, .length = UINT16_C(4) }; void *chars = emela_export_string_chars_0(source); memset(input, 'x', sizeof input - 1); if (emela_export_chars_signature_1(chars) != INT32_C(1211)) return 1; emela_embedded_release(chars); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_string_chars_0(empty) != NULL) return 2; EmelaString non_ascii = { .data = \"\\xce\\xb2\", .length = UINT16_C(2) }; (void)emela_export_string_chars_0(non_ascii); return 4; }\n",
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char invalid[] = \"invalid UTF-8 string\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == sizeof invalid - 1 && memcmp(message, invalid, length) == 0 ? 0 : 3); }\nint main(void) { for (int i = 0; i < 1000; ++i) { char input[] = \"a\\xcc\\x88\\r\\n\\xce\\xb2\"; EmelaString source = { .data = input, .length = UINT16_C(7) }; void *chars = emela_export_string_chars_0(source); memset(input, 'x', sizeof input - 1); if (emela_export_chars_signature_1(chars) != INT32_C(1211)) return 1; emela_embedded_release(chars); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_string_chars_0(empty) != NULL) return 2; EmelaString malformed = { .data = \"\\xff\", .length = UINT16_C(1) }; (void)emela_export_string_chars_0(malformed); return 4; }\n",
     );
 
     let exhausted = compile_flow(&flow, &Options::default().with_heap_bytes(64))
@@ -1099,6 +1099,150 @@ fn string_chars_handles_ascii_and_crlf_as_graphemes() {
         exhausted,
         "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 3); }\nint main(void) { char input[] = \"a\\r\\nb\"; EmelaString source = { .data = input, .length = UINT16_C(4) }; (void)emela_export_string_chars_0(source); return 4; }\n",
     );
+}
+
+#[test]
+fn string_length_uses_unicode_18_extended_grapheme_clusters() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_length");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let length = builder.assign(
+        "length",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringLength,
+            args: vec![input.into()],
+        },
+    );
+    builder.term(Term::Return(Some(length.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String.length");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char invalid[] = \"invalid UTF-8 string\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == sizeof invalid - 1 && memcmp(message, invalid, length) == 0 ? 0 : 3); }\nstatic int32_t length_of(const char *data, uint16_t length) { EmelaString value = { .data = data, .length = length }; return emela_export_string_length_0(value); }\nint main(void) { if (length_of(\"\", 0) != 0) return 1; if (length_of(\"a\\xcc\\x88\\x62\", 4) != 2) return 2; if (length_of(\"\\r\\n\", 2) != 1) return 3; if (length_of(\"\\xe1\\x84\\x80\\xe1\\x85\\xa1\\xe1\\x86\\xa8\", 9) != 1) return 4; if (length_of(\"\\xf0\\x9f\\x91\\xa9\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa9\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa7\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa6\", 25) != 1) return 5; if (length_of(\"\\xf0\\x9f\\x87\\xba\\xf0\\x9f\\x87\\xb8\", 8) != 1) return 6; if (length_of(\"\\xe0\\xa4\\x95\\xe0\\xa5\\x8d\\xe0\\xa4\\xb7\", 9) != 1) return 7; (void)length_of(\"\\xff\", 1); return 8; }\n",
+    );
+}
+
+#[test]
+fn string_chars_matches_the_unicode_18_grapheme_break_test() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let mut builder = FnBuilder::new(&core, "grapheme_break_test");
+    builder.set_ret(TypeId::UNIT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let chars = builder.assign(
+        "chars",
+        list_string,
+        Value::Builtin {
+            op: Builtin::StringChars,
+            args: vec![input.into()],
+        },
+    );
+    let separated = builder.assign(
+        "separated",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringJoin,
+            args: vec![chars.into(), Const::String("|".to_owned()).into()],
+        },
+    );
+    builder.let_(
+        None,
+        Value::Runtime {
+            op: RuntimeOp::DebugPrint,
+            args: vec![separated.into()],
+        },
+    );
+    builder.term(Term::Return(None));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(4096))
+        .expect("emit the Unicode grapheme test entry");
+    let mut harness = String::from(
+        r#"#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static const uint8_t *expected_bytes;
+static uint16_t expected_length;
+static uint32_t current_case;
+static uint32_t debug_calls;
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(90); }
+void emela_board_debug(const char *bytes, uint16_t length) {
+    if (length != expected_length || memcmp(bytes, expected_bytes, length) != 0) {
+        fprintf(stderr, "GraphemeBreakTest case %u mismatch: expected", current_case);
+        for (uint16_t i = 0; i < expected_length; ++i) fprintf(stderr, " %02x", expected_bytes[i]);
+        fprintf(stderr, "; got");
+        for (uint16_t i = 0; i < length; ++i) fprintf(stderr, " %02x", (uint8_t)bytes[i]);
+        fputc('\n', stderr);
+        exit(91);
+    }
+    ++debug_calls;
+}
+int main(void) {
+"#,
+    );
+    let mut case_count = 0usize;
+    for line in include_str!("data/GraphemeBreakTest-18.0.0.txt").lines() {
+        let input_line = line.split('#').next().unwrap_or_default().trim();
+        if input_line.is_empty() {
+            continue;
+        }
+        let mut input_bytes = Vec::new();
+        let mut expected = Vec::new();
+        let mut break_before_next = false;
+        for token in input_line.split_whitespace() {
+            match token {
+                "÷" => break_before_next = !input_bytes.is_empty(),
+                "×" => break_before_next = false,
+                code_point => {
+                    if break_before_next {
+                        expected.push(b'|');
+                    }
+                    break_before_next = false;
+                    let value = u32::from_str_radix(code_point, 16)
+                        .expect("parse code point in Unicode test vector");
+                    let scalar = char::from_u32(value).expect("test vector uses a scalar value");
+                    let mut encoded = [0; 4];
+                    let bytes = scalar.encode_utf8(&mut encoded).as_bytes();
+                    input_bytes.extend_from_slice(bytes);
+                    expected.extend_from_slice(bytes);
+                }
+            }
+        }
+        let input_values = input_bytes
+            .iter()
+            .map(|byte| format!("UINT8_C(0x{byte:02x})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected_values = expected
+            .iter()
+            .map(|byte| format!("UINT8_C(0x{byte:02x})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        harness.push_str(&format!(
+            "  static const uint8_t input_{case_count}[] = {{ {input_values} }};\n  static const uint8_t expected_{case_count}[] = {{ {expected_values} }};\n  expected_bytes = expected_{case_count};\n  expected_length = UINT16_C({});\n  current_case = UINT32_C({case_count});\n  emela_export_grapheme_break_test_0((EmelaString){{ .data = (const char *)input_{case_count}, .length = UINT16_C({}) }});\n",
+            expected.len(),
+            input_bytes.len(),
+        ));
+        case_count += 1;
+    }
+    assert!(
+        case_count > 800,
+        "the official test fixture should be complete"
+    );
+    harness.push_str(&format!(
+        "  return debug_calls == UINT32_C({case_count}) ? 0 : 2;\n}}\n"
+    ));
+    compile_and_run(output, &harness);
 }
 
 #[test]

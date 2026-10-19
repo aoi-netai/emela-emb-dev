@@ -205,6 +205,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
         || has_runtime_int_string(flow, &emitted_functions)
+        || has_builtin(flow, &emitted_functions, &[Builtin::StringLength])
         || has_builtin(flow, &emitted_functions, &[Builtin::StringJoin])
         || has_runtime_string_from_code_point(flow, &emitted_functions)
         || has_builtin(
@@ -392,12 +393,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
         emit_string_ends_with_helper(&mut source);
     }
-    if has_builtin(
-        flow,
-        &emitted_functions,
-        &[Builtin::StringTrim, Builtin::StringCodePoints],
-    ) {
+    let grapheme_runtime = has_grapheme_runtime(flow, &emitted_functions);
+    if grapheme_runtime
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[Builtin::StringTrim, Builtin::StringCodePoints],
+        )
+    {
         emit_utf8_decode_helper(&mut source);
+    }
+    if grapheme_runtime {
+        crate::unicode_grapheme::emit_runtime(&mut source);
     }
     if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
         emit_string_trim_helper(&mut source);
@@ -1705,6 +1712,7 @@ fn emit_builtin(
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let (arity, result_type) = match op {
+        Builtin::StringLength => (1, Type::Int),
         Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
         Builtin::StringChars => (1, Type::List(TypeId::STRING)),
@@ -1776,7 +1784,9 @@ fn emit_builtin(
         Builtin::StringFromCodePoint => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
-        Builtin::StringChars => operand_is_string(layouts, function, &args[0]),
+        Builtin::StringLength | Builtin::StringChars => {
+            operand_is_string(layouts, function, &args[0])
+        }
         Builtin::StringCodePoints => operand_is_string(layouts, function, &args[0]),
         Builtin::StringSplit => args
             .iter()
@@ -1874,6 +1884,10 @@ fn emit_builtin(
             &expressions[1],
             writer,
         )?;
+        return Ok(());
+    }
+    if op == Builtin::StringLength {
+        emit_string_length(dst, &expressions[0], writer);
         return Ok(());
     }
     if op == Builtin::StringChars {
@@ -3447,6 +3461,31 @@ fn emit_string_code_points(
     Ok(())
 }
 
+fn emit_string_length(dst: VarId, input: &str, writer: &mut Writer) {
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_length_input_{suffix}");
+    let offset_name = format!("emela_string_length_offset_{suffix}");
+    let next_name = format!("emela_string_length_next_{suffix}");
+    let count_name = format!("emela_string_length_count_{suffix}");
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &next_name, None);
+    writer.decl("int32_t", &count_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(&offset_name, &next_name);
+    writer.line(&format!("++{count_name};"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &count_name);
+}
+
 fn emit_string_split(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -3636,7 +3675,6 @@ fn emit_string_chars(
 
     let suffix = u32::from(dst.into_raw());
     let input_name = format!("emela_string_chars_input_{suffix}");
-    let validation_index_name = format!("emela_string_chars_validation_index_{suffix}");
     let copy_index_name = format!("emela_string_chars_copy_index_{suffix}");
     let bytes_name = format!("emela_string_chars_bytes_{suffix}");
     let owner_name = format!("emela_string_chars_owner_{suffix}");
@@ -3645,29 +3683,13 @@ fn emit_string_chars(
     let last_name = format!("emela_string_chars_last_{suffix}");
     let node_name = format!("emela_string_chars_node_{suffix}");
     let offset_name = format!("emela_string_chars_offset_{suffix}");
+    let next_name = format!("emela_string_chars_next_{suffix}");
     let length_name = format!("emela_string_chars_length_{suffix}");
     let list_node = layouts.list_node_name(list_ty);
     let list_kind = layouts.list_index(list_ty);
     let string_owner_kind = layouts.string_owner_kind();
-    let defect = b"String.chars on non-ASCII input needs Unicode grapheme tables";
 
     writer.decl("EmelaString", &input_name, Some(input));
-    writer.decl("uint32_t", &validation_index_name, Some("UINT32_C(0)"));
-    writer.begin_block(&format!(
-        "while ({validation_index_name} < (uint32_t){input_name}.length)"
-    ));
-    writer.begin_block(&format!(
-        "if ((uint8_t){input_name}.data[{validation_index_name}] >= UINT8_C(0x80))"
-    ));
-    writer.line(&format!(
-        "emela_board_defect(EMELA_DEFECT_UNSUPPORTED_UNICODE, {}, UINT16_C({}));",
-        c_string_literal(defect),
-        defect.len()
-    ));
-    writer.end_block();
-    writer.line(&format!("++{validation_index_name};"));
-    writer.end_block();
-
     writer.decl(
         "const char *",
         &bytes_name,
@@ -3702,16 +3724,17 @@ fn emit_string_chars(
     writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
     writer.decl(&format!("{list_node} *"), &node_name, None);
     writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
-    writer.decl("uint32_t", &length_name, Some("UINT32_C(1)"));
+    writer.decl("uint32_t", &next_name, None);
+    writer.decl("uint32_t", &length_name, None);
     writer.begin_block(&format!(
         "while ({offset_name} < (uint32_t){input_name}.length)"
     ));
-    writer.assign(&length_name, "UINT32_C(1)");
     writer.begin_block(&format!(
-        "if ({bytes_name}[{offset_name}] == '\\r' && {offset_name} + UINT32_C(1) < (uint32_t){input_name}.length && {bytes_name}[{offset_name} + UINT32_C(1)] == '\\n')"
+        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
     ));
-    writer.assign(&length_name, "UINT32_C(2)");
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
     writer.end_block();
+    writer.assign(&length_name, &format!("{next_name} - {offset_name}"));
     emit_string_split_push(
         writer,
         &node_name,
@@ -3724,7 +3747,7 @@ fn emit_string_chars(
         &last_name,
         &head_name,
     );
-    writer.line(&format!("{offset_name} += {length_name};"));
+    writer.assign(&offset_name, &next_name);
     writer.end_block();
     writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
     writer.line(&format!("emela_heap_release({owner_name});"));
@@ -5196,6 +5219,27 @@ fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin
                 )
             })
     })
+}
+
+fn has_grapheme_runtime(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                let Stmt::Let {
+                    value: Value::Builtin { op, .. },
+                    ..
+                } = statement
+                else {
+                    return false;
+                };
+                match op {
+                    Builtin::StringLength | Builtin::StringChars => true,
+                    _ => false,
+                }
+            })
+        })
 }
 
 fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
