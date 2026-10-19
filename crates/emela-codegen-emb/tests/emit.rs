@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
-    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
+    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, Type, TypeId,
+    VariantDef,
 };
 use emela_lir::{
     Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, RuntimeOp,
@@ -46,6 +47,47 @@ fn emits_c_for_a_function_returning_an_int_constant() {
     compile_and_run(
         output,
         "#include \"emela_embedded.h\"\nint main(void) { return emela_export_answer_0() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn emits_empty_list_and_checks_list_emptiness() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+
+    let empty_function = {
+        let mut builder = FnBuilder::new(&core, "empty_list");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let empty = builder.assign(
+            "empty",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: None,
+            },
+        );
+        let is_empty = builder.assign("is_empty", TypeId::BOOL, Value::ListIsEmpty(empty));
+        builder.term(Term::Return(Some(is_empty.into())));
+        builder.finish()
+    };
+
+    let check_function = {
+        let mut builder = FnBuilder::new(&core, "check_list");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.param("list", list_int);
+        let is_empty = builder.assign("is_empty", TypeId::BOOL, Value::ListIsEmpty(list));
+        builder.term(Term::Return(Some(is_empty.into())));
+        builder.finish()
+    };
+
+    let mut flow = Module::new(core);
+    flow.add(empty_function);
+    flow.add(check_function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit empty List operations");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { int value = 0; return emela_export_empty_list_0() == INT32_C(1) && emela_export_check_list_1((void *)0) == INT32_C(1) && emela_export_check_list_1(&value) == INT32_C(0) ? 0 : 1; }\n",
     );
 }
 

@@ -238,6 +238,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line(&format!("#include \"{HEADER_FILE}\""));
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
+    source.line("#include <stddef.h>");
     source.blank();
     let has_int_shift = has_builtin(
         flow,
@@ -2394,6 +2395,33 @@ fn emit_statement(
                 }
                 Value::TupleGet { base, index } => {
                     emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
+                }
+                Value::List { elems, tail: None } if elems.is_empty() => {
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "empty List value has no destination",
+                        ));
+                    };
+                    writer.assign(&variable_name(*dst), "NULL");
+                }
+                Value::List { .. } => {
+                    return Err(unsupported(&function.name, "non-empty Value::List"));
+                }
+                Value::ListIsEmpty(list) => {
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "Value::ListIsEmpty has no Bool destination",
+                        ));
+                    };
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "({} == NULL) ? INT32_C(1) : INT32_C(0)",
+                            variable_name(*list)
+                        ),
+                    );
                 }
                 Value::IsError { error, enum_id } => {
                     if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
