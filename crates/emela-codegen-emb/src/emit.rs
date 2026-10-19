@@ -109,6 +109,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     let mut source = Writer::new();
     source.line(&format!("#include \"{HEADER_FILE}\""));
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
+    source.line("#include <math.h>");
     source.blank();
     if has_prim(flow, &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg]) {
         source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
@@ -575,8 +576,8 @@ fn constant_expression(value: &emela_lir::Const) -> Result<Option<String>, &'sta
             "INT32_C(0)".to_owned()
         })),
         emela_lir::Const::Unit => Ok(None),
-        emela_lir::Const::Int64(_) => Err("Int64 constant"),
-        emela_lir::Const::Float(_) => Err("Float constant"),
+        emela_lir::Const::Int64(value) => Ok(Some(int64_literal(*value))),
+        emela_lir::Const::Float(value) => Ok(Some(float_literal(*value))),
         emela_lir::Const::String(_) => Err("String constant"),
     }
 }
@@ -588,6 +589,31 @@ fn int32_literal(value: i32) -> String {
         format!("(-INT32_C({}))", -value)
     } else {
         format!("INT32_C({value})")
+    }
+}
+
+fn int64_literal(value: i64) -> String {
+    if value == i64::MIN {
+        "(-INT64_C(9223372036854775807) - INT64_C(1))".to_owned()
+    } else {
+        format!("INT64_C({value})")
+    }
+}
+
+fn float_literal(value: f64) -> String {
+    if value.is_nan() {
+        "NAN".to_owned()
+    } else if value == f64::INFINITY {
+        "INFINITY".to_owned()
+    } else if value == f64::NEG_INFINITY {
+        "(-INFINITY)".to_owned()
+    } else {
+        let literal = format!("{value:?}");
+        if literal.contains(['.', 'e', 'E']) {
+            literal
+        } else {
+            format!("{literal}.0")
+        }
     }
 }
 

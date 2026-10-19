@@ -94,6 +94,39 @@ fn compiles_core_bool_and_unit_constants() {
 }
 
 #[test]
+fn emits_and_runs_int64_constants_at_the_signed_boundaries() {
+    for (value, expected) in [
+        (i64::MIN, "INT64_MIN"),
+        (i64::MAX, "INT64_MAX"),
+        (-1, "-INT64_C(1)"),
+    ] {
+        let output = compile_constant_function("wide", TypeId::INT64, Const::Int64(value));
+        let harness = format!(
+            "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ return emela_export_wide_0() == {expected} ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
+fn emits_and_runs_float_constants_including_non_finite_values() {
+    for (value, expected) in [
+        (1.25, "value == 1.25"),
+        (1.0e100, "value == 1.0e100"),
+        (-0.0, "value == 0.0 && signbit(value)"),
+        (f64::INFINITY, "isinf(value) && value > 0.0"),
+        (f64::NEG_INFINITY, "isinf(value) && value < 0.0"),
+        (f64::NAN, "isnan(value)"),
+    ] {
+        let output = compile_constant_function("floating", TypeId::FLOAT, Const::Float(value));
+        let harness = format!(
+            "#include <math.h>\n#include \"emela_embedded.h\"\nint main(void) {{ double value = emela_export_floating_0(); return ({expected}) ? 0 : 1; }}\n"
+        );
+        compile_and_run(output, &harness);
+    }
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
@@ -390,6 +423,17 @@ fn compile_i32_prim(op: PrimOp, args: Vec<Const>, result_type: TypeId) -> Output
     let mut flow = Module::new(core);
     flow.add(function);
     compile_flow(&flow, &Options::default()).expect("emit Int32 primitive")
+}
+
+fn compile_constant_function(name: &str, return_type: TypeId, value: Const) -> Output {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, name);
+    builder.set_ret(return_type).set_exported();
+    builder.term(Term::Return(Some(Operand::Const(value))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    compile_flow(&flow, &Options::default()).expect("emit scalar constant")
 }
 
 fn compile_and_run(output: Output, harness_source: &str) {
