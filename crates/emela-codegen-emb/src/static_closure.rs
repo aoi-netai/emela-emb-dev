@@ -82,11 +82,8 @@ pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
                 "Closure destination is not a function value",
             ));
         };
-        if function_type.fails || function_type.suspends || function_type.ev || closure.suspends {
-            return Err(unsupported(
-                &parent_function.name,
-                "closure with failure, suspend, or effect evidence",
-            ));
+        if function_type.suspends || closure.suspends {
+            return Err(unsupported(&parent_function.name, "suspending closure"));
         }
         if parent_function.constant {
             return Err(unsupported(
@@ -307,8 +304,9 @@ fn visit_sequence(
                 on_suspend,
                 ..
             } => {
-                if matches!(value, Value::Closure(_)) {
-                    return Err(unsupported(owner, "nested closure in a closure body"));
+                if let Value::Closure(closure) = value {
+                    slice.variables.extend(closure.params.iter().copied());
+                    visit_sequence(function, closure.body, slice, owner)?;
                 }
                 value.for_each_var(|variable| {
                     slice.variables.insert(variable);
@@ -422,6 +420,14 @@ fn remap_statement(
             on_suspend,
         } => {
             let mut missing = false;
+            if let Value::Closure(closure) = &mut value {
+                closure.params = closure
+                    .params
+                    .iter()
+                    .map(|&parameter| mapped_id(variables, parameter, owner))
+                    .collect::<Result<Vec<_>, _>>()?;
+                closure.body = mapped_id(sequences, closure.body, owner)?;
+            }
             value.for_each_var_mut(|variable| {
                 if let Some(mapped) = variables.get(variable) {
                     *variable = *mapped;
@@ -429,10 +435,10 @@ fn remap_statement(
                     missing = true;
                 }
             });
-            if missing || matches!(value, Value::Closure(_)) {
+            if missing {
                 return Err(invalid_flow_ir(
                     owner,
-                    "closure body contains an unmapped or nested variable",
+                    "closure body contains an unmapped variable",
                 ));
             }
             if let Value::Call {

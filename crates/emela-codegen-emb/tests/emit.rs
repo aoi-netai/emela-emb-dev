@@ -3,10 +3,13 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "../../emela-core/tests/support/mod.rs"]
+mod support;
+
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
-    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, Type, TypeId,
-    VariantDef,
+    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, FnType, HostRef, OpTy, Roots,
+    Type, TypeId, VariantDef,
 };
 use emela_lir::{
     Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, RuntimeOp,
@@ -14,6 +17,425 @@ use emela_lir::{
 };
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn dynamically_dispatches_through_a_fixed_heap_evidence_table() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            "effect Counter { fn get() -> Int }\n\
+             handler Answer implements Counter { fn get() { 42 } }\n\
+             handler Other implements Counter { fn get() { 41 } }\n\
+             fn read() -> Int use Counter { (use Counter).get() }\n\
+             fn main() -> Int {\n\
+               with Answer {\n\
+                 inner = with Other { read() }\n\
+                 inner + read()\n\
+               }\n\
+             }\n",
+        )],
+        Roots::Exported,
+    )
+    .expect("lower a program with a dynamic effect handler");
+    let output = compile(&core, &Options::default().with_heap_bytes(2048))
+        .expect("emit a dynamic effect handler and evidence table");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_0() == INT32_C(83) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn passes_dynamic_effect_evidence_to_a_captured_closure() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            "effect Counter { fn get() -> Int }\n\
+             handler Answer implements Counter { fn get() { 2 } }\n\
+             pub fn apply(x: Int) -> Int {\n\
+               with Answer {\n\
+                 read = fn() { x + (use Counter).get() }\n\
+                 read()\n\
+               }\n\
+             }\n",
+        )],
+        Roots::Exported,
+    )
+    .expect("lower a closure that uses a dynamically handled effect");
+    let output = compile(&core, &Options::default().with_heap_bytes(4096))
+        .expect("emit a closure call with dynamic effect evidence");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_apply_0(INT32_C(40)) == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn state_run_specializes_cell_storage_in_the_local_frame() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            "import Std.State.{State}\n\
+             pub fn main() -> Int {\n\
+               (value, final) = State.run(1, fn() {\n\
+                 state = use State[Int]\n\
+                 state.set(41)\n\
+                 state.get()\n\
+               })\n\
+               value + final\n\
+             }\n",
+        )],
+        Roots::Exported,
+    )
+    .expect("lower a local State.run program");
+    let output = compile(&core, &Options::default().with_heap_bytes(4096))
+        .expect("specialize State.run Cell operations into local storage");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_0() == INT32_C(82) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn boxes_and_unboxes_values_through_the_fixed_heap_any_runtime() {
+    let core = emela_core::Module::new();
+    let function = {
+        let mut builder = FnBuilder::new(&core, "main");
+        builder.set_ret(TypeId::INT).set_exported();
+        let value = builder.assign("value", TypeId::INT, Value::Const(Const::Int(42)));
+        let boxed = builder.assign("boxed", TypeId::ANY, Value::Coerce(value));
+        let result = builder.assign("result", TypeId::INT, Value::Coerce(boxed));
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit an Any box and unbox pair");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_0() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn any_boxes_retain_managed_list_payloads_until_the_box_is_released() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "main");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Operand::Const(Const::Int(17))],
+                tail: None,
+            },
+        );
+        let boxed = builder.assign("boxed", TypeId::ANY, Value::Coerce(list));
+        let unboxed = builder.assign("unboxed", list_int, Value::Coerce(boxed));
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(unboxed));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(4096))
+        .expect("emit an Any box containing a managed List");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_0() == INT32_C(17) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn adapts_a_function_value_to_effect_evidence_and_failure_call_abis() {
+    let mut core = emela_core::Module::new();
+    let pure_fn = core
+        .types
+        .intern(Type::Fn(FnType::pure(Vec::new(), TypeId::INT)));
+    let effect_fn = core.types.intern(Type::Fn(FnType {
+        fails: true,
+        ev: true,
+        ..FnType::pure(Vec::new(), TypeId::INT)
+    }));
+    let target = {
+        let mut builder = FnBuilder::new(&core, "target");
+        builder.set_ret(TypeId::INT);
+        builder.term(Term::Return(Some(Operand::Const(Const::Int(42)))));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let target = flow.add(target);
+    let main = {
+        let mut builder = FnBuilder::new(&flow.core, "main");
+        builder.set_ret(TypeId::INT).set_fails().set_exported();
+        let direct = builder.assign("direct", pure_fn, Value::FnRef(target));
+        let effectful = builder.assign("effectful", effect_fn, Value::Coerce(direct));
+        let evidence = builder.assign(
+            "evidence",
+            TypeId::EVIDENCE,
+            Value::EvExtend {
+                base: None,
+                bindings: Vec::new(),
+            },
+        );
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Call {
+                callee: Callee::Indirect(effectful),
+                args: vec![evidence.into()],
+                suspends: false,
+                on_fail: Some(OnFail::Propagate),
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    flow.add(main);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit a function value with an evidence adapter");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_1() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn passes_any_values_through_function_value_parameters_and_results() {
+    let mut core = emela_core::Module::new();
+    let any_identity = core.types.intern(Type::Fn(emela_core::FnType::pure(
+        vec![TypeId::ANY],
+        TypeId::ANY,
+    )));
+    let identity = {
+        let mut builder = FnBuilder::new(&core, "identity");
+        builder.set_ret(TypeId::ANY);
+        let value = builder.param("value", TypeId::ANY);
+        builder.term(Term::Return(Some(value.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let identity = flow.add(identity);
+    let main = {
+        let mut builder = FnBuilder::new(&flow.core, "main");
+        builder.set_ret(TypeId::INT).set_exported();
+        let function = builder.assign("identity", any_identity, Value::FnRef(identity));
+        let value = builder.assign("value", TypeId::INT, Value::Const(Const::Int(42)));
+        let boxed = builder.assign("boxed", TypeId::ANY, Value::Coerce(value));
+        let result = builder.assign(
+            "result",
+            TypeId::ANY,
+            Value::Call {
+                callee: Callee::Indirect(function),
+                args: vec![boxed.into()],
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        let unboxed = builder.assign("unboxed", TypeId::INT, Value::Coerce(result));
+        builder.term(Term::Return(Some(unboxed.into())));
+        builder.finish()
+    };
+    flow.add(main);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit a function value with Any parameters and result");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_1() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn allows_repeated_nested_function_types_in_function_value_abis() {
+    let mut core = emela_core::Module::new();
+    let inner_type = core
+        .types
+        .intern(Type::Fn(FnType::pure(Vec::new(), TypeId::INT)));
+    let outer_type = core.types.intern(Type::Fn(FnType::pure(
+        vec![inner_type, inner_type],
+        TypeId::INT,
+    )));
+    let helper = {
+        let mut builder = FnBuilder::new(&core, "helper");
+        builder.set_ret(TypeId::INT);
+        builder.term(Term::Return(Some(Const::Int(1).into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let helper = flow.add(helper);
+    let target = {
+        let mut builder = FnBuilder::new(&flow.core, "target");
+        builder.set_ret(TypeId::INT);
+        let _first = builder.param("first", inner_type);
+        let _second = builder.param("second", inner_type);
+        builder.term(Term::Return(Some(Const::Int(42).into())));
+        builder.finish()
+    };
+    let target = flow.add(target);
+    let main = {
+        let mut builder = FnBuilder::new(&flow.core, "main");
+        builder.set_ret(TypeId::INT).set_exported();
+        let callee = builder.assign("callee", outer_type, Value::FnRef(target));
+        let first = builder.assign("first", inner_type, Value::FnRef(helper));
+        let second = builder.assign("second", inner_type, Value::FnRef(helper));
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Call {
+                callee: Callee::Indirect(callee),
+                args: vec![first.into(), second.into()],
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    flow.add(main);
+
+    let output = compile_flow(&flow, &Options::default())
+        .expect("emit a function ABI with repeated nested function types");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_2() == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn captures_runtime_values_in_a_fixed_heap_closure_environment() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            "pub fn apply(x: Int) -> Int {\n  add = fn(y: Int) { x + y }\n  add(2)\n}\n",
+        )],
+        Roots::Exported,
+    )
+    .expect("lower a closure with a runtime capture");
+    let output = compile(&core, &Options::default().with_heap_bytes(2048))
+        .expect("emit a closure environment backed by the fixed heap");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_apply_0(INT32_C(40)) == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn lifts_nested_closures_that_capture_outer_closure_values() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            "pub fn apply(x: Int) -> Int {\n  outer = fn(y: Int) {\n    inner = fn(z: Int) { x + y + z }\n    inner(1)\n  }\n  outer(1)\n}\n",
+        )],
+        Roots::Exported,
+    )
+    .expect("lower nested closures with runtime captures");
+    let output = compile(&core, &Options::default().with_heap_bytes(4096))
+        .expect("emit nested fixed-heap closure environments");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_apply_0(INT32_C(40)) == INT32_C(42) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn propagates_failure_from_a_captured_closure_through_its_indirect_call() {
+    let mut core = emela_core::Module::new();
+    let error_enum = core.add_enum(EnumDef {
+        name: "ClosureError".to_owned(),
+        params: 0,
+        variants: vec![VariantDef::positional("ClosureError", vec![TypeId::INT])],
+        error: true,
+        external: false,
+    });
+    let error_ty = core.enum_type(error_enum, Vec::new());
+    let closure_ty = core.types.intern(Type::Fn(FnType {
+        fails: true,
+        ..FnType::pure(vec![TypeId::INT], TypeId::INT)
+    }));
+    let mut builder = FnBuilder::new(&core, "apply");
+    builder.set_ret(TypeId::INT).set_fails().set_exported();
+    let captured = builder.param("captured", TypeId::INT);
+    let input = builder.param("input", TypeId::INT);
+    let closure = builder.var("closure", closure_ty);
+    let closure_input = builder.var("closure_input", TypeId::INT);
+    builder.closure(
+        closure,
+        vec![closure_input],
+        vec![captured],
+        false,
+        |builder| {
+            let is_zero = builder.assign(
+                "is_zero",
+                TypeId::BOOL,
+                Value::Prim {
+                    op: PrimOp::Eq,
+                    ty: PrimTy::I32,
+                    args: vec![closure_input.into(), Const::Int(0).into()],
+                },
+            );
+            let result = builder.var("result", TypeId::INT);
+            builder.if_(
+                Some(result),
+                is_zero,
+                |builder| {
+                    let error = builder.assign(
+                        "error",
+                        error_ty,
+                        Value::Make {
+                            ctor: CtorRef {
+                                enum_id: error_enum,
+                                variant: 0,
+                            },
+                            args: vec![Const::Int(73).into()],
+                        },
+                    );
+                    builder.term(Term::Fail(error.into()));
+                },
+                |builder| {
+                    let sum = builder.assign(
+                        "sum",
+                        TypeId::INT,
+                        Value::Prim {
+                            op: PrimOp::Add,
+                            ty: PrimTy::I32,
+                            args: vec![captured.into(), closure_input.into()],
+                        },
+                    );
+                    builder.term(Term::Yield(Some(sum.into())));
+                },
+            );
+            builder.term(Term::Return(Some(result.into())));
+        },
+    );
+    let result = builder.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Indirect(closure),
+            args: vec![input.into()],
+            suspends: false,
+            on_fail: Some(OnFail::Propagate),
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit a failing closure with a captured value");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; if (kind == EMELA_DEFECT_UNHANDLED_ERROR) exit(0); exit(3); }\nint main(void) { if (emela_export_apply_0(INT32_C(40), INT32_C(2)) != INT32_C(42)) return 1; (void)emela_export_apply_0(INT32_C(40), INT32_C(0)); return 2; }\n",
+    );
+}
 
 struct TempDir(PathBuf);
 

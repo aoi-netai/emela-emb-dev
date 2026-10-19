@@ -256,6 +256,9 @@ version = "0.21.0"
 dependencies = [
  "emela-core",
  "emela-lir",
+ "emela-resolve",
+ "emela-syntax",
+ "emela-types",
  "la-arena",
 ]
 
