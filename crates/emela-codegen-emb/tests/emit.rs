@@ -1326,20 +1326,113 @@ fn string_split_keeps_views_alive_after_copying_the_source() {
         builder.term(Term::Return(Some(parts.into())));
         builder.finish()
     };
+    let grapheme_split_signature = {
+        let mut builder = FnBuilder::new(&core, "grapheme_split_signature");
+        builder.set_ret(TypeId::INT).set_exported();
+        let parts = builder.param("parts", list_string);
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(parts));
+        let rest = builder.assign("rest", list_string, Value::ListTail(parts));
+        let second = builder.assign("second", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(rest));
+        let first_size = builder.assign(
+            "first_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![first.into()],
+            },
+        );
+        let second_size = builder.assign(
+            "second_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![second.into()],
+            },
+        );
+        let third_size = builder.assign(
+            "third_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![third.into()],
+            },
+        );
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_size.into(), Const::Int(1000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_size.into(), Const::Int(100).into()],
+            },
+        );
+        let third_scaled = builder.assign(
+            "third_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![third_size.into(), Const::Int(10).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let first_three = builder.assign(
+            "first_three",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), third_scaled.into()],
+            },
+        );
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_three.into(), empty.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
     let mut flow = Module::new(core);
     flow.add(first_trimmed);
     flow.add(trailing_empty);
     flow.add(dynamic_empty_separator);
+    flow.add(grapheme_split_signature);
 
     let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
     assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
     assert!(no_heap[0].message.contains("heap_bytes = 0"));
 
     let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
-        .expect("emit String.split with nonempty separators");
+        .expect("emit String.split with nonempty and empty separators");
     compile_and_run(
         output,
-        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char unsupported[] = \"String.split with an empty separator needs Unicode grapheme tables\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_UNSUPPORTED_UNICODE && length == sizeof unsupported - 1 && message[0] == unsupported[0] ? 0 : 3); }\nint main(void) { EmelaString separator = { .data = \"::\", .length = UINT16_C(2) }; for (int i = 0; i < 1000; ++i) { char input[] = \"  alpha  ::beta::\"; EmelaString source = { .data = input, .length = (uint16_t)(sizeof input - 1) }; if (emela_export_trailing_split_item_is_empty_1(source, separator) != INT32_C(1)) return 1; EmelaString value = emela_export_first_trimmed_split_0(source, separator); memset(input, 'x', sizeof input - 1); if (value.length != UINT16_C(5) || memcmp(value.data, \"alpha\", 5) != 0) return 2; emela_embedded_release_string(&value); } EmelaString input = { .data = \"abc\", .length = UINT16_C(3) }; EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; (void)emela_export_dynamic_empty_separator_2(input, empty); return 4; }\n",
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(3); }\nint main(void) { EmelaString separator = { .data = \"::\", .length = UINT16_C(2) }; for (int i = 0; i < 1000; ++i) { char input[] = \"  alpha  ::beta::\"; EmelaString source = { .data = input, .length = (uint16_t)(sizeof input - 1) }; if (emela_export_trailing_split_item_is_empty_1(source, separator) != INT32_C(1)) return 1; EmelaString value = emela_export_first_trimmed_split_0(source, separator); memset(input, 'x', sizeof input - 1); if (value.length != UINT16_C(5) || memcmp(value.data, \"alpha\", 5) != 0) return 2; emela_embedded_release_string(&value); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_dynamic_empty_separator_2(empty, empty) != NULL) return 3; char input_bytes[] = \"a\\xcc\\x88\\r\\n\\xce\\xb2\"; EmelaString input = { .data = input_bytes, .length = UINT16_C(7) }; void *parts = emela_export_dynamic_empty_separator_2(input, empty); memset(input_bytes, 'x', sizeof input_bytes - 1); if (emela_export_grapheme_split_signature_3(parts) != INT32_C(3221)) return 4; emela_embedded_release(parts); return 0; }\n",
     );
 }
 
@@ -5118,5 +5211,5 @@ fn compile_and_run(output: Output, harness_source: &str) {
     let run = Command::new(&executable)
         .status()
         .expect("run generated C program");
-    assert!(run.success(), "generated C returned an unexpected result");
+    assert!(run.success(), "generated C returned {:?}", run.code());
 }

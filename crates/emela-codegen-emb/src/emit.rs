@@ -1843,12 +1843,7 @@ fn emit_builtin(
             layouts.types[function.vars[dst].ty],
             Type::List(TypeId::INT)
         )
-    } else if op == Builtin::StringSplit {
-        matches!(
-            layouts.types[function.vars[dst].ty],
-            Type::List(TypeId::STRING)
-        )
-    } else if op == Builtin::StringChars {
+    } else if op == Builtin::StringSplit || op == Builtin::StringChars {
         matches!(
             layouts.types[function.vars[dst].ty],
             Type::List(TypeId::STRING)
@@ -1869,19 +1864,17 @@ fn emit_builtin(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
     if op == Builtin::StringSplit {
-        if matches!(args.get(1), Some(Operand::Const(Const::String(separator))) if separator.is_empty())
-        {
-            return Err(unsupported(
-                &function.name,
-                "String.split with an empty separator needs Unicode grapheme tables",
-            ));
-        }
+        let separator_may_be_empty = !matches!(
+            args.get(1),
+            Some(Operand::Const(Const::String(separator))) if !separator.is_empty()
+        );
         emit_string_split(
             layouts,
             function,
             dst,
             &expressions[0],
             &expressions[1],
+            separator_may_be_empty,
             writer,
         )?;
         return Ok(());
@@ -3492,6 +3485,7 @@ fn emit_string_split(
     dst: VarId,
     input: &str,
     separator: &str,
+    separator_may_be_empty: bool,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let list_ty = function.vars[dst].ty;
@@ -3518,17 +3512,8 @@ fn emit_string_split(
     let list_node = layouts.list_node_name(list_ty);
     let list_kind = layouts.list_index(list_ty);
     let string_owner_kind = layouts.string_owner_kind();
-    let defect = b"String.split with an empty separator needs Unicode grapheme tables";
-
     writer.decl("EmelaString", &input_name, Some(input));
     writer.decl("EmelaString", &separator_name, Some(separator));
-    writer.begin_block(&format!("if ({separator_name}.length == UINT16_C(0))"));
-    writer.line(&format!(
-        "emela_board_defect(EMELA_DEFECT_UNSUPPORTED_UNICODE, {}, UINT16_C({}));",
-        c_string_literal(defect),
-        defect.len()
-    ));
-    writer.end_block();
 
     writer.decl(
         "const char *",
@@ -3564,6 +3549,45 @@ fn emit_string_split(
     writer.decl("void *", &head_name, Some("NULL"));
     writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
     writer.decl(&format!("{list_node} *"), &node_name, None);
+    if separator_may_be_empty {
+        writer.begin_block(&format!("if ({separator_name}.length == UINT16_C(0))"));
+        let cluster_offset_name = format!("emela_string_split_cluster_offset_{suffix}");
+        let cluster_next_name = format!("emela_string_split_cluster_next_{suffix}");
+        let cluster_length_name = format!("emela_string_split_cluster_length_{suffix}");
+        writer.decl("uint32_t", &cluster_offset_name, Some("UINT32_C(0)"));
+        writer.decl("uint32_t", &cluster_next_name, None);
+        writer.decl("uint32_t", &cluster_length_name, None);
+        writer.begin_block(&format!(
+            "while ({cluster_offset_name} < (uint32_t){input_name}.length)"
+        ));
+        writer.begin_block(&format!(
+            "if (!emela_emb_grapheme_next({input_name}, {cluster_offset_name}, &{cluster_next_name}))"
+        ));
+        writer.line(
+            "emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));",
+        );
+        writer.end_block();
+        writer.assign(
+            &cluster_length_name,
+            &format!("{cluster_next_name} - {cluster_offset_name}"),
+        );
+        emit_string_split_push(
+            writer,
+            &node_name,
+            &list_node,
+            list_kind,
+            &bytes_name,
+            &cluster_offset_name,
+            &cluster_length_name,
+            &owner_name,
+            &last_name,
+            &head_name,
+        );
+        writer.assign(&cluster_offset_name, &cluster_next_name);
+        writer.end_block();
+        writer.end_block();
+        writer.begin_block("else");
+    }
     writer.decl("uint32_t", &start_name, Some("UINT32_C(0)"));
     writer.decl("uint32_t", &scan_name, Some("UINT32_C(0)"));
     writer.decl("int", &matched_name, None);
@@ -3618,6 +3642,9 @@ fn emit_string_split(
         &last_name,
         &head_name,
     );
+    if separator_may_be_empty {
+        writer.end_block();
+    }
     writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
     writer.line(&format!("emela_heap_release({owner_name});"));
     writer.end_block();
@@ -5228,7 +5255,7 @@ fn has_grapheme_runtime(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bo
         .any(|(_, function)| {
             function.stmts.iter().any(|(_, statement)| {
                 let Stmt::Let {
-                    value: Value::Builtin { op, .. },
+                    value: Value::Builtin { op, args },
                     ..
                 } = statement
                 else {
@@ -5236,6 +5263,10 @@ fn has_grapheme_runtime(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bo
                 };
                 match op {
                     Builtin::StringLength | Builtin::StringChars => true,
+                    Builtin::StringSplit => !matches!(
+                        args.get(1),
+                        Some(Operand::Const(Const::String(separator))) if !separator.is_empty()
+                    ),
                     _ => false,
                 }
             })
