@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use emela_core::{Type, TypeId, TypeTable};
+use emela_core::{CtorRef, Type, TypeId, TypeTable};
 use emela_lir::{Callee, FnId, Function, Operand, PrimOp, PrimTy, Repr, Stmt, Term, Value, VarId};
 
 use crate::writer::Writer;
@@ -315,6 +315,9 @@ fn emit_statement(
                         "indirect, failing, or suspending calls",
                     ));
                 }
+                Value::Make { ctor, args } => {
+                    emit_make(layouts, function, *dst, *ctor, args, writer)?;
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
@@ -370,6 +373,100 @@ fn emit_compound_sequence(
             }]);
         }
         (None, _) => {}
+    }
+    Ok(())
+}
+
+fn emit_make(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    ctor: CtorRef,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let ty = function.vars[dst].ty;
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor defines a non-enum value",
+                function.name
+            ),
+        }]);
+    };
+    if enum_id != ctor.enum_id {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor and destination types differ",
+                function.name
+            ),
+        }]);
+    }
+    let Some(variant) = layouts.core.enums[enum_id].variants.get(ctor.variant) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    if args.len() != variant.tys.len() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor has {} arguments, expected {}",
+                function.name,
+                args.len(),
+                variant.tys.len()
+            ),
+        }]);
+    }
+
+    let target = variable_name(dst);
+    if layouts.enum_is_i32(enum_id) {
+        let tag = i32::try_from(ctor.variant)
+            .map_err(|_| unsupported(&function.name, "enum with too many variants"))?;
+        writer.assign(&target, &int32_literal(tag));
+        return Ok(());
+    }
+
+    let Some(fields) = layouts
+        .enum_fields(ty)
+        .and_then(|variants| variants.get(ctor.variant))
+    else {
+        return Err(unsupported(
+            &function.name,
+            "enum value without an inline C layout",
+        ));
+    };
+    let tag = i32::try_from(ctor.variant)
+        .map_err(|_| unsupported(&function.name, "enum with too many variants"))?;
+    writer.assign(&format!("{target}.tag"), &int32_literal(tag));
+
+    let mut represented = false;
+    for (index, (field_ty, arg)) in fields.iter().zip(args).enumerate() {
+        if layouts.type_repr(*field_ty) == Repr::Void {
+            continue;
+        }
+        represented = true;
+        let expression =
+            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.assign(
+            &format!("{target}.payload.v{}.f{index}", ctor.variant),
+            &expression,
+        );
+    }
+    if !represented {
+        writer.assign(
+            &format!("{target}.payload.v{}._unit", ctor.variant),
+            "UINT8_C(0)",
+        );
     }
     Ok(())
 }
@@ -890,6 +987,14 @@ impl<'a> TypeLayouts<'a> {
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
             Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
             _ => c_type(self.type_repr(ty)).to_owned(),
+        }
+    }
+
+    fn enum_fields(&self, ty: TypeId) -> Option<&[Vec<TypeId>]> {
+        let index = *self.aggregate_ids.get(&ty)?;
+        match &self.aggregates[index].kind {
+            AggregateKind::Enum(variants) => Some(variants),
+            AggregateKind::Tuple(_) => None,
         }
     }
 

@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{Options, Output, compile, compile_flow};
-use emela_core::{BinOp, EnumDef, OpTy, TypeId, VariantDef};
+use emela_core::{BinOp, CtorRef, EnumDef, OpTy, TypeId, VariantDef};
 use emela_lir::{Const, FnBuilder, Module, Operand, PrimOp, PrimTy, Term, Value};
 
 static NEXT_TEMP_ID: AtomicUsize = AtomicUsize::new(0);
@@ -176,6 +176,64 @@ fn emits_inline_c_layouts_for_tuple_and_generic_enum_signatures() {
         "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {enum_c_type} value = {{ .tag = INT32_C(0), .payload.v0.f0 = INT64_C(42) }}; {enum_c_type} result = emela_export_enum_identity_0(value); return result.tag == INT32_C(0) && result.payload.v0.f0 == INT64_C(42) ? 0 : 1; }}\n"
     );
     compile_and_run(enum_output, &enum_harness);
+}
+
+#[test]
+fn constructs_payload_and_unit_enum_variants_as_inline_values() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Maybe".to_owned(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![TypeId::INT64]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, Vec::new());
+
+    let mut some_builder = FnBuilder::new(&core, "some");
+    some_builder.set_ret(enum_ty).set_exported();
+    let some_value = some_builder.assign(
+        "value",
+        enum_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: vec![Operand::Const(Const::Int64(42))],
+        },
+    );
+    some_builder.term(Term::Return(Some(Operand::Var(some_value))));
+    let some_function = some_builder.finish();
+
+    let mut none_builder = FnBuilder::new(&core, "none");
+    none_builder.set_ret(enum_ty).set_exported();
+    let none_value = none_builder.assign(
+        "value",
+        enum_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 1,
+            },
+            args: Vec::new(),
+        },
+    );
+    none_builder.term(Term::Return(Some(Operand::Var(none_value))));
+    let none_function = none_builder.finish();
+
+    let mut flow = Module::new(core);
+    flow.add(some_function);
+    flow.add(none_function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit enum constructors");
+    let enum_c_type = format!("emela_type_{}", enum_ty.index());
+    let harness = format!(
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {enum_c_type} some = emela_export_some_0(); if (some.tag != INT32_C(0) || some.payload.v0.f0 != INT64_C(42)) return 1; {enum_c_type} none = emela_export_none_1(); return none.tag == INT32_C(1) ? 0 : 2; }}\n"
+    );
+    compile_and_run(output, &harness);
 }
 
 #[test]
