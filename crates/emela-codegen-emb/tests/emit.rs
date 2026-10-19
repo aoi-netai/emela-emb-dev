@@ -266,6 +266,211 @@ fn appends_dynamic_strings_into_one_inferred_stack_buffer() {
 }
 
 #[test]
+fn reuses_a_string_scratch_buffer_after_its_last_read() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_scratch_reuse");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let first = builder.assign(
+        "first",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("a".to_owned()).into()],
+        },
+    );
+    let first_matches = builder.assign(
+        "first_matches",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![first.into(), Const::String("xa".to_owned()).into()],
+        },
+    );
+    let result = builder.var("result", TypeId::BOOL);
+    builder.if_(
+        Some(result),
+        first_matches,
+        |then| {
+            let second = then.assign(
+                "second",
+                TypeId::STRING,
+                Value::Builtin {
+                    op: Builtin::StringAppend,
+                    args: vec![input.into(), Const::String("b".to_owned()).into()],
+                },
+            );
+            let second_matches = then.assign(
+                "second_matches",
+                TypeId::BOOL,
+                Value::Builtin {
+                    op: Builtin::StringContains,
+                    args: vec![second.into(), Const::String("xb".to_owned()).into()],
+                },
+            );
+            then.term(Term::Yield(Some(second_matches.into())));
+        },
+        |otherwise| otherwise.term(Term::Yield(Some(Const::Bool(false).into()))),
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit reusable String scratch");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert_eq!(source.matches("char emela_string_buffer_").count(), 1);
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"x\", .length = UINT16_C(1) }; return emela_export_string_scratch_reuse_0(input) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn keeps_overlapping_string_scratch_values_in_distinct_buffers() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_scratch_overlap");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let left = builder.assign(
+        "left",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("a".to_owned()).into()],
+        },
+    );
+    let right = builder.assign(
+        "right",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("b".to_owned()).into()],
+        },
+    );
+    let combined = builder.assign(
+        "combined",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![left.into(), right.into()],
+        },
+    );
+    let matches = builder.assign(
+        "matches",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![combined.into(), Const::String("xaxb".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(matches.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit overlapping scratch");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert_eq!(source.matches("char emela_string_buffer_").count(), 2);
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"x\", .length = UINT16_C(1) }; return emela_export_string_scratch_overlap_0(input) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn preserves_a_string_scratch_buffer_while_a_trim_view_is_live() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_trim_scratch_lifetime");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let first_input = builder.param("first_input", TypeId::STRING);
+    let second_input = builder.param("second_input", TypeId::STRING);
+    let first = builder.assign(
+        "first",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![first_input.into(), Const::String(" ".to_owned()).into()],
+        },
+    );
+    let trimmed = builder.assign(
+        "trimmed",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringTrim,
+            args: vec![first.into()],
+        },
+    );
+    let second = builder.assign(
+        "second",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![second_input.into(), Const::String("b".to_owned()).into()],
+        },
+    );
+    let second_size = builder.assign(
+        "second_size",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringByteSize,
+            args: vec![second.into()],
+        },
+    );
+    let has_expected_size = builder.assign(
+        "has_expected_size",
+        TypeId::BOOL,
+        Value::Prim {
+            op: PrimOp::Eq,
+            ty: PrimTy::I32,
+            args: vec![second_size.into(), Const::Int(2).into()],
+        },
+    );
+    let still_contains_x = builder.assign(
+        "still_contains_x",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![trimmed.into(), Const::String("x".to_owned()).into()],
+        },
+    );
+    let result = builder.var("result", TypeId::BOOL);
+    builder.if_(
+        Some(result),
+        has_expected_size,
+        |then| then.term(Term::Yield(Some(still_contains_x.into()))),
+        |otherwise| otherwise.term(Term::Yield(Some(Const::Bool(false).into()))),
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit trim-view lifetime");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert_eq!(source.matches("char emela_string_buffer_").count(), 2);
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString first = { .data = \" x\", .length = UINT16_C(2) }; EmelaString second = { .data = \"y\", .length = UINT16_C(1) }; return emela_export_string_trim_scratch_lifetime_0(first, second) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn string_append_capacity_overflow_uses_the_board_defect_hook() {
     let core = emela_core::Module::new();
     let mut builder = FnBuilder::new(&core, "append_one");

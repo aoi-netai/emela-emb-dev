@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use emela_core::{Builtin, CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
-    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr, Stmt,
-    SwitchOn, Term, Value, VarId,
+    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr, SeqId,
+    Stmt, StmtId, SwitchOn, Term, Value, VarId,
 };
 
 use crate::const_eval::{self, Outcome as ConstOutcome};
@@ -476,14 +476,15 @@ fn emit_local_declarations(
 }
 
 struct StringBufferPlan {
-    buffers: HashMap<VarId, (VarId, u16)>,
+    buffers: HashMap<VarId, (usize, u16)>,
     declarations: Vec<(String, usize)>,
 }
 
 impl StringBufferPlan {
     fn new(layouts: &TypeLayouts<'_>, function: &Function, capacity: u16) -> Self {
         let mut append_args = HashMap::new();
-        for (_, statement) in function.stmts.iter() {
+        let mut append_positions = HashMap::new();
+        for (statement_id, statement) in function.stmts.iter() {
             let Stmt::Let {
                 dst: Some(dst),
                 value:
@@ -502,6 +503,7 @@ impl StringBufferPlan {
                 && matches!(layouts.types[function.vars[*dst].ty], Type::String)
             {
                 append_args.insert(*dst, args.clone());
+                append_positions.insert(*dst, statement_id);
             }
         }
 
@@ -544,6 +546,105 @@ impl StringBufferPlan {
             }
         }
         drop(count);
+
+        let (statement_positions, sequence_positions) = function_positions(function);
+        let mut last_uses = HashMap::new();
+        let mut non_reusable_variables = HashSet::new();
+        for (statement_id, statement) in function.stmts.iter() {
+            let position = statement_positions.get(&statement_id).copied().unwrap_or(0);
+            let mut mark_use = |variable| {
+                last_uses
+                    .entry(variable)
+                    .and_modify(|last: &mut usize| *last = (*last).max(position))
+                    .or_insert(position);
+            };
+            match statement {
+                Stmt::Let { value, .. } => {
+                    value.for_each_var(&mut mark_use);
+                    let reusable_consumer = match value {
+                        Value::Builtin {
+                            op:
+                                Builtin::StringByteSize
+                                | Builtin::StringContains
+                                | Builtin::StringStartsWith
+                                | Builtin::StringEndsWith
+                                | Builtin::StringAppend,
+                            args,
+                        } => !append_has_empty_constant(args),
+                        _ => false,
+                    };
+                    if !reusable_consumer {
+                        value.for_each_var(|variable| {
+                            non_reusable_variables.insert(variable);
+                        });
+                    }
+                    if let Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    } = value
+                        && append_has_empty_constant(args)
+                    {
+                        value.for_each_var(|variable| {
+                            non_reusable_variables.insert(variable);
+                        });
+                    }
+                }
+                Stmt::If { cond, .. } => {
+                    count_operand(cond, &mut mark_use);
+                    if let Operand::Var(variable) = cond {
+                        non_reusable_variables.insert(*variable);
+                    }
+                }
+                Stmt::Switch { on, .. } => {
+                    let variable = match on {
+                        SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
+                    };
+                    mark_use(variable);
+                    non_reusable_variables.insert(variable);
+                }
+                Stmt::Loop { inits, .. } => {
+                    for operand in inits {
+                        count_operand(operand, &mut mark_use);
+                        if let Operand::Var(variable) = operand {
+                            non_reusable_variables.insert(*variable);
+                        }
+                    }
+                }
+                Stmt::Dup(variable) | Stmt::Drop(variable) => {
+                    mark_use(*variable);
+                    non_reusable_variables.insert(*variable);
+                }
+                Stmt::Block { .. } | Stmt::Protect { .. } => {}
+            }
+        }
+        for (sequence_id, sequence) in function.seqs.iter() {
+            let position = sequence_positions.get(&sequence_id).copied().unwrap_or(0);
+            let mut mark_use = |variable| {
+                last_uses
+                    .entry(variable)
+                    .and_modify(|last: &mut usize| *last = (*last).max(position))
+                    .or_insert(position);
+                non_reusable_variables.insert(variable);
+            };
+            match &sequence.term {
+                Term::Yield(Some(operand))
+                | Term::Return(Some(operand))
+                | Term::Fail(operand)
+                | Term::Defect(operand) => count_operand(operand, &mut mark_use),
+                Term::Yield(None) | Term::Return(None) => {}
+                Term::Break { value, .. } => {
+                    if let Some(value) = value {
+                        count_operand(value, &mut mark_use);
+                    }
+                }
+                Term::Recur(args) => {
+                    for operand in args {
+                        count_operand(operand, &mut mark_use);
+                    }
+                }
+                Term::Unreachable | Term::Unwind => {}
+            }
+        }
 
         let mut bounds: HashMap<VarId, usize> = function
             .vars
@@ -621,6 +722,8 @@ impl StringBufferPlan {
         }
 
         let mut root_capacities: HashMap<VarId, usize> = HashMap::new();
+        let mut root_intervals: HashMap<VarId, (usize, usize)> = HashMap::new();
+        let mut non_reusable_roots = HashSet::new();
         for (&variable, &root) in &roots {
             let bound = bounds
                 .get(&variable)
@@ -631,17 +734,65 @@ impl StringBufferPlan {
                 .entry(root)
                 .and_modify(|current| *current = (*current).max(bound))
                 .or_insert(bound);
+            let definition = append_positions
+                .get(&variable)
+                .and_then(|statement| statement_positions.get(statement))
+                .copied()
+                .unwrap_or(0);
+            let end = last_uses.get(&variable).copied().unwrap_or(definition);
+            root_intervals
+                .entry(root)
+                .and_modify(|(start, last)| {
+                    *start = (*start).min(definition);
+                    *last = (*last).max(end);
+                })
+                .or_insert((definition, end));
+            if non_reusable_variables.contains(&variable) {
+                non_reusable_roots.insert(root);
+            }
         }
-        let mut declarations: Vec<_> = root_capacities
+        let mut groups: Vec<_> = root_capacities
             .iter()
-            .map(|(&root, &size)| (string_buffer_name(root), size.max(1)))
+            .map(|(&root, &size)| {
+                let (start, end) = root_intervals.get(&root).copied().unwrap_or((0, 0));
+                (root, start, end, size, !non_reusable_roots.contains(&root))
+            })
             .collect();
-        declarations.sort_by_key(|(name, _)| name.clone());
+        groups.sort_by_key(|(root, start, _, _, _)| (*start, format!("{root:?}")));
+
+        let mut slot_ends: Vec<Option<usize>> = Vec::new();
+        let mut slot_sizes: Vec<usize> = Vec::new();
+        let mut root_slots = HashMap::new();
+        for (root, start, end, size, reusable) in groups {
+            let slot = reusable
+                .then(|| {
+                    slot_ends
+                        .iter()
+                        .position(|last| last.is_some_and(|last| last < start))
+                })
+                .flatten();
+            let slot = if let Some(slot) = slot {
+                slot_ends[slot] = Some(end);
+                slot_sizes[slot] = slot_sizes[slot].max(size.max(1));
+                slot
+            } else {
+                let slot = slot_ends.len();
+                slot_ends.push(reusable.then_some(end));
+                slot_sizes.push(size.max(1));
+                slot
+            };
+            root_slots.insert(root, slot);
+        }
+        let declarations = slot_sizes
+            .iter()
+            .enumerate()
+            .map(|(slot, size)| (string_buffer_name(slot), *size))
+            .collect();
         let buffers = roots
             .into_iter()
             .map(|(variable, root)| {
                 let buffer_capacity = root_capacities[&root] as u16;
-                (variable, (root, buffer_capacity))
+                (variable, (root_slots[&root], buffer_capacity))
             })
             .collect();
         Self {
@@ -653,8 +804,114 @@ impl StringBufferPlan {
     fn buffer(&self, variable: VarId) -> Option<(String, u16)> {
         self.buffers
             .get(&variable)
-            .map(|(root, capacity)| (string_buffer_name(*root), *capacity))
+            .map(|(slot, capacity)| (string_buffer_name(*slot), *capacity))
     }
+}
+
+fn function_positions(function: &Function) -> (HashMap<StmtId, usize>, HashMap<SeqId, usize>) {
+    fn visit(
+        function: &Function,
+        sequence: SeqId,
+        next: &mut usize,
+        visited: &mut HashSet<SeqId>,
+        statement_positions: &mut HashMap<StmtId, usize>,
+        sequence_positions: &mut HashMap<SeqId, usize>,
+    ) {
+        if !visited.insert(sequence) {
+            return;
+        }
+        for &statement_id in &function.seqs[sequence].stmts {
+            *next += 1;
+            statement_positions.insert(statement_id, *next);
+            match &function.stmts[statement_id] {
+                Stmt::If { then, else_, .. } => {
+                    visit(
+                        function,
+                        *then,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                    visit(
+                        function,
+                        *else_,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                }
+                Stmt::Switch { cases, default, .. } => {
+                    for case in cases {
+                        visit(
+                            function,
+                            case.body,
+                            next,
+                            visited,
+                            statement_positions,
+                            sequence_positions,
+                        );
+                    }
+                    if let Some(default) = default {
+                        visit(
+                            function,
+                            *default,
+                            next,
+                            visited,
+                            statement_positions,
+                            sequence_positions,
+                        );
+                    }
+                }
+                Stmt::Loop { body, .. } | Stmt::Block { body, .. } => visit(
+                    function,
+                    *body,
+                    next,
+                    visited,
+                    statement_positions,
+                    sequence_positions,
+                ),
+                Stmt::Protect { body, cleanup, .. } => {
+                    visit(
+                        function,
+                        *body,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                    visit(
+                        function,
+                        *cleanup,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                }
+                Stmt::Let { .. } | Stmt::Dup(_) | Stmt::Drop(_) => {}
+            }
+        }
+        *next += 1;
+        sequence_positions.insert(sequence, *next);
+    }
+
+    let mut statement_positions = HashMap::new();
+    let mut sequence_positions = HashMap::new();
+    let mut visited = HashSet::new();
+    let mut next = 0;
+    if let Some(body) = function.body {
+        visit(
+            function,
+            body,
+            &mut next,
+            &mut visited,
+            &mut statement_positions,
+            &mut sequence_positions,
+        );
+    }
+    (statement_positions, sequence_positions)
 }
 
 fn count_operand(operand: &Operand, count: &mut impl FnMut(VarId)) {
@@ -689,8 +946,8 @@ fn append_has_empty_constant(args: &[Operand]) -> bool {
         || matches!(args.get(1), Some(Operand::Const(Const::String(value))) if value.is_empty())
 }
 
-fn string_buffer_name(root: VarId) -> String {
-    format!("emela_string_buffer_{}", variable_name(root))
+fn string_buffer_name(slot: usize) -> String {
+    format!("emela_string_buffer_{slot}")
 }
 
 fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
@@ -975,12 +1232,6 @@ fn emit_string_append_helper(writer: &mut Writer) {
     writer.begin_block(
         "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity)",
     );
-    writer.begin_block("if (left.length == UINT16_C(0))");
-    writer.line("return right;");
-    writer.end_block();
-    writer.begin_block("if (right.length == UINT16_C(0))");
-    writer.line("return left;");
-    writer.end_block();
     writer.begin_block(
         "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",
     );
