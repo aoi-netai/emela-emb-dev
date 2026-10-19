@@ -352,6 +352,33 @@ fn reads_tags_from_payload_and_nullary_enums() {
 }
 
 #[test]
+fn constructs_inline_tuples_and_keeps_unit_field_positions() {
+    let mut core = emela_core::Module::new();
+    let tuple_ty = core.tuple(vec![TypeId::INT64, TypeId::UNIT, TypeId::BOOL]);
+    let mut builder = FnBuilder::new(&core, "tuple_value");
+    builder.set_ret(tuple_ty).set_exported();
+    let tuple = builder.assign(
+        "tuple",
+        tuple_ty,
+        Value::Tuple(vec![
+            Operand::Const(Const::Int64(91)),
+            Operand::Const(Const::Unit),
+            Operand::Const(Const::Bool(true)),
+        ]),
+    );
+    builder.term(Term::Return(Some(Operand::Var(tuple))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit tuple construction");
+    let tuple_c_type = format!("emela_type_{}", tuple_ty.index());
+    let harness = format!(
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {tuple_c_type} value = emela_export_tuple_value_0(); return value.f0 == INT64_C(91) && value.f2 == INT32_C(1) ? 0 : 1; }}\n"
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (

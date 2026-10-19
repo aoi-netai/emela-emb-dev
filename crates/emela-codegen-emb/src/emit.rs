@@ -324,6 +324,9 @@ fn emit_statement(
                 Value::Tag(base) => {
                     emit_tag(layouts, function, *dst, *base, writer)?;
                 }
+                Value::Tuple(args) => {
+                    emit_tuple(layouts, function, *dst, args, writer)?;
+                }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
             Ok(())
@@ -579,6 +582,55 @@ fn emit_tag(
         }]);
     };
     writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn emit_tuple(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let ty = function.vars[dst].ty;
+    let Type::Tuple(fields) = &layouts.types[ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple value defines a non-tuple variable",
+                function.name
+            ),
+        }]);
+    };
+    if args.len() != fields.len() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple has {} elements, expected {}",
+                function.name,
+                args.len(),
+                fields.len()
+            ),
+        }]);
+    }
+
+    let target = variable_name(dst);
+    let mut represented = false;
+    for (index, (&field_ty, arg)) in fields.iter().zip(args).enumerate() {
+        if layouts.type_repr(field_ty) == Repr::Void {
+            continue;
+        }
+        represented = true;
+        let expression =
+            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.assign(&format!("{target}.f{index}"), &expression);
+    }
+    if !represented {
+        writer.assign(&format!("{target}._unit"), "UINT8_C(0)");
+    }
     Ok(())
 }
 
