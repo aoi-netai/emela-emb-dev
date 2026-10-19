@@ -198,6 +198,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         let name = &names[&id];
         source.begin_block(&signature(&layouts, function, name, !function.exported));
         emit_local_declarations(&layouts, function, &mut source);
+        let mut loops = Vec::new();
+        let mut next_temp = 0;
         for &statement in &sequence.stmts {
             emit_statement(
                 &layouts,
@@ -205,6 +207,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
                 &function.stmts[statement],
                 &mut source,
                 &names,
+                &mut loops,
+                &mut next_temp,
             )?;
         }
         emit_return(flow, function, &sequence.term, &mut source)?;
@@ -255,6 +259,8 @@ fn emit_statement(
     statement: &Stmt,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    next_temp: &mut usize,
 ) -> Result<(), Vec<Error>> {
     match statement {
         Stmt::Let {
@@ -356,10 +362,14 @@ fn emit_statement(
             let condition =
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
             writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
-            emit_compound_sequence(layouts, function, *then, *dst, writer, names)?;
+            emit_compound_sequence(
+                layouts, function, *then, *dst, writer, names, loops, next_temp,
+            )?;
             writer.end_block();
             writer.begin_block("else");
-            emit_compound_sequence(layouts, function, *else_, *dst, writer, names)?;
+            emit_compound_sequence(
+                layouts, function, *else_, *dst, writer, names, loops, next_temp,
+            )?;
             writer.end_block();
             Ok(())
         }
@@ -368,13 +378,17 @@ fn emit_statement(
             on,
             cases,
             default,
-        } => emit_switch(layouts, function, *dst, *on, cases, *default, writer, names),
+        } => emit_switch(
+            layouts, function, *dst, *on, cases, *default, writer, names, loops, next_temp,
+        ),
         Stmt::Loop {
             dst,
             vars,
             inits,
             body,
-        } => emit_loop(layouts, function, *dst, vars, inits, *body, writer, names),
+        } => emit_loop(
+            layouts, function, *dst, vars, inits, *body, writer, names, loops, next_temp,
+        ),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
 }
@@ -388,6 +402,8 @@ fn emit_switch(
     default: Option<emela_lir::SeqId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    next_temp: &mut usize,
 ) -> Result<(), Vec<Error>> {
     let (scrutinee, tag_switch) = match on {
         SwitchOn::Tag(value) => {
@@ -465,14 +481,18 @@ fn emit_switch(
             }
         };
         writer.begin_block(&format!("case {label}:"));
-        emit_compound_sequence(layouts, function, case.body, dst, writer, names)?;
+        emit_compound_sequence(
+            layouts, function, case.body, dst, writer, names, loops, next_temp,
+        )?;
         writer.line("break;");
         writer.end_block();
     }
 
     if let Some(default) = default {
         writer.begin_block("default:");
-        emit_compound_sequence(layouts, function, default, dst, writer, names)?;
+        emit_compound_sequence(
+            layouts, function, default, dst, writer, names, loops, next_temp,
+        )?;
         writer.line("break;");
         writer.end_block();
     } else {
@@ -500,6 +520,8 @@ fn emit_loop(
     body: emela_lir::SeqId,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    next_temp: &mut usize,
 ) -> Result<(), Vec<Error>> {
     if vars.len() != inits.len() {
         return Err(invalid_flow_ir(
@@ -513,7 +535,12 @@ fn emit_loop(
         writer.assign(&variable_name(variable), &expression);
     }
     writer.begin_block("for (;;)");
-    emit_compound_sequence(layouts, function, body, dst, writer, names)?;
+    loops.push(vars.to_vec());
+    let result = emit_compound_sequence(
+        layouts, function, body, dst, writer, names, loops, next_temp,
+    );
+    loops.pop();
+    result?;
     writer.line("break;");
     writer.end_block();
     Ok(())
@@ -526,31 +553,80 @@ fn emit_compound_sequence(
     dst: Option<VarId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    loops: &mut Vec<Vec<VarId>>,
+    next_temp: &mut usize,
 ) -> Result<(), Vec<Error>> {
     let sequence = &function.seqs[sequence];
     for &statement in &sequence.stmts {
-        emit_statement(layouts, function, &function.stmts[statement], writer, names)?;
+        emit_statement(
+            layouts,
+            function,
+            &function.stmts[statement],
+            writer,
+            names,
+            loops,
+            next_temp,
+        )?;
     }
-    let Term::Yield(value) = &sequence.term else {
-        return Err(unsupported(&function.name, term_name(&sequence.term)));
+    match &sequence.term {
+        Term::Yield(value) => match (dst, value) {
+            (Some(dst), Some(value)) => {
+                let expression = operand_expression(value)
+                    .map_err(|variant| unsupported(&function.name, variant))?;
+                writer.assign(&variable_name(dst), &expression);
+            }
+            (Some(_), None) => {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "compound statement destination has a valueless arm",
+                ));
+            }
+            (None, _) => {}
+        },
+        Term::Recur(args) => emit_recur(layouts, function, args, loops, writer, next_temp)?,
+        other => return Err(unsupported(&function.name, term_name(other))),
+    }
+    Ok(())
+}
+
+fn emit_recur(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    args: &[Operand],
+    loops: &[Vec<VarId>],
+    writer: &mut Writer,
+    next_temp: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let Some(vars) = loops.last() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Recur appears outside an emitted loop",
+        ));
     };
-    match (dst, value) {
-        (Some(dst), Some(value)) => {
-            let expression = operand_expression(value)
-                .map_err(|variant| unsupported(&function.name, variant))?;
-            writer.assign(&variable_name(dst), &expression);
-        }
-        (Some(_), None) => {
-            return Err(vec![Error {
-                kind: ErrorKind::InvalidFlowIr,
-                message: format!(
-                    "invalid Flow IR in function `{}`: If destination has a valueless arm",
-                    function.name
-                ),
-            }]);
-        }
-        (None, _) => {}
+    if vars.len() != args.len() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Recur argument and loop variable counts differ",
+        ));
     }
+
+    let mut temporaries = Vec::with_capacity(args.len());
+    for (&variable, argument) in vars.iter().zip(args) {
+        let expression =
+            operand_expression(argument).map_err(|variant| unsupported(&function.name, variant))?;
+        let temporary = format!("emela_recur_tmp_{}", *next_temp);
+        *next_temp += 1;
+        writer.decl(
+            &layouts.c_type(function.vars[variable].ty),
+            &temporary,
+            Some(&expression),
+        );
+        temporaries.push(temporary);
+    }
+    for (&variable, temporary) in vars.iter().zip(temporaries) {
+        writer.assign(&variable_name(variable), &temporary);
+    }
+    writer.line("continue;");
     Ok(())
 }
 

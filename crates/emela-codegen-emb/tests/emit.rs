@@ -590,6 +590,77 @@ fn emits_and_runs_a_loop_with_an_initial_value_and_yield() {
 }
 
 #[test]
+fn emits_and_runs_recur_with_multiple_loop_variables() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "count_down");
+    let start = builder.param("start", TypeId::INT);
+    builder.set_ret(TypeId::INT).set_exported();
+    let counter = builder.var("counter", TypeId::INT);
+    let sum = builder.var("sum", TypeId::INT);
+    let result = builder.var("result", TypeId::INT);
+    builder.loop_(
+        Some(result),
+        vec![
+            (counter, Operand::Var(start)),
+            (sum, Operand::Const(Const::Int(0))),
+        ],
+        |builder| {
+            let is_zero = builder.assign(
+                "is_zero",
+                TypeId::BOOL,
+                Value::Prim {
+                    op: PrimOp::Eq,
+                    ty: PrimTy::I32,
+                    args: vec![Operand::Var(counter), Operand::Const(Const::Int(0))],
+                },
+            );
+            let branch = builder.var("branch", TypeId::INT);
+            builder.if_(
+                Some(branch),
+                is_zero,
+                |builder| {
+                    builder.term(Term::Yield(Some(Operand::Var(sum))));
+                },
+                |builder| {
+                    let next_counter = builder.assign(
+                        "next_counter",
+                        TypeId::INT,
+                        Value::Prim {
+                            op: PrimOp::Sub,
+                            ty: PrimTy::I32,
+                            args: vec![Operand::Var(counter), Operand::Const(Const::Int(1))],
+                        },
+                    );
+                    let next_sum = builder.assign(
+                        "next_sum_value",
+                        TypeId::INT,
+                        Value::Prim {
+                            op: PrimOp::Add,
+                            ty: PrimTy::I32,
+                            args: vec![Operand::Var(sum), Operand::Var(counter)],
+                        },
+                    );
+                    builder.term(Term::Recur(vec![
+                        Operand::Var(next_counter),
+                        Operand::Var(next_sum),
+                    ]));
+                },
+            );
+            builder.term(Term::Yield(Some(Operand::Var(branch))));
+        },
+    );
+    builder.term(Term::Return(Some(Operand::Var(result))));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let output = compile_flow(&flow, &Options::default()).expect("emit Recur loop");
+    compile_and_run(
+        output,
+        "#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) { return emela_export_count_down_0(INT32_C(5)) == INT32_C(15) ? 0 : 1; }\n",
+    );
+}
+
+#[test]
 fn emits_and_runs_int32_primitive_operations() {
     let cases = [
         (
