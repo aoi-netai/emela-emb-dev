@@ -184,6 +184,128 @@ fn requires_fixed_heap_capacity_for_a_list_tail_alias() {
 }
 
 #[test]
+fn requires_fixed_heap_capacity_for_list_head() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "first_item");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.param("list", list_int);
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("reading a List head requires heap-backed List support");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_list_tail() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "list_tail");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        let tail = builder.assign("tail", list_int, Value::ListTail(list));
+        builder.term(Term::Return(Some(tail.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("reading a List tail requires reference management");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn reads_list_heads_and_keeps_shared_tails_alive() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let identity = {
+        let mut builder = FnBuilder::new(&core, "identity_list");
+        builder.set_ret(list_int);
+        let list = builder.param("list", list_int);
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let identity_id = flow.add(identity);
+    let sum = {
+        let mut builder = FnBuilder::new(&flow.core, "sum_first_two");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![
+                    Const::Int(10).into(),
+                    Const::Int(20).into(),
+                    Const::Int(30).into(),
+                ],
+                tail: None,
+            },
+        );
+        let alias = builder.assign(
+            "alias",
+            list_int,
+            Value::Call {
+                callee: Callee::Direct(identity_id),
+                args: vec![list.into()],
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        let first = builder.assign("first", TypeId::INT, Value::ListHead(list));
+        let tail = builder.assign("tail", list_int, Value::ListTail(alias));
+        let second = builder.assign("second", TypeId::INT, Value::ListHead(tail));
+        let result = builder.assign(
+            "sum",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: PrimTy::I32,
+                args: vec![first.into(), second.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    flow.add(sum);
+    let list_unit = flow.core.types.intern(Type::List(TypeId::UNIT));
+    let unit_head = {
+        let mut builder = FnBuilder::new(&flow.core, "unit_head");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.assign(
+            "list",
+            list_unit,
+            Value::List {
+                elems: vec![Const::Unit.into()],
+                tail: None,
+            },
+        );
+        builder.let_(None, Value::ListHead(list));
+        builder.term(Term::Return(Some(Const::Bool(true).into())));
+        builder.finish()
+    };
+    flow.add(unit_head);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit ListHead and ListTail operations");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_sum_first_two_1() != INT32_C(30)) return 2; return emela_export_unit_head_2() == INT32_C(1) ? 0 : 3; }\n",
+    );
+}
+
+#[test]
 fn allocates_and_releases_lists_in_the_fixed_heap() {
     let mut core = emela_core::Module::new();
     let list_int = core.types.intern(Type::List(TypeId::INT));

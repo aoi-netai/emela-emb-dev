@@ -1342,6 +1342,10 @@ fn function_needs_list_heap(function: &Function, types: &TypeTable) -> bool {
             value: Value::List { elems, tail: None },
             ..
         } => !elems.is_empty(),
+        Stmt::Let {
+            value: Value::ListHead(_) | Value::ListTail(_),
+            ..
+        } => true,
         _ => false,
     });
     let returns_managed_alias = matches!(types[function.ret], Type::List(_))
@@ -2436,6 +2440,10 @@ fn emit_statement(
     }
     let retain_result = match statement {
         Stmt::Let {
+            value: Value::ListTail(_),
+            ..
+        } => true,
+        Stmt::Let {
             value: Value::List {
                 elems,
                 tail: Some(_),
@@ -2623,6 +2631,12 @@ fn emit_statement_inner(
                             variable_name(*list)
                         ),
                     );
+                }
+                Value::ListHead(list) => {
+                    emit_list_head(layouts, function, *dst, *list, writer)?;
+                }
+                Value::ListTail(list) => {
+                    emit_list_tail(layouts, function, *dst, *list, writer)?;
                 }
                 Value::IsError { error, enum_id } => {
                     if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
@@ -3034,6 +3048,65 @@ fn emit_list_value(
         writer.assign(&temp, &node_temp);
     }
     writer.assign(&variable_name(dst), &temp);
+    Ok(())
+}
+
+fn emit_list_head(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    list: VarId,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[list].ty;
+    let Type::List(element_ty) = layouts.types[list_ty].clone() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListHead operand is not a List",
+        ));
+    };
+    let has_repr = layouts.type_repr(element_ty) != Repr::Void;
+    if has_repr != dst.is_some() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListHead destination does not match its element representation",
+        ));
+    }
+    if let Some(dst) = dst {
+        let node_type = layouts.list_node_name(list_ty);
+        writer.assign(
+            &variable_name(dst),
+            &format!("(({node_type} *){})->head", variable_name(list)),
+        );
+    }
+    Ok(())
+}
+
+fn emit_list_tail(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    list: VarId,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListTail has no List destination",
+        ));
+    };
+    let list_ty = function.vars[list].ty;
+    if !matches!(layouts.types[list_ty], Type::List(_)) || function.vars[dst].ty != list_ty {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListTail operand and destination types differ",
+        ));
+    }
+    let node_type = layouts.list_node_name(list_ty);
+    writer.assign(
+        &variable_name(dst),
+        &format!("(({node_type} *){})->tail", variable_name(list)),
+    );
     Ok(())
 }
 
