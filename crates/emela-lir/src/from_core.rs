@@ -60,7 +60,47 @@ impl std::fmt::Display for FromCoreError {
 /// Flow IR. The Flow IR module owns the Core module, with the types the conversion needed added
 /// to its table. The Core functions come first, in the same order and with the same names; the
 /// generated show and equality functions (`show$List[Int]`, `eq$Point`) follow.
-pub fn from_core(mut core: emela_core::Module) -> Result<Module, Vec<FromCoreError>> {
+pub fn from_core(core: emela_core::Module) -> Result<Module, Vec<FromCoreError>> {
+    from_core_with_deriver(core, DefaultDeriver)
+}
+
+/// Optional backend implementation for structural equality and showing.
+/// Returning `None` preserves the ordinary Flow derivation for the requested type.
+pub trait Deriver {
+    fn derive(
+        &mut self,
+        core: &mut emela_core::Module,
+        kind: DeriveKind,
+        ty: TypeId,
+        name: &str,
+    ) -> Option<Function>;
+
+    /// Override the automatic error-display eligibility test when the backend represents
+    /// recursive types without fully expanding their generic applications.
+    fn showable(&mut self, _core: &emela_core::Module, _ty: TypeId) -> Option<bool> {
+        None
+    }
+}
+
+struct DefaultDeriver;
+impl Deriver for DefaultDeriver {
+    fn derive(
+        &mut self,
+        _: &mut emela_core::Module,
+        _: DeriveKind,
+        _: TypeId,
+        _: &str,
+    ) -> Option<Function> {
+        None
+    }
+}
+
+/// Convert Core IR with an optional backend implementation of selected derived functions.
+/// The hook must preserve each generated function's argument and result types and semantics.
+pub fn from_core_with_deriver(
+    mut core: emela_core::Module,
+    deriver: impl Deriver + 'static,
+) -> Result<Module, Vec<FromCoreError>> {
     // The bodies are read while the module's type table grows, so they are kept apart meanwhile.
     let bodies: Vec<Expr> = core
         .functions
@@ -75,6 +115,7 @@ pub fn from_core(mut core: emela_core::Module) -> Result<Module, Vec<FromCoreErr
         derived: FxHashMap::default(),
         pending: Vec::new(),
         errors: Vec::new(),
+        deriver: Box::new(deriver),
     };
     for (_, f) in sh.core.functions.iter() {
         sh.fn_map.push(sh.functions.alloc(Function::new(&f.name)));
@@ -104,13 +145,20 @@ pub fn from_core(mut core: emela_core::Module) -> Result<Module, Vec<FromCoreErr
     error_enums.sort_by_key(|&id| ix(id));
     for id in error_enums {
         let ty = sh.core.enum_type(id, Vec::new());
-        if showable(&sh.core, ty, &mut Vec::new()) {
+        if sh
+            .deriver
+            .showable(&sh.core, ty)
+            .unwrap_or_else(|| showable(&sh.core, ty, &mut Vec::new()))
+        {
             error_shows.push((id, sh.derived(Derive::Show, ty)));
         }
     }
     while let Some((kind, ty, id)) = sh.pending.pop() {
         let name = sh.functions[id].name.clone();
-        let f = derive::build(&mut sh, kind, ty, &name);
+        let f = sh
+            .deriver
+            .derive(&mut sh.core, kind, ty, &name)
+            .unwrap_or_else(|| derive::build(&mut sh, kind, ty, &name));
         sh.functions[id] = f;
     }
     for ((_, f), body) in sh.core.functions.iter_mut().zip(bodies) {
@@ -191,12 +239,14 @@ const TMP: &str = "t";
 
 /// The functions generated per type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Derive {
+pub enum DeriveKind {
     /// `show$T(x: T) -> String`: spec 10.6 (a String inside is quoted).
     Show,
     /// `eq$T(a: T, b: T) -> Bool`: structural equality.
     Eq,
 }
+
+type Derive = DeriveKind;
 
 /// What all functions share while converting.
 struct Shared {
@@ -210,6 +260,7 @@ struct Shared {
     /// Generated functions declared but not built yet.
     pending: Vec<(Derive, TypeId, FnId)>,
     errors: Vec<FromCoreError>,
+    deriver: Box<dyn Deriver>,
 }
 
 impl Shared {

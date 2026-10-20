@@ -42,6 +42,74 @@ fn program(src: &str) -> Module {
     convert(&[("main.emel", src)], Roots::Exported)
 }
 
+#[test]
+fn optional_backend_deriver_preserves_default_and_can_replace_selected_structural_functions() {
+    use emela_core::{External, ExternalBinding, HostRef, TypeId};
+    use emela_lir::{DeriveKind, Deriver, FnBuilder, Function, from_core_with_deriver};
+    struct Backend(bool);
+    impl Deriver for Backend {
+        fn derive(
+            &mut self,
+            core: &mut emela_core::Module,
+            kind: DeriveKind,
+            ty: TypeId,
+            name: &str,
+        ) -> Option<Function> {
+            if !self.0 {
+                return None;
+            }
+            let mut b = FnBuilder::new(core, name);
+            b.param("a", ty);
+            let target = match kind {
+                DeriveKind::Eq => {
+                    b.param("b", ty);
+                    b.set_ret(TypeId::BOOL);
+                    "eq"
+                }
+                DeriveKind::Show => {
+                    b.set_ret(TypeId::STRING);
+                    "show"
+                }
+            };
+            Some(b.finish_external(External {
+                bindings: vec![ExternalBinding {
+                    target: "test-derive".into(),
+                    host: HostRef::Global(target.into()),
+                }],
+            }))
+        }
+    }
+    let core = try_lower(
+        &[(
+            "main.emel",
+            r##"
+enum Point { Point(Int) }
+pub fn show(n: Int) -> String {"#{Point(n)}"}
+pub fn equal(n: Int) -> Bool { Point(n) == Point(42) }
+"##,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let mono = emela_core::monomorphize(&core);
+    let ordinary = from_core(mono.clone()).unwrap();
+    let no_override = from_core_with_deriver(mono.clone(), Backend(false)).unwrap();
+    assert_eq!(emela_lir::dump(&ordinary), emela_lir::dump(&no_override));
+    let delegated = from_core_with_deriver(mono, Backend(true)).unwrap();
+    verify(&delegated).unwrap();
+    assert_eq!(
+        delegated
+            .functions
+            .iter()
+            .filter(|(_, f)| f
+                .external
+                .as_ref()
+                .is_some_and(|e| e.binding("test-derive").is_some()))
+            .count(),
+        2
+    );
+}
+
 /// The dumps of the functions whose names start with one of `prefixes`, in module order.
 fn parts(m: &Module, prefixes: &[&str]) -> String {
     m.functions

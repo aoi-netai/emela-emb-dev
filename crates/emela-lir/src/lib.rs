@@ -24,7 +24,7 @@ mod verify;
 
 pub use build::FnBuilder;
 pub use dump::{core_ty, dump, dump_function};
-pub use from_core::{FromCoreError, from_core};
+pub use from_core::{DeriveKind, Deriver, FromCoreError, from_core, from_core_with_deriver};
 pub use heap::{
     builtin_may_defect, convert_closures, explicit_defects, fiber_may_defect, insert_rc,
     may_suspend, state_machines, to_heap,
