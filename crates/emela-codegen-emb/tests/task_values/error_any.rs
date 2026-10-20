@@ -1,8 +1,11 @@
 use super::*;
 
+#[path = "../../examples/support/gc_anchor.rs"]
+mod gc_anchor;
+
 #[test]
 fn tagged_error_any_successes_and_any_fields_snapshot_strings_and_keep_list_owners() {
-    for field in [false, true] {
+    for (field, with_collector) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut core = emela_core::Module::new();
         let list = core.list(TypeId::STRING);
         let error = core.add_enum(EnumDef {
@@ -107,8 +110,36 @@ fn tagged_error_any_successes_and_any_fields_snapshot_strings_and_keep_list_owne
         );
         b.term(Term::Return(Some(total.into())));
         flow.add(b.finish());
+        if with_collector {
+            gc_anchor::add(&mut flow);
+        }
         let mut output = compile_flow(&flow, &options().with_heap_bytes(2048)).unwrap();
         managed::add_heap_check(&mut output);
+        assert_eq!(
+            output
+                .files
+                .iter()
+                .find(|file| file.path == "emela_embedded.c")
+                .unwrap()
+                .contents
+                .contains("static void emela_heap_collect_cycles("),
+            with_collector,
+        );
+        let source = &mut output
+            .files
+            .iter_mut()
+            .find(|file| file.path == "emela_embedded.c")
+            .unwrap()
+            .contents;
+        if with_collector {
+            *source = source.replace(
+                "static void emela_heap_collect_cycles(void) {",
+                "static unsigned test_collections_count;\nstatic void emela_heap_collect_cycles(void) {\n  ++test_collections_count;",
+            );
+            source.push_str("unsigned test_collections(void) { return test_collections_count; }\n");
+        } else {
+            source.push_str("unsigned test_collections(void) { return 0; }\n");
+        }
         let header = &output
             .files
             .iter()
@@ -155,6 +186,7 @@ fn tagged_error_any_successes_and_any_fields_snapshot_strings_and_keep_list_owne
 #include "emela_embedded.h"
 #include "emela_board.h"
 int test_heap_empty(void);
+unsigned test_collections(void);
 typedef struct {{ char bytes[3];void*parts; }} Context;
 static EmelaTask task;static int produced,released;
 uint32_t emela_board_event_lock(void) {{ return 0; }}
@@ -166,7 +198,10 @@ static void produce(void*p,{c_type}*out) {{ Context*c=p;produced++;
     .f0={{.data=c->bytes,.length=3}},.f1=c->parts
   }}}}}};{assign}
 }}
-static void release(void*p) {{ Context*c=p;released++;memset(c->bytes,'z',3);emela_embedded_release(c->parts); }}
+static void release(void*p) {{ Context*c=p;released++;memset(c->bytes,'z',3);
+  unsigned collections=test_collections();emela_embedded_release(c->parts);
+  if({gc}) assert(test_collections()>collections);
+}}
 int main(void) {{ for(int i=0;i<1000;i++) {{
   Context context={{.bytes={{'a','\0','b'}},.parts=emela_export_seed_2((EmelaString){{.data="42",.length=2}})}};
   {c_type} input={{0}},result={{0}};produced=released=0;
@@ -181,7 +216,8 @@ int main(void) {{ for(int i=0;i<1000;i++) {{
 }} }}
 "#,
                 ret = ret.index(),
-                error_ty = error_ty.index()
+                error_ty = error_ty.index(),
+                gc = usize::from(with_collector),
             ),
         );
     }
