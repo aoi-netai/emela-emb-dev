@@ -15,6 +15,7 @@ mod scope_abi;
 mod static_closure;
 mod static_handler;
 mod type_expansion;
+mod type_normalize;
 mod unicode_grapheme;
 mod writer;
 
@@ -205,8 +206,13 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 
 /// Verifies and emits a Flow IR module without running Heap IR passes.
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
-    verify_flow(flow)?;
-    emit::emit(flow, options)
+    if flow.stage != emela_lir::Stage::Flow {
+        verify_flow(flow)?;
+    }
+    let mut normalized = flow.clone();
+    type_normalize::normalize(&mut normalized)?;
+    verify_flow(&normalized)?;
+    emit::emit(&normalized, options)
 }
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
