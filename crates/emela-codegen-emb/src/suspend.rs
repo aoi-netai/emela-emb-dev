@@ -51,7 +51,8 @@ pub(super) fn validate(
                     } => {}
                     Value::Fiber {
                         op:
-                            emela_core::FiberOp::Attempt { .. }
+                            emela_core::FiberOp::CauseKind { .. }
+                            | emela_core::FiberOp::Attempt { .. }
                             | emela_core::FiberOp::Complete
                             | emela_core::FiberOp::Poll
                             | emela_core::FiberOp::Join
@@ -1462,6 +1463,9 @@ pub(super) fn emit_fiber_value(
     args: &[Operand],
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if matches!(op, emela_core::FiberOp::CauseKind { .. }) {
+        return cause::emit_kind(function, dst, args, writer);
+    }
     if matches!(op, emela_core::FiberOp::Attempt { .. }) {
         return cause::emit_attempt_call(layouts, function, dst, args, writer);
     }

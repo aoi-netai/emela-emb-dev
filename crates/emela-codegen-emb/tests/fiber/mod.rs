@@ -2,6 +2,7 @@ use super::*;
 
 mod attempt;
 mod await_;
+mod cause;
 mod failure;
 mod interrupt;
 mod join;

@@ -16,6 +16,12 @@ pub(super) fn emit_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     if !layouts.has_causes {
         return;
     }
+    writer.begin_block("static inline emela_cause *emela_cause_checked(void *value)");
+    writer.line(&format!("if (value == NULL || emela_heap_header(value)->kind != UINT32_C({})) emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));", layouts.cause_kind()));
+    writer.line("emela_cause *cause = (emela_cause *)value;");
+    writer.line("if (cause->kind > 2) emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));");
+    writer.line("return cause;");
+    writer.end_block();
     writer.begin_block("static inline void *emela_cause_interrupt(void)");
     writer.line(&format!(
         "emela_cause *cause = (emela_cause *)emela_heap_allocate(sizeof(*cause), UINT32_C({}));",
@@ -212,6 +218,25 @@ pub(super) fn emit_attempt_call(
         ));
         layouts.emit_release_value_expression(ex, "discarded_attempt", writer);
         writer.end_block();
+    }
+    Ok(())
+}
+
+pub(super) fn emit_kind(
+    function: &Function,
+    dst: Option<VarId>,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let [cause] = args else {
+        return Err(invalid_flow_ir(&function.name, "Cause.kind arity"));
+    };
+    let cause = operand_expression(cause).map_err(|why| unsupported(&function.name, why))?;
+    let value = format!("(int32_t)emela_cause_checked({cause})->kind");
+    if let Some(dst) = dst {
+        writer.assign(&variable_name(dst), &value);
+    } else {
+        writer.line(&format!("(void)({value});"));
     }
     Ok(())
 }
