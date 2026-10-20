@@ -247,3 +247,50 @@ fn discarded_error_projection_accepts_a_caught_error_descriptor() {
 fn discarded_coerce_without_a_target_type_is_a_noop() {
     run_discarded("coerce", 0);
 }
+
+#[test]
+fn discarded_integer_division_and_remainder_still_raise_defects_in_sync_and_suspend_code() {
+    for suspends in [false, true] {
+        for ty in [PrimTy::I32, PrimTy::I64] {
+            for op in [PrimOp::Div, PrimOp::Rem] {
+                let core = emela_core::Module::new();
+                let mut b = FnBuilder::new(&core, "probe");
+                b.set_exported();
+                if suspends {
+                    b.set_suspends();
+                }
+                let args = if ty == PrimTy::I32 {
+                    vec![Const::Int(7).into(), Const::Int(0).into()]
+                } else {
+                    vec![Const::Int64(7).into(), Const::Int64(0).into()]
+                };
+                b.let_(None, Value::Prim { op, ty, args });
+                b.term(Term::Return(None));
+                let function = b.finish();
+                let mut flow = Module::new(core);
+                flow.add(function);
+                emela_lir::verify(&flow).unwrap();
+                let output = compile_flow(&flow, &Options::default()).unwrap();
+                let call = if suspends {
+                    "(void)emela_export_probe_0_start(); while(emela_scheduler_run(1)) {}"
+                } else {
+                    "emela_export_probe_0();"
+                };
+                compile_and_run(
+                    output,
+                    &format!(
+                        r#"
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+uint32_t emela_board_event_lock(void) {{ return 0; }}
+void emela_board_event_unlock(uint32_t n) {{ (void)n; }}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *s,uint16_t n) {{ (void)s; (void)n; exit(k==EMELA_DEFECT_DIVISION_BY_ZERO?0:2); }}
+int main(void) {{ {call} return 1; }}
+"#
+                    ),
+                );
+            }
+        }
+    }
+}

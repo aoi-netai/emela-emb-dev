@@ -4668,6 +4668,8 @@ fn emit_statement_inner(
                         .map_err(|variant| unsupported(&function.name, variant))?;
                     if let Some(dst) = dst {
                         writer.assign(&variable_name(*dst), &expression);
+                    } else {
+                        writer.line(&format!("(void)({expression});"));
                     }
                 }
                 Value::Builtin { op, args } => {
