@@ -23,10 +23,27 @@ static EmelaAny emela_deferred_recycle(emela_deferred *deferred) {
   deferred->slot = EMELA_SLOT_NONE;
   return value;
 }
+static void emela_deferred_wake_waiters(emela_deferred_slot *slot) {
+  while (slot->head != NULL) {
+    emela_deferred_waiter *waiter = slot->head;
+    slot->head = waiter->next;
+    if (slot->head != NULL) slot->head->previous = NULL;
+    else slot->tail = NULL;
+    waiter->previous = waiter->next = NULL;
+    waiter->linked = 0;
+    emela_fiber *fiber = emela_fiber_get(waiter->owner);
+    if (!fiber->cancelled) {
+      if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
+      emela_ready_push(fiber);
+    }
+  }
+}
 static void emela_deferred_scope_end(emela_scope *scope) {
   while (scope->deferreds != NULL) {
     emela_deferred *deferred = scope->deferreds;
     emela_heap_retain(deferred);
+    /* Remaining operation continuations check the ended scope before reading a reused slot. */
+    emela_deferred_wake_waiters(emela_deferred_slot_get(deferred));
     EmelaAny value = emela_deferred_recycle(deferred);
     if (value.tag == 0) emela_heap_release(value.payload.any_box);
     emela_heap_release(deferred);
@@ -65,7 +82,13 @@ static inline emela_deferred_slot *emela_deferred_prepare_complete(emela_deferre
   return slot->full ? NULL : slot;
 }
 static inline void emela_deferred_publish(emela_deferred_slot *slot) {
-  if (slot->head != NULL) emela_scheduler_invalid(); /* Waiters are connected by DeferredAwait. */
+  emela_deferred_wake_waiters(slot);
+}
+static inline emela_deferred_slot *emela_deferred_get_await(emela_deferred *deferred) {
+  if (deferred == NULL) emela_scheduler_invalid();
+  if (deferred->scope->ended)
+    emela_board_defect(EMELA_DEFECT_PANIC, "deferred was awaited after its scope ended", UINT16_C(42));
+  return emela_deferred_slot_get(deferred);
 }
 static inline emela_deferred_slot *emela_deferred_get_poll(emela_deferred *deferred) {
   if (deferred == NULL) emela_scheduler_invalid();

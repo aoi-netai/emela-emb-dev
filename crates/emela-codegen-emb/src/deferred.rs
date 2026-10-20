@@ -41,6 +41,9 @@ pub(super) fn emit_runtime(
     layouts: &TypeLayouts<'_>,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if !layouts.deferred_await_types.is_empty() {
+        writer.line(include_str!("runtime/deferred_await.c"));
+    }
     for &ty in &layouts.deferred_read_types {
         if layouts.type_repr(ty) == Repr::Void {
             continue;
@@ -55,6 +58,21 @@ pub(super) fn emit_runtime(
         let vars: Vec<_> = f.vars.iter().map(|(id, _)| id).collect();
         emit_coerce(layouts, &f, Some(vars[1]), vars[0], writer)?;
         writer.line("return emela_v_1;");
+        writer.end_block();
+    }
+    for &ty in &layouts.deferred_await_types {
+        if layouts.type_repr(ty) == Repr::Void {
+            continue;
+        }
+        writer.begin_block(&format!(
+            "static void emela_deferred_deliver_{}(EmelaAny value, void *result)",
+            ty.index()
+        ));
+        writer.line(&format!(
+            "*({} *)result = emela_deferred_read_{}(value);",
+            layouts.c_type(ty),
+            ty.index()
+        ));
         writer.end_block();
     }
     for &ty in &layouts.deferred_complete_types {
@@ -119,6 +137,35 @@ pub(super) fn emit_runtime(
         writer.line(&format!("return {some};"));
         writer.end_block();
     }
+    Ok(())
+}
+
+pub(super) fn emit_await(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let [handle] = args else {
+        return Err(invalid_flow_ir(&function.name, "DeferredAwait arity"));
+    };
+    let ty = value_type(layouts, function, handle)?;
+    if dst.is_some_and(|v| function.vars[v].ty != ty) {
+        return Err(invalid_flow_ir(&function.name, "DeferredAwait result type"));
+    }
+    let result = dst
+        .map(|v| format!("&{}", variable_name(v)))
+        .unwrap_or_else(|| "NULL".into());
+    let deliver = if layouts.type_repr(ty) == Repr::Void {
+        "NULL".into()
+    } else {
+        format!("emela_deferred_deliver_{}", ty.index())
+    };
+    let handle = operand_expression(handle).map_err(|why| unsupported(&function.name, why))?;
+    writer.line(&format!(
+        "emela_deferred_wait(fiber, {handle}, {result}, {deliver});"
+    ));
     Ok(())
 }
 

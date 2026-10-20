@@ -64,7 +64,10 @@ pub(super) fn validate(
                         ..
                     } => {}
                     Value::Fiber {
-                        op: emela_core::FiberOp::Complete | emela_core::FiberOp::Poll,
+                        op:
+                            emela_core::FiberOp::Complete
+                            | emela_core::FiberOp::Poll
+                            | emela_core::FiberOp::DeferredAwait,
                         on_fail: None,
                         ..
                     } => {}
@@ -600,6 +603,21 @@ pub(super) fn emit_function(
             Node::Statement(id, next) => {
                 let statement = &function.stmts[*id];
                 if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Fiber {
+                            op: emela_core::FiberOp::DeferredAwait,
+                            args,
+                            on_fail: None,
+                        },
+                    ..
+                } = statement
+                {
+                    prepare_result(layouts, function, *dst, writer);
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    deferred::emit_await(layouts, function, *dst, args, writer)?;
+                    writer.line("return;");
+                } else if let Stmt::Let {
                     dst,
                     value:
                         Value::Fiber {

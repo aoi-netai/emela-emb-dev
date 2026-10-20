@@ -8317,6 +8317,7 @@ struct TypeLayouts<'a> {
     deferred_complete_types: Vec<TypeId>,
     deferred_read_types: Vec<TypeId>,
     deferred_poll_types: Vec<TypeId>,
+    deferred_await_types: Vec<TypeId>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8399,6 +8400,7 @@ impl<'a> TypeLayouts<'a> {
             deferred_complete_types: Vec::new(),
             deferred_read_types: Vec::new(),
             deferred_poll_types: Vec::new(),
+            deferred_await_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8437,6 +8439,20 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::DeferredAwait,
+                        args,
+                        ..
+                    } => {
+                        let ty = deferred::value_type(&layouts, function, &args[0])?;
+                        layouts.add_any_box_type(ty);
+                        if !layouts.deferred_read_types.contains(&ty) {
+                            layouts.deferred_read_types.push(ty);
+                        }
+                        if !layouts.deferred_await_types.contains(&ty) {
+                            layouts.deferred_await_types.push(ty);
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Poll,
                         args,

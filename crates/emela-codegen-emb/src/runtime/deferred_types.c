@@ -1,4 +1,14 @@
 typedef struct emela_deferred_waiter emela_deferred_waiter;
+struct emela_deferred_waiter {
+  emela_frame base;
+  emela_deferred *deferred;
+  EmelaFiber owner;
+  emela_deferred_waiter *previous;
+  emela_deferred_waiter *next;
+  void *result;
+  void (*deliver)(EmelaAny, void *);
+  int linked;
+};
 typedef struct {
   EmelaAny value;
   emela_deferred_waiter *head;
