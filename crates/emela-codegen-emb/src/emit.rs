@@ -43,6 +43,27 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
     let layouts = TypeLayouts::new(flow, &emitted_functions, &closures)?;
+    for (_, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted_functions.contains(id) && f.suspends)
+    {
+        for ty in function
+            .vars
+            .iter()
+            .map(|(_, var)| var.ty)
+            .chain(std::iter::once(function.ret))
+        {
+            if !matches!(layouts.types[ty], Type::String | Type::Any)
+                && type_contains_string(&layouts, ty, &mut HashSet::new())
+            {
+                return Err(unsupported(
+                    &function.name,
+                    "suspend frame containing a tuple, enum, List, or Cell with a borrowed String",
+                ));
+            }
+        }
+    }
     for (environment_index, environment) in closures.environments.iter().enumerate() {
         let parent = &flow.functions[environment.parent];
         for capture in &environment.captures {
@@ -378,14 +399,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if heap_required {
         layouts.emit_list_node_declarations(&mut source);
         crate::heap::emit_runtime(&mut source, options.heap_bytes());
-        if closures.environments.iter().any(|environment| {
-            environment
-                .captures
-                .iter()
-                .any(|capture| matches!(layouts.types[capture.ty], Type::String))
-        }) {
-            emit_closure_string_copy_helper(&layouts, &mut source);
-        }
+        emit_closure_string_copy_helper(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
         layouts.emit_heap_destroy_switch(&closures.environments, &mut source);
         layouts.emit_public_release_helpers(&mut source);
@@ -611,6 +625,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 function,
                 &names[&id],
                 &names,
+                &string_output_functions,
                 options,
                 &mut source,
             )?;
@@ -928,6 +943,11 @@ fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Write
     writer.ret(Some("copy"));
     writer.end_block();
     writer.blank();
+    writer.begin_block("static inline EmelaString emela_heap_own_string(EmelaString value)");
+    writer.line("if (value.owner == NULL) return emela_heap_copy_string(value);");
+    writer.line("emela_heap_retain(value.owner);");
+    writer.line("return value;");
+    writer.end_block();
 }
 
 fn emit_closure_capture_loads(
@@ -2607,6 +2627,12 @@ fn function_needs_heap(
     let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
     statement_needs_heap
+        || (function.suspends
+            && (matches!(layouts.types[function.ret], Type::String)
+                || function
+                    .vars
+                    .iter()
+                    .any(|(_, var)| matches!(layouts.types[var.ty], Type::String))))
         || returns_managed_alias
         || local_managed_value
         || returns_managed_aggregate
@@ -7399,6 +7425,7 @@ fn functions_with_string_output(
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id)
                 || function.constant
+                || function.suspends
                 || function.external.is_some()
                 || !matches!(layouts.types[function.ret], Type::String)
                 || result.contains(&id)

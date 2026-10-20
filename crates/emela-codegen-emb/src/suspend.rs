@@ -26,15 +26,16 @@ pub(super) fn validate(
                 "failing or const suspend function (phase 7 follow-up)",
             ));
         }
-        if !scalar(&flow.core.types, function.ret)
-            || function
-                .vars
-                .iter()
-                .any(|(_, var)| !scalar(&flow.core.types, var.ty))
+        if function.external.is_some()
+            && (!scalar(&flow.core.types, function.ret)
+                || function
+                    .params
+                    .iter()
+                    .any(|p| !scalar(&flow.core.types, function.vars[*p].ty)))
         {
             return Err(unsupported(
                 &function.name,
-                "non-scalar values in a suspension frame (phase 7 follow-up)",
+                "non-scalar external task ABI (phase 7 follow-up)",
             ));
         }
         for (_, stmt) in function.stmts.iter() {
@@ -51,33 +52,18 @@ pub(super) fn validate(
                         on_fail: None,
                         ..
                     } => {
-                        let target = &flow.functions[*target];
-                        if !scalar(&flow.core.types, target.ret)
-                            || target
-                                .params
-                                .iter()
-                                .any(|p| !scalar(&flow.core.types, target.vars[*p].ty))
-                        {
-                            return Err(unsupported(
-                                &function.name,
-                                "suspend caller passing non-scalar values (phase 7 follow-up)",
-                            ));
-                        }
+                        let _ = target;
                     }
-                    Value::Const(_) | Value::Prim { .. } | Value::Builtin { .. } => {}
-                    Value::Runtime {
-                        op: RuntimeOp::DebugPrint,
-                        ..
-                    } => {}
-                    _ => {
+                    Value::Fiber { .. } => {
                         return Err(unsupported(
                             &function.name,
                             &format!(
-                                "{} in a scalar suspend function (phase 7 follow-up)",
+                                "{} in a suspend function (phase 7 follow-up)",
                                 value_name(value)
                             ),
                         ));
                     }
+                    _ => {}
                 }
             }
         }
@@ -385,6 +371,7 @@ pub(super) fn emit_function(
     function: &Function,
     name: &str,
     names: &HashMap<FnId, String>,
+    output_calls: &HashSet<FnId>,
     options: &Options,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
@@ -400,6 +387,13 @@ pub(super) fn emit_function(
         .body
         .ok_or_else(|| invalid_flow_ir(&function.name, "suspend function without body"))?;
     let entry = graph.sequence(function, body, None, usize::MAX)?;
+    let strings = StringBufferPlan::new(
+        layouts,
+        function,
+        options.string_capacity(),
+        output_calls,
+        false,
+    );
     let has_result = layouts.type_repr(function.ret) != Repr::Void;
     writer.line(&format!("typedef struct {name}_frame {{"));
     writer.line("  emela_frame base;");
@@ -412,6 +406,25 @@ pub(super) fn emit_function(
             layouts.c_type(var.ty),
             u32::from(id.into_raw())
         ));
+        if layouts.is_managed_value(var.ty) {
+            writer.line(&format!("  int owned_{};", u32::from(id.into_raw())));
+        }
+        if let Type::Cell(content) = layouts.types[var.ty].clone()
+            && !layouts.is_closure_cell_capture(function, id)
+        {
+            let storage_type = if layouts.type_repr(content) == Repr::Void {
+                "uint8_t".to_owned()
+            } else {
+                layouts.c_type(content)
+            };
+            writer.line(&format!("  {storage_type} {};", cell_storage_name(id)));
+            if layouts.is_managed_value(content) {
+                writer.line(&format!("  int32_t {};", cell_initialized_name(id)));
+            }
+        }
+    }
+    for (name, capacity) in &strings.declarations {
+        writer.line(&format!("  char {name}[{capacity}];"));
     }
     writer.line(&format!("}} {name}_frame;"));
     writer.line(&format!("_Static_assert(sizeof({name}_frame) <= EMELA_FRAME_BYTES, \"increase Options::with_frame_bytes for {name}\");"));
@@ -419,23 +432,34 @@ pub(super) fn emit_function(
         "static void {name}_step(emela_fiber *fiber, emela_frame *base)"
     ));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
-    // Aliases let scalar expression emission address frame fields directly without stack copies.
+    // Aliases let the shared emitter address persistent fields without stack copies.
     for (id, _) in function.vars.iter() {
         writer.line(&format!(
             "#define {} (frame->local_{})",
             variable_name(id),
             u32::from(id.into_raw())
         ));
+        let ty = function.vars[id].ty;
+        if layouts.is_managed_value(ty) {
+            writer.line(&format!(
+                "#define {} (frame->owned_{})",
+                owned_variable_name(id),
+                u32::from(id.into_raw())
+            ));
+        }
+        if matches!(layouts.types[ty], Type::Cell(_))
+            && !layouts.is_closure_cell_capture(function, id)
+        {
+            for field in [cell_storage_name(id), cell_initialized_name(id)] {
+                writer.line(&format!("#define {field} (frame->{field})"));
+            }
+        }
+    }
+    for (name, _) in &strings.declarations {
+        writer.line(&format!("#define {name} (frame->{name})"));
     }
     writer.begin_block("for (;;)");
     writer.begin_block("switch (frame->base.pc)");
-    let strings = StringBufferPlan::new(
-        layouts,
-        function,
-        options.string_capacity(),
-        &HashSet::new(),
-        false,
-    );
     let mut next_temp = 0;
     for (index, node) in graph.nodes.iter().enumerate() {
         writer.begin_block(&format!("case {index}:"));
@@ -455,6 +479,18 @@ pub(super) fn emit_function(
                 } = statement
                 {
                     let target_fn = &flow.functions[*target];
+                    if target_fn.suspends
+                        && let Some(dst) = dst
+                    {
+                        emit_release_if_owned(layouts, function, *dst, writer);
+                        if layouts.is_managed_value(function.vars[*dst].ty) {
+                            writer.assign(
+                                &variable_name(*dst),
+                                &format!("({}){{0}}", layouts.c_type(function.vars[*dst].ty)),
+                            );
+                            writer.assign(&owned_variable_name(*dst), "INT32_C(1)");
+                        }
+                    }
                     if target_fn.external.is_some() && target_fn.suspends {
                         let kind = match layouts.types[target_fn.ret] {
                             Type::Int | Type::Bool => "INT",
@@ -542,6 +578,7 @@ pub(super) fn emit_function(
                         &mut next_temp,
                         &mut 0,
                     )?;
+                    freeze_statement_result(layouts, function, statement, writer);
                     writer.line(&format!("frame->base.pc = {next}; continue;"));
                 }
             }
@@ -556,9 +593,19 @@ pub(super) fn emit_function(
                                 .map_err(|why| unsupported(&function.name, why))?,
                         ),
                     );
+                    retain_frame_value(
+                        layouts,
+                        function.vars[*dst].ty,
+                        &format!("next_{index}"),
+                        writer,
+                    );
                 }
                 for (index, (dst, _)) in values.iter().enumerate() {
+                    emit_release_if_owned(layouts, function, *dst, writer);
                     writer.assign(&variable_name(*dst), &format!("next_{index}"));
+                    if layouts.is_managed_value(function.vars[*dst].ty) {
+                        writer.assign(&owned_variable_name(*dst), "INT32_C(1)");
+                    }
                 }
                 writer.line(&format!("frame->base.pc = {next}; continue;"));
             }
@@ -597,11 +644,13 @@ pub(super) fn emit_function(
             }
             Node::Return(value) => {
                 if let Some(value) = value {
-                    writer.line(&format!(
-                        "if (frame->result != NULL) *frame->result = {};",
-                        operand_expression(value)
-                            .map_err(|why| unsupported(&function.name, why))?
-                    ));
+                    writer.begin_block("if (frame->result != NULL)");
+                    let expression = operand_expression(value)
+                        .map_err(|why| unsupported(&function.name, why))?;
+                    writer.decl(&layouts.c_type(function.ret), "returned", Some(&expression));
+                    retain_frame_value(layouts, function.ret, "returned", writer);
+                    writer.line(&format!("*frame->result = returned;"));
+                    writer.end_block();
                 }
                 writer.line("emela_frame_return(fiber); return;");
             }
@@ -622,8 +671,22 @@ pub(super) fn emit_function(
     writer.end_block();
     writer.end_block();
     writer.end_block();
+    writer.begin_block(&format!("static void {name}_drop(emela_frame *base)"));
+    writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+    writer.line("(void)frame;");
+    for (id, _) in function.vars.iter() {
+        emit_release_if_owned(layouts, function, id, writer);
+    }
+    emit_cell_cleanup(layouts, function, writer);
+    writer.end_block();
     for (id, _) in function.vars.iter() {
         writer.line(&format!("#undef {}", variable_name(id)));
+        writer.line(&format!("#undef {}", owned_variable_name(id)));
+        writer.line(&format!("#undef {}", cell_storage_name(id)));
+        writer.line(&format!("#undef {}", cell_initialized_name(id)));
+    }
+    for (name, _) in &strings.declarations {
+        writer.line(&format!("#undef {name}"));
     }
     writer.begin_block(&push_signature(layouts, function, name));
     writer.line(&format!(
@@ -632,6 +695,7 @@ pub(super) fn emit_function(
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
     writer.line(&format!("*frame = ({name}_frame){{.base = *base}};"));
     writer.line(&format!("frame->base.pc = {entry};"));
+    writer.line(&format!("frame->base.drop = {name}_drop;"));
     if has_result {
         writer.line("frame->result = result;");
     }
@@ -641,6 +705,14 @@ pub(super) fn emit_function(
             u32::from(id.into_raw()),
             variable_name(id)
         ));
+        let field = format!("frame->local_{}", u32::from(id.into_raw()));
+        retain_frame_value(layouts, function.vars[id].ty, &field, writer);
+        if layouts.is_managed_value(function.vars[id].ty) {
+            writer.line(&format!(
+                "frame->owned_{} = INT32_C(1);",
+                u32::from(id.into_raw())
+            ));
+        }
     }
     writer.end_block();
     if function.exported {
@@ -658,4 +730,28 @@ pub(super) fn emit_function(
         writer.end_block();
     }
     Ok(())
+}
+
+fn retain_frame_value(layouts: &TypeLayouts<'_>, ty: TypeId, value: &str, writer: &mut Writer) {
+    if matches!(layouts.types[ty], Type::String) {
+        writer.line(&format!("{value} = emela_heap_own_string({value});"));
+    } else if layouts.is_managed_value(ty) {
+        layouts.emit_retain_value_expression(ty, value, writer);
+    }
+}
+
+fn freeze_statement_result(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    statement: &Stmt,
+    writer: &mut Writer,
+) {
+    if let Some(dst) = statement.dst()
+        && matches!(layouts.types[function.vars[dst].ty], Type::String)
+    {
+        let value = variable_name(dst);
+        writer.begin_block(&format!("if ({value}.owner == NULL)"));
+        writer.assign(&value, &format!("emela_heap_copy_string({value})"));
+        writer.end_block();
+    }
 }

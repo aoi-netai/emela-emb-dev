@@ -6,6 +6,7 @@ typedef void (*emela_step)(emela_fiber *, emela_frame *);
 struct emela_frame {
   emela_frame *parent;
   emela_step step;
+  void (*drop)(emela_frame *);
   uint32_t pc;
   uint32_t slot;
 };
@@ -92,6 +93,7 @@ static emela_frame *emela_frame_push(emela_fiber *fiber, size_t size, emela_step
 static void emela_frame_return(emela_fiber *fiber) {
   emela_frame *frame = fiber->top;
   if (frame == NULL) emela_scheduler_invalid();
+  if (frame->drop != NULL) frame->drop(frame);
   fiber->top = frame->parent;
   uint32_t slot = frame->slot;
   emela_frames[slot].next = emela_frame_free;

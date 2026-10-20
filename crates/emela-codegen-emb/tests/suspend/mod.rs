@@ -3,6 +3,84 @@ use super::*;
 mod suspend_flow;
 
 #[test]
+fn suspend_frames_own_string_inputs_and_return_owned_results_after_reuse() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut b = FnBuilder::new(&flow.core, "echo");
+    b.set_suspends().set_ret(TypeId::STRING);
+    let text = b.param("text", TypeId::STRING);
+    b.term(Term::Return(Some(text.into())));
+    let echo = flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "text");
+    b.set_exported().set_suspends().set_ret(TypeId::STRING);
+    let text = b.param("text", TypeId::STRING);
+    let n = b.param("n", TypeId::INT);
+    let digits = b.assign(
+        "digits",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::IntToString,
+            args: vec![n.into()],
+        },
+    );
+    let joined = b.assign(
+        "joined",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![text.into(), digits.into()],
+        },
+    );
+    let result = b.assign(
+        "result",
+        TypeId::STRING,
+        Value::Call {
+            callee: Callee::Direct(echo),
+            args: vec![joined.into()],
+            suspends: true,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(Some(result.into())));
+    flow.add(b.finish());
+    let output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(2048)
+            .with_frame_bytes(512),
+    )
+    .unwrap();
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {
+  (void)k; (void)m; (void)n; abort();
+}
+int main(void) {
+  for (int i = 0; i < 1000; i++) {
+    char input[] = "value=";
+    EmelaString result = {0};
+    EmelaFiber f = emela_export_text_1_start((EmelaString){input, 6, NULL}, 42, &result);
+    memset(input, 'x', 6);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    emela_fiber_release(f);
+    assert(result.owner && result.length == 8 && memcmp(result.data, "value=42", 8) == 0);
+    emela_embedded_release_string(&result);
+    f = emela_export_text_1_start((EmelaString){"discard=", 8, NULL}, 1, NULL);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(2));
+    emela_fiber_release(f);
+  }
+  return 0;
+}
+"#,
+    );
+}
+
+#[test]
 fn suspend_recursion_resumes_into_caller_storage_and_reuses_frames() {
     let options = Options::default()
         .with_fiber_capacity(2)
