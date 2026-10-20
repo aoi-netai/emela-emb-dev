@@ -356,8 +356,9 @@ impl Bridges {
                     self.emit_fields(a, b, 0, layouts, writer)?;
                     writer.ret(Some("result"));
                 }
-                (Type::Enum(_, _), Type::Enum(_, _)) => {
-                    if layouts.c_type(a) == "int32_t" {
+                (Type::Enum(id, _), Type::Enum(_, _)) => {
+                    if !layouts.enum_layout_required(id) {
+                        layouts.emit_own_value_in_place(b, "value", writer);
                         writer.ret(Some("value"));
                     } else {
                         writer.decl(&layouts.c_type(b), "result", Some("{0}"));

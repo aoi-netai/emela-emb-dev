@@ -751,12 +751,18 @@ const CHOICE = { dbg("CHOICE")
  value } } else { fn(value) { mark(2)
  value } }
 }
+const CAPTURE = { dbg("CAPTURE")
+ text = Int.to_string(tick())
+ fn(value) { fn() { (value, text) } }
+}
 fn ints(xs: List[Int], o: Option[Int]) -> Int { List.length(xs) + (o match {Some(n)->n
  None->0}) }
 fn texts(xs: List[String], o: Option[String]) -> Int { List.length(xs) + (o match {Some(s)->String.byte_size(s)
  None->0}) }
-pub fn integer() -> Int { ints(EMPTY,MISSING) + IDENTITY(20) + APPLY(fn(){21}) + CHOICE(1) }
-pub fn text() -> Int { texts(EMPTY,MISSING) + String.byte_size(IDENTITY("42")) + String.byte_size(APPLY(fn(){"42"})) + String.byte_size(CHOICE("")) + 38 }
+pub fn integer() -> Int { (value,text)=CAPTURE(IDENTITY(20))()
+ ints(EMPTY,MISSING) + value + APPLY(fn(){21}) + CHOICE(1) + String.byte_size(text) - 1 }
+pub fn text() -> Int { (value,text)=CAPTURE(IDENTITY("42"))()
+ texts(EMPTY,MISSING) + String.byte_size(value) + String.byte_size(APPLY(fn(){"42"})) + String.byte_size(CHOICE("")) + String.byte_size(text) + 37 }
 "#;
     let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
     let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
@@ -766,6 +772,120 @@ pub fn text() -> Int { texts(EMPTY,MISSING) + String.byte_size(IDENTITY("42")) +
     output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
 unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;n+=!b->is_free;p+=b->size;}return n;}
 "#);
+    for choice in [1, 2] {
+        compile_and_run(
+            output.clone(),
+            &format!(
+                r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+unsigned test_live(void);
+static unsigned initializations,ticks,marks;
+int32_t tick(void){{++ticks;return {choice};}}
+void mark(int32_t n){{assert(n=={choice});++marks;}}
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
+int main(void){{assert({integer}()==42);assert({text}()==42);unsigned baseline=test_live();assert(initializations==6&&ticks==2);for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({text}()==42);assert(test_live()==baseline);}}assert(initializations==6&&ticks==2&&marks==2002);return 0;}}
+"#
+            ),
+        );
+    }
+}
+
+#[test]
+fn polymorphic_const_callable_families_preserve_async_failure_evidence_and_selected_origins() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            include_str!("../../examples/support/const_polymorphic.emel"),
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    let mut output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(32768)
+            .with_frame_bytes(1024),
+    )
+    .unwrap();
+    let names = [
+        "integer",
+        "text",
+        "evidence",
+        "failing",
+        "asynchronous",
+        "choice_integer",
+        "choice_text",
+        "enum_integer",
+        "enum_text",
+        "caught",
+    ]
+    .map(|n| export(&output, n));
+    output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
+unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;n+=!b->is_free;p+=b->size;}return n;}
+"#);
+    let [
+        integer,
+        text,
+        evidence,
+        failing,
+        asynchronous,
+        choice_integer,
+        choice_text,
+        enum_integer,
+        enum_text,
+        caught,
+    ] = names;
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+unsigned test_live(void);
+static unsigned initializations;
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{fprintf(stderr,"%u: %.*s\n",k,n,s);abort();}}
+int main(void){{unsigned baseline=0;for(unsigned i=0;i<1001;i++){{
+ assert({integer}()==42);assert({text}()==42);assert({evidence}()==42);assert({failing}(0)==42);
+ assert({choice_integer}()==42);assert({choice_text}()==42);assert({enum_integer}()==42);assert({enum_text}()==42);assert({caught}()==42);
+ int32_t result=-1;EmelaFiber f={asynchronous}(&result);while(!emela_fiber_done(f))assert(emela_scheduler_run(1));assert(result==42);emela_fiber_release(f);
+ if(i==0)baseline=test_live();else assert(test_live()==baseline);
+ }}assert(initializations==9);return 0;}}
+"#
+        ),
+    );
+}
+
+#[test]
+fn polymorphic_const_opaque_handles_forward_one_pointer_abi_and_one_initialization() {
+    let source = r#"
+@external
+type Handle[A]
+@external(c,"host_handle")
+fn handle[A]() -> Handle[A] use {}
+const HANDLE = handle()
+fn number(h: Handle[Int]) -> Int { 42 }
+fn text(h: Handle[String]) -> Int { 42 }
+pub fn work() -> Int { number(HANDLE) + text(HANDLE) - 42 }
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    let options = Options::default().with_external_adapter(
+        "host_handle",
+        emela_codegen_emb::ExternalAdapter::new(
+            "board_handle",
+            emela_codegen_emb::ExternalResult::Borrowed,
+        ),
+    );
+    let output = compile(&core, &options).unwrap();
+    let work = export(&output, "work");
     compile_and_run(
         output,
         &format!(
@@ -774,14 +894,33 @@ unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(un
 #include <stdlib.h>
 #include "emela_embedded.h"
 #include "emela_board.h"
-unsigned test_live(void);
-static unsigned initializations,ticks,marks;
-int32_t tick(void){{return ++ticks;}}
-void mark(int32_t n){{assert(n==1);++marks;}}
-void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+static unsigned calls;static int token;
+void *board_handle(void){{++calls;return &token;}}
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
-int main(void){{assert({integer}()==42);assert({text}()==42);unsigned baseline=test_live();assert(initializations==5&&ticks==1);for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({text}()==42);assert(test_live()==baseline);}}assert(initializations==5&&ticks==1&&marks==2002);return 0;}}
+int main(void){{for(unsigned i=0;i<1000;i++)assert({work}()==42);assert(calls==1);return 0;}}
 "#
+        ),
+    );
+}
+
+#[test]
+fn polymorphic_empty_list_const_keeps_the_heapless_representation() {
+    let source = "const EMPTY=[]\nfn ints(xs:List[Int])->Int{if List.is_empty(xs) {0}else{1}}\nfn texts(xs:List[String])->Int{if List.is_empty(xs) {0}else{1}}\npub fn work()->Int{ints(EMPTY)+texts(EMPTY)+42}\n";
+    let output = emit_source(source, 0);
+    let work = export(&output, "work");
+    assert!(
+        !output
+            .files
+            .iter()
+            .find(|f| f.path == "emela_embedded.c")
+            .unwrap()
+            .contents
+            .contains("emela_heap_storage")
+    );
+    compile_and_run(
+        output,
+        &format!(
+            "{BOARD}\nint main(void){{for(unsigned i=0;i<1000;i++)if({work}()!=42)return 1;return 0;}}\n"
         ),
     );
 }

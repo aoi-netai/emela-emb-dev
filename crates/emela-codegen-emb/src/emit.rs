@@ -133,6 +133,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         })
         .map(|(_, f)| f.name.clone())
         .collect();
+    let empty_list_functions = crate::const_runtime::empty_list_functions(flow);
     let heap_functions: HashSet<_> = flow
         .functions
         .iter()
@@ -144,6 +145,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                     &layouts,
                     &closures,
                     &string_output_functions,
+                    &empty_list_functions,
                 ) || external::needs_heap(
                     function,
                     external_bindings.get(&id),
@@ -375,14 +377,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = !runtime_consts.is_empty() || has_scheduler
+    let needs_defect_hook = !runtime_consts.is_empty()
+        || has_scheduler
         || external_bindings
             .iter()
             .any(|(&id, binding)| binding.adapted && flow.functions[id].fails)
         || external_bindings
             .values()
             .any(|binding| binding.result == crate::ExternalResult::StringBuffer)
-
         || heap_required
         || has_prim(
             flow,
@@ -2462,9 +2464,24 @@ fn function_needs_heap(
     layouts: &TypeLayouts<'_>,
     closures: &crate::static_closure::ClosureLowering,
     string_output_functions: &HashSet<FnId>,
+    empty_list_functions: &HashSet<FnId>,
 ) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
+        if let Stmt::Let {
+            dst: Some(dst),
+            value:
+                Value::Call {
+                    callee: Callee::Direct(target),
+                    ..
+                },
+            ..
+        } = statement
+        {
+            if empty_list_functions.contains(target) {
+                known_empty.insert(*dst);
+            }
+        }
         let Stmt::Let {
             dst: Some(dst),
             value: Value::List { elems, tail },
