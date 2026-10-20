@@ -30,7 +30,10 @@ static void emela_runtime_heap_sample(void) {
 void emela_runtime_cancel(EmelaFiber handle) { emela_fiber_get(handle)->cancelled = 1; }
 void emela_runtime_sample(void) {
   unsigned free_frames = 0, fibers = 0;
-  for (uint32_t i = emela_frame_free; i != EMELA_SLOT_NONE && free_frames <= EMELA_FRAME_CAPACITY; i = emela_frames[i].next) free_frames++;
+  for (uint32_t i = emela_frame_free; i != EMELA_SLOT_NONE;) {
+    if (i >= EMELA_FRAME_CAPACITY || ++free_frames > EMELA_FRAME_CAPACITY) { emela_runtime_frames_peak = UINT32_MAX; return; }
+    i = emela_frames[i].next;
+  }
   for (unsigned i = 0; i < EMELA_FIBER_CAPACITY; i++) if (emela_fibers[i].state != EMELA_FIBER_FREE) fibers++;
   unsigned frames = EMELA_FRAME_CAPACITY - free_frames;
   if (frames > emela_runtime_frames_peak) emela_runtime_frames_peak = frames;

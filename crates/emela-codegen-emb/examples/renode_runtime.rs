@@ -115,6 +115,8 @@ fn main() {
 #define emela_runtime_work_start {work}
 #define emela_runtime_cleanup_start {cleanup}
 #define emela_runtime_parts {parts}
+#define emela_runtime_float_roundtrip {float_roundtrip}
+#define emela_runtime_unicode_signature {unicode_signature}
 static inline int emela_runtime_anchor(void) {{ {anchor} }}
 static inline void emela_runtime_error(EmelaError *error, char *message, void *parts) {{
   *error = (EmelaError){{.tag = {error_tag}, .payload.e{tag} = ({ty}){{.tag = 0,
@@ -132,6 +134,8 @@ int emela_runtime_pools_empty(void);
         work = public_name("work"),
         cleanup = public_name("cancel_cleanup"),
         parts = public_name("parts"),
+        float_roundtrip = public_name("float_roundtrip"),
+        unicode_signature = public_name("unicode_signature"),
         error_tag = tag + 1
     );
     let c = &mut output

@@ -24,3 +24,9 @@ pub fn cancel_cleanup() -> Int use Async {
     result
   }
 }
+pub fn float_roundtrip(value: Float) -> Float {
+  Float.parse(Float.to_string(value)) escape { ParseError(input) -> 123.0 }
+}
+pub fn unicode_signature(value: String) -> Int {
+  String.length(value) * 100 + List.length(String.chars(value))
+}
