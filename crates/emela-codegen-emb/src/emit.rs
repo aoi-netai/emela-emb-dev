@@ -496,6 +496,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if layouts.deferred_pool {
         deferred::emit_runtime(&layouts, &mut source)?;
     }
+    if has_runtime_string_comparison(flow, &emitted_functions) {
+        emit_string_comparison_helper(&mut source);
+    }
     let has_int_shift = has_builtin(
         flow,
         &emitted_functions,
@@ -7101,8 +7104,51 @@ fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<Stri
         PrimTy::I32 => primitive_i32_expression(op, args.as_slice()),
         PrimTy::I64 => primitive_i64_expression(op, args.as_slice()),
         PrimTy::F64 => primitive_f64_expression(op, args.as_slice()),
-        _ => Err("unsupported Value::Prim type"),
+        PrimTy::String => primitive_string_expression(op, args.as_slice()),
     }
+}
+
+fn primitive_string_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {
+    let [left, right] = args else {
+        return Err("String comparison with an invalid arity");
+    };
+    let comparison = match op {
+        PrimOp::Eq => "==",
+        PrimOp::Ne => "!=",
+        PrimOp::Lt => "<",
+        PrimOp::Le => "<=",
+        PrimOp::Gt => ">",
+        PrimOp::Ge => ">=",
+        _ => return Err("unsupported String primitive"),
+    };
+    comparison_expression(
+        &format!("emela_emb_string_compare(&({left}), &({right}))"),
+        comparison,
+        "INT32_C(0)",
+    )
+}
+
+fn emit_string_comparison_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
+    // Valid UTF-8 has the same lexicographic byte order as Unicode scalar values.
+    writer.line("uint32_t length = left->length < right->length ? left->length : right->length;");
+    writer.begin_block("for (uint32_t i = 0; i < length; i++)");
+    writer.line("uint8_t a = (uint8_t)left->data[i], b = (uint8_t)right->data[i];");
+    writer.line("if (a < b) return -INT32_C(1);");
+    writer.line("if (a > b) return INT32_C(1);");
+    writer.end_block();
+    writer.line("return left->length < right->length ? -INT32_C(1) : left->length > right->length ? INT32_C(1) : INT32_C(0);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn has_runtime_string_comparison(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        if !emitted.contains(&id) || function.constant { return false; }
+        let statements = runtime_statements(function);
+        function.stmts.iter().any(|(id, statement)| statements.contains(&id) && matches!(statement,
+            Stmt::Let { value: Value::Prim { ty: PrimTy::String, op, .. }, .. } if op.is_comparison()))
+    })
 }
 
 fn primitive_i32_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {

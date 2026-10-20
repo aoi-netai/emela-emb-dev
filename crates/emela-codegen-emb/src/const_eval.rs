@@ -462,6 +462,10 @@ fn evaluate_primitive(op: PrimOp, ty: PrimTy, args: Vec<Const>) -> Result<Const,
             match op {
                 PrimOp::Eq => Ok(Const::Bool(lhs == rhs)),
                 PrimOp::Ne => Ok(Const::Bool(lhs != rhs)),
+                PrimOp::Lt => Ok(Const::Bool(lhs < rhs)),
+                PrimOp::Le => Ok(Const::Bool(lhs <= rhs)),
+                PrimOp::Gt => Ok(Const::Bool(lhs > rhs)),
+                PrimOp::Ge => Ok(Const::Bool(lhs >= rhs)),
                 _ => Err("unsupported String primitive".to_owned()),
             }
         }

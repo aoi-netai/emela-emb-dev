@@ -13,6 +13,7 @@ mod external_scalar;
 mod fiber;
 mod owned;
 mod string_append;
+mod string_comparison;
 mod suspend;
 mod task_values;
 
