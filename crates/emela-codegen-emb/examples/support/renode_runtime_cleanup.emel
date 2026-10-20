@@ -1,0 +1,26 @@
+@external(c, "runtime_mark")
+fn runtime_mark(n: Int) -> () use {}
+effect RuntimeResource { fn read() -> Int }
+handler RuntimeResourceImpl implements RuntimeResource {
+  fn read() { 1 }
+  release {
+    runtime_mark(2)
+    (use Wait).get(3)
+    runtime_mark(3)
+  }
+}
+pub fn cancel_cleanup() -> Int use Async {
+  with Waiting {
+    result = Fiber.scope(fn() {
+      Fiber.fork(fn() {
+        with RuntimeResourceImpl {
+          runtime_mark(1)
+          (use Wait).get(1)
+        }
+      })
+      (use Wait).get(2)
+    })
+    runtime_mark(4)
+    result
+  }
+}
