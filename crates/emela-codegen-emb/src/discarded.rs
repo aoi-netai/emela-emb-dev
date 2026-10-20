@@ -51,6 +51,7 @@ fn result_type(
     value: &Value,
 ) -> Option<TypeId> {
     match value {
+        Value::EvLookup { effect, .. } => Some(core.handler(*effect)),
         Value::EvExtend { .. } => Some(TypeId::EVIDENCE),
         Value::Handler { effect, .. } => Some(core.handler(*effect)),
         Value::List { elems, tail } => {

@@ -153,18 +153,41 @@ fn handler_is_retired(function: &Function, handler: VarId) -> bool {
 
 fn erase_unused_static_values(function: &mut Function) {
     loop {
+        let handlers: HashMap<_, _> = function
+            .stmts
+            .iter()
+            .filter_map(|(_, statement)| match statement {
+                Stmt::Let {
+                    dst: Some(dst),
+                    value: Value::Handler { effect, ops, .. },
+                    ..
+                } => Some((*dst, (*effect, ops.clone()))),
+                _ => None,
+            })
+            .collect();
         let unused: Vec<_> = function
             .stmts
             .iter()
             .filter_map(|(statement_id, statement)| {
                 let Stmt::Let {
                     dst: Some(dst),
-                    value: Value::Handler { .. } | Value::EvLookup { .. } | Value::EvExtend { .. },
+                    value,
                     ..
                 } = statement
                 else {
                     return None;
                 };
+                let removable = match value {
+                    Value::Handler { .. } | Value::EvExtend { .. } => true,
+                    Value::EvLookup { ev, effect } => {
+                        resolve_evidence(function, &handlers, *ev, *effect, &mut HashSet::new())
+                            .is_some()
+                    }
+                    _ => false,
+                };
+                if !removable {
+                    return None;
+                }
                 (!function_uses(function, *dst)).then_some(statement_id)
             })
             .collect();
