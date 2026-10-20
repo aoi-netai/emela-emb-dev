@@ -6,6 +6,7 @@
 mod const_eval;
 mod const_origins;
 mod const_runtime;
+mod derived;
 mod discarded;
 mod emit;
 mod fiber;
@@ -295,7 +296,8 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect());
     }
 
-    let mut flow = emela_lir::from_core(mono).map_err(|errors| {
+    let deriver = derived::BackendDeriver::new(&mono);
+    let mut flow = emela_lir::from_core_with_deriver(mono, deriver).map_err(|errors| {
         errors
             .into_iter()
             .map(|error| Error {

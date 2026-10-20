@@ -91,6 +91,21 @@ pub(super) fn resolve(
         .iter()
         .filter(|(id, f)| emitted.contains(id) && f.external.is_some() && !f.suspends)
     {
+        if let Some(kind) = crate::derived::kind(f) {
+            bindings.insert(
+                id,
+                Binding {
+                    symbol: function_name(id, f),
+                    result: if kind == emela_lir::DeriveKind::Show {
+                        ExternalResult::StringBuffer
+                    } else {
+                        ExternalResult::Owned
+                    },
+                    adapted: true,
+                },
+            );
+            continue;
+        }
         if crate::fiber::is_infallible_cause_fail(f) {
             bindings.insert(
                 id,
@@ -305,6 +320,7 @@ fn boundary_types(flow: &emela_lir::Module, bindings: &Bindings) -> Vec<TypeId> 
     let mut types: Vec<_> = bindings
         .iter()
         .filter(|(_, b)| b.adapted)
+        .filter(|(id, _)| crate::derived::kind(&flow.functions[**id]).is_none())
         .flat_map(|(&id, _)| {
             let f = &flow.functions[id];
             f.params
@@ -329,7 +345,7 @@ pub(super) fn emit_header(
     ids.sort_by_key(|id| u32::from(id.into_raw()));
     for id in ids {
         let b = &bindings[&id];
-        if !b.adapted {
+        if !b.adapted || crate::derived::kind(&flow.functions[id]).is_some() {
             continue;
         }
         writer.line(

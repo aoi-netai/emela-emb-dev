@@ -1,5 +1,7 @@
 use super::*;
 
+mod derived;
+
 fn export_name(output: &Output, stem: &str) -> String {
     let header = &output
         .files
@@ -382,6 +384,67 @@ uint32_t emela_board_event_lock(void){{return 0;}}void emela_board_event_unlock(
 void board_wait_start(EmelaTask task,int32_t n){{assert(n==42);pending=task;}}
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
 int main(void){{for(unsigned i=0;i<1000;i++){{int32_t result=-1;EmelaFiber f={work}(i%2,&result);while(emela_scheduler_run(1)){{}}assert(result==-1);memset(scratch,'x',2);assert(emela_task_complete_int(pending,0));while(!emela_fiber_done(f))assert(emela_scheduler_run(1));assert(result==42);emela_fiber_release(f);assert(test_heap_empty());}}assert(initializations==1);return 0;}}
+"#
+        ),
+    );
+}
+
+#[test]
+fn growing_recursive_equality_and_show_use_only_materialized_payload_kinds() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r##"
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub fn show(n: Int) -> String {
+  value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42, 7])) }
+  "#{value}"
+}
+pub fn same(n: Int) -> Bool {
+  a: Grow[Int] = Next(End([42, 7]))
+  b: Grow[Int] = if n == 0 { Next(End([42, 7])) } else { Next(End([42, 8])) }
+  a == b
+}
+pub fn discard(n: Int) -> Int {
+  value: Grow[Int] = Next(End([n]))
+  "#{value}"
+  n
+}
+"##,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).expect("finite derivation requests");
+    assert!(flow.functions.len() < 32);
+    assert!(flow.functions.iter().any(|(_, f)| {
+        f.external
+            .as_ref()
+            .is_some_and(|e| e.binding("emela-emb-derived").is_some())
+    }));
+    let mut output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(2048)
+            .with_string_capacity(64),
+    )
+    .unwrap();
+    let show = export_name(&output, "show");
+    let same = export_name(&output, "same");
+    let discard = export_name(&output, "discard");
+    add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *s,uint16_t n) {{(void)k;(void)s;(void)n;abort();}}
+int main(void) {{for(int i=0;i<1000;i++) {{char text[64];EmelaString a={show}(0,text,sizeof text);assert(a.length==7 && memcmp(a.data,"End(42)",7)==0);assert(test_heap_empty());EmelaString b={show}(1,text,sizeof text);assert(b.length==18 && memcmp(b.data,"Next(End([42, 7]))",18)==0);assert(test_heap_empty());assert({same}(0));assert(!{same}(1));assert({discard}(i)==i);assert(test_heap_empty());}}}}
 "#
         ),
     );

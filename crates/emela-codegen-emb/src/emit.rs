@@ -18,6 +18,8 @@ mod child;
 mod const_bridge;
 #[path = "deferred.rs"]
 mod deferred;
+#[path = "derive_runtime.rs"]
+mod derive_runtime;
 #[path = "error.rs"]
 mod error_runtime;
 #[path = "external.rs"]
@@ -94,7 +96,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }
     }
     let external_bindings = external::resolve(flow, &emitted_functions, &mut layouts, options)?;
-
+    let derived_plan = derive_runtime::Plan::new(flow, &emitted_functions, &layouts)?;
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
@@ -707,10 +709,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_string_append(flow, &emitted_functions) {
         emit_string_append_helper(&mut source);
     }
-    if has_runtime_string_show(flow, &emitted_functions) {
+    if has_runtime_string_show(flow, &emitted_functions) || derived_plan.show {
         emit_string_show_helpers(&mut source);
     }
-    if has_runtime_int_string(flow, &emitted_functions) {
+    if has_runtime_int_string(flow, &emitted_functions) || derived_plan.show {
         emit_int_to_string_helper(&mut source);
     }
     if has_runtime_int_parse(flow, &emitted_functions) {
@@ -719,12 +721,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_float_parse(flow, &emitted_functions) {
         crate::float_parse::emit_runtime(&mut source);
     }
-    if has_runtime_float_to_string(flow, &emitted_functions) {
+    if has_runtime_float_to_string(flow, &emitted_functions) || derived_plan.needs_float(&layouts) {
         crate::float_to_string::emit_runtime(&mut source);
     }
     if !string_output_functions.is_empty() {
         emit_string_output_helper(&mut source);
     }
+    derived_plan.emit(&layouts, &mut source);
 
     for (id, function) in flow
         .functions
@@ -837,6 +840,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                         function.name
                     ),
                 }]);
+            }
+            if crate::derived::kind(function).is_some() {
+                derive_runtime::emit_adapter(&layouts, function, &names[&id], &mut source);
+                continue;
             }
             external::emit_adapter(
                 &layouts,
