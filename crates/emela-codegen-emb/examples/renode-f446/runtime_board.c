@@ -189,6 +189,8 @@ static void sanity(void) {
 }
 int main(void) {
   board_init(); sanity();
+  /* Keep zero-valued scalar-mode observations in the linked metric surface. */
+  emela_runtime_success_produced = emela_runtime_success_released = 0;
   int32_t preempt_result = -1;
   expected_request = 1; preempt_next_request = 1;
   EmelaFiber preempt_fiber = emela_runtime_work_start(1, &preempt_result);
