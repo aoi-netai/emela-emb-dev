@@ -195,7 +195,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             function_name(id, function)
         };
         public_names.insert(id, name.clone());
-        let implementation_name = if function.exported && function.fails {
+        let implementation_name = if function.exported && function.fails && !function.suspends {
             format!("{name}_impl")
         } else {
             name
@@ -383,7 +383,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             if !emitted_functions.contains(&id) {
                 return false;
             }
-            if function.exported && function.fails {
+            if function.exported && function.fails && !function.suspends {
                 return true;
             }
             !function.constant
@@ -907,7 +907,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     for (id, function) in flow
         .functions
         .iter()
-        .filter(|(id, f)| emitted_functions.contains(id) && f.exported && f.fails)
+        .filter(|(id, f)| emitted_functions.contains(id) && f.exported && f.fails && !f.suspends)
     {
         emit_fallible_wrapper(
             &layouts,
@@ -2147,8 +2147,7 @@ fn validate_function_value_types(
         let Type::Fn(function_type) = layouts.types[ty].clone() else {
             unreachable!("function type registry contains a non-function")
         };
-        if (function_type.suspends && function_type.fails)
-            || function_type.sets.is_some()
+        if function_type.sets.is_some()
             || !function_value_abi_type_supported(layouts, function_type.ret, &mut HashSet::new())
             || function_type.params.iter().any(|&parameter| {
                 !function_value_abi_type_supported(layouts, parameter, &mut HashSet::new())
@@ -2198,8 +2197,7 @@ fn function_value_abi_type_supported(
             if !seen.insert(ty) {
                 return false;
             }
-            let supported = !(function_type.suspends && function_type.fails)
-                && function_type.sets.is_none()
+            let supported = function_type.sets.is_none()
                 && function_type
                     .params
                     .iter()
@@ -8709,7 +8707,13 @@ impl<'a> TypeLayouts<'a> {
                 .core
                 .enums
                 .iter()
-                .filter_map(|(id, def)| def.error.then_some(id))
+                .filter_map(|(id, def)| {
+                    (def.error
+                        && states.keys().any(
+                            |ty| matches!(layouts.types[*ty], Type::Enum(used, _) if used == id),
+                        ))
+                    .then_some(id)
+                })
                 .collect();
             for id in error_ids {
                 let ty = layouts.types.enum_type(id, Vec::new());
@@ -8749,7 +8753,14 @@ impl<'a> TypeLayouts<'a> {
             if layouts.is_managed_value(*ty) {
                 return Err(unsupported(
                     "EmelaError",
-                    "error enum values containing a heap reference",
+                    &format!(
+                        "error enum `{}` values containing a heap reference",
+                        layouts.core.enums[match layouts.types[*ty] {
+                            Type::Enum(id, _) => id,
+                            _ => unreachable!(),
+                        }]
+                        .name
+                    ),
                 ));
             }
         }

@@ -20,10 +20,10 @@ pub(super) fn validate(
             continue;
         }
         enabled = true;
-        if function.fails || function.constant {
+        if function.constant || (function.fails && function.external.is_some()) {
             return Err(unsupported(
                 &function.name,
-                "failing or const suspend function (phase 7 follow-up)",
+                "const suspend function or failing external task ABI",
             ));
         }
         if function.external.is_some()
@@ -41,14 +41,6 @@ pub(super) fn validate(
         for (_, stmt) in function.stmts.iter() {
             if let Stmt::Let { value, .. } = stmt {
                 match value {
-                    Value::Call {
-                        on_fail: Some(_), ..
-                    } => {
-                        return Err(unsupported(
-                            &function.name,
-                            "failure edge in a suspend frame (phase 7 follow-up)",
-                        ));
-                    }
                     Value::Fiber {
                         op:
                             emela_core::FiberOp::Scope { fails: false }
@@ -245,6 +237,9 @@ fn parameters(layouts: &TypeLayouts<'_>, function: &Function) -> Vec<String> {
             )
         })
         .collect::<Vec<_>>();
+    if function.fails {
+        params.push("EmelaError *emela_error_out".into());
+    }
     if layouts.type_repr(function.ret) != Repr::Void {
         params.push(format!("{} *result", layouts.c_type(function.ret)));
     }
@@ -256,7 +251,11 @@ pub(super) fn start_signature(
     function: &Function,
     name: &str,
 ) -> String {
-    let params = parameters(layouts, function);
+    let mut params = parameters(layouts, function);
+    if function.fails {
+        params
+            .remove(params.len() - 1 - usize::from(layouts.type_repr(function.ret) != Repr::Void));
+    }
     format!(
         "EmelaFiber {name}_start({})",
         if params.is_empty() {
@@ -301,6 +300,10 @@ enum Node {
     Branch(Operand, usize, usize),
     Switch(SwitchOn, Vec<(CaseKey, usize)>, Option<usize>),
     Return(Option<Operand>),
+    SetError(Operand, usize),
+    CheckError { normal: usize, failed: usize },
+    Catch(VarId, usize),
+    Fail,
     Defect(Operand),
     Unreachable,
     Protect { cleanup: usize, body: usize },
@@ -343,6 +346,38 @@ impl Graph {
         }
     }
 
+    fn failure(&mut self, function: &Function, edge: OnFail) -> Result<usize, Vec<Error>> {
+        match edge {
+            OnFail::Propagate => {
+                if !function.fails {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "suspend failure without a channel",
+                    ));
+                }
+                let fail = self.add(Node::Fail);
+                Ok(self.leave(0, fail))
+            }
+            OnFail::Break(label) => {
+                let &(dst, next, depth) = self.blocks.get(&label).ok_or_else(|| {
+                    invalid_flow_ir(&function.name, "suspend failure without enclosing Block")
+                })?;
+                let dst = dst.ok_or_else(|| {
+                    invalid_flow_ir(
+                        &function.name,
+                        "suspend failure Block without error destination",
+                    )
+                })?;
+                let catch = self.add(Node::Catch(dst, next));
+                Ok(self.leave(depth, catch))
+            }
+            OnFail::Handle { .. } => Err(invalid_flow_ir(
+                &function.name,
+                "Heap IR failure edge in Flow IR",
+            )),
+        }
+    }
+
     fn sequence(
         &mut self,
         function: &Function,
@@ -358,6 +393,10 @@ impl Graph {
                 self.leave(0, returned)
             }
             Term::Defect(value) => self.add(Node::Defect(value.clone())),
+            Term::Fail(error) => {
+                let fail = self.failure(function, OnFail::Propagate)?;
+                self.add(Node::SetError(error.clone(), fail))
+            }
             Term::Unreachable => self.add(Node::Unreachable),
             Term::Break { label, value } => {
                 let &(dst, next, depth) = self.blocks.get(label).ok_or_else(|| {
@@ -389,7 +428,22 @@ impl Graph {
         };
         for &id in sequence.stmts.iter().rev() {
             entry = match &function.stmts[id] {
-                Stmt::Let { .. } => self.add(Node::Statement(id, entry)),
+                Stmt::Let { value, .. } => {
+                    let edge = match value {
+                        Value::Call { on_fail, .. } | Value::Fiber { on_fail, .. } => *on_fail,
+                        _ => None,
+                    };
+                    let next = if let Some(edge) = edge {
+                        let failed = self.failure(function, edge)?;
+                        self.add(Node::CheckError {
+                            normal: entry,
+                            failed,
+                        })
+                    } else {
+                        entry
+                    };
+                    self.add(Node::Statement(id, next))
+                }
                 Stmt::If {
                     dst,
                     cond,
@@ -500,6 +554,17 @@ pub(super) fn emit_function(
         writer.end_block();
         return Ok(());
     }
+    // A synthetic error destination reuses the synchronous call emitter's validated ABI.
+    let mut lowered = function.clone();
+    let call_error_var = lowered.vars.alloc(emela_lir::VarData {
+        hint: "call_error".into(),
+        ty: TypeId::ANY,
+        repr: Repr::Ref,
+    });
+    let call_error_label = lowered.labels.alloc(emela_lir::LabelData {
+        hint: "call_error".into(),
+    });
+    let function = &lowered;
     let mut graph = Graph {
         nodes: vec![],
         blocks: HashMap::new(),
@@ -547,12 +612,20 @@ pub(super) fn emit_function(
                     operands.push(op);
                 }
             }
-            Node::Branch(op, _, _) | Node::Defect(op) => operands.push(op),
+            Node::Branch(op, _, _) | Node::Defect(op) | Node::SetError(op, _) => operands.push(op),
             Node::Switch(SwitchOn::Tag(v) | SwitchOn::Lit(v), ..) => {
                 active.insert(*v);
             }
             Node::Return(value) => operands.extend(value),
-            Node::Unreachable | Node::Protect { .. } | Node::Leave { .. } | Node::CleanupEnd => {}
+            Node::Catch(dst, _) => {
+                active.insert(*dst);
+            }
+            Node::Unreachable
+            | Node::Protect { .. }
+            | Node::Leave { .. }
+            | Node::CleanupEnd
+            | Node::Fail
+            | Node::CheckError { .. } => {}
         }
         for op in operands {
             if let Operand::Var(v) = op {
@@ -578,6 +651,18 @@ pub(super) fn emit_function(
     let has_result = layouts.type_repr(function.ret) != Repr::Void;
     writer.line(&format!("typedef struct {name}_frame {{"));
     writer.line("  emela_frame base;");
+    let has_failure = function.fails
+        || graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n, Node::CheckError { .. }));
+    if has_failure {
+        writer.line("  EmelaError call_error;");
+        writer.line("  EmelaError pending_error;");
+    }
+    if function.fails {
+        writer.line("  EmelaError *error_out;");
+    }
     if graph.max_depth != 0 {
         writer.line(&format!("  emela_protection guards[{}];", graph.max_depth));
         writer.line("  uint32_t guard_depth;");
@@ -627,6 +712,12 @@ pub(super) fn emit_function(
         "static void {name}_step(emela_fiber *fiber, emela_frame *base)"
     ));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+    if has_failure {
+        writer.line(&format!(
+            "#define {} (frame->call_error)",
+            variable_name(call_error_var)
+        ));
+    }
     // Aliases let the shared emitter address persistent fields without stack copies.
     for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         writer.line(&format!(
@@ -664,6 +755,22 @@ pub(super) fn emit_function(
         match node {
             Node::Statement(id, next) => {
                 let statement = &function.stmts[*id];
+                let failing = matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Call {
+                            on_fail: Some(_),
+                            ..
+                        } | Value::Fiber {
+                            on_fail: Some(_),
+                            ..
+                        },
+                        ..
+                    }
+                );
+                if failing {
+                    writer.line("frame->call_error = (EmelaError){0};");
+                }
                 if let Stmt::Let {
                     dst,
                     value:
@@ -777,7 +884,7 @@ pub(super) fn emit_function(
                         Value::Call {
                             callee: Callee::Indirect(callee),
                             args,
-                            on_fail: None,
+                            on_fail,
                             ..
                         },
                     ..
@@ -799,6 +906,9 @@ pub(super) fn emit_function(
                             .collect::<Result<Vec<_>, _>>()
                             .map_err(|why| unsupported(&function.name, why))?,
                     );
+                    if on_fail.is_some() {
+                        arguments.push("&frame->call_error".into());
+                    }
                     if layouts.type_repr(ft.ret) != Repr::Void {
                         arguments.push(
                             dst.map(|dst| format!("&{}", variable_name(dst)))
@@ -814,6 +924,7 @@ pub(super) fn emit_function(
                             callee: Callee::Direct(target),
                             args,
                             suspends: true,
+                            on_fail,
                             ..
                         },
                     ..
@@ -840,6 +951,9 @@ pub(super) fn emit_function(
                                 .collect::<Result<Vec<_>, _>>()
                                 .map_err(|why| unsupported(&function.name, why))?,
                         );
+                        if on_fail.is_some() {
+                            arguments.push("&frame->call_error".into());
+                        }
                         if layouts.type_repr(target_fn.ret) != Repr::Void {
                             arguments.push(
                                 dst.map(|dst| format!("&{}", variable_name(dst)))
@@ -861,38 +975,38 @@ pub(super) fn emit_function(
                         {
                             *suspends = false;
                         }
-                        emit_statement(
+                        emit_sync_statement(
                             layouts,
                             function,
                             &statement,
+                            failing,
+                            call_error_var,
+                            call_error_label,
+                            index,
+                            *next,
                             writer,
                             names,
                             &strings,
-                            &mut vec![],
-                            &mut vec![],
-                            &mut vec![],
                             &mut next_temp,
-                            &mut 0,
                         )?;
                         writer.line(&format!("frame->base.pc = {next};"));
                     }
                     writer.line("return;");
                 } else {
-                    emit_statement(
+                    emit_sync_statement(
                         layouts,
                         function,
                         statement,
+                        failing,
+                        call_error_var,
+                        call_error_label,
+                        index,
+                        *next,
                         writer,
                         names,
                         &strings,
-                        &mut vec![],
-                        &mut vec![],
-                        &mut vec![],
                         &mut next_temp,
-                        &mut 0,
                     )?;
-                    freeze_statement_result(layouts, function, statement, writer);
-                    writer.line(&format!("frame->base.pc = {next}; continue;"));
                 }
             }
             Node::Assign(values, next) => {
@@ -1002,6 +1116,32 @@ pub(super) fn emit_function(
                 }
                 writer.line("emela_frame_return(fiber); return;");
             }
+            Node::SetError(error, next) => {
+                emit_error_assignment(layouts, function, error, "frame->pending_error", writer)?;
+                writer.line(&format!("base->pc = {next}; continue;"));
+            }
+            Node::CheckError { normal, failed } => {
+                writer.line(&format!("if (frame->call_error.tag == 0) base->pc = {normal}; else {{ frame->pending_error = frame->call_error; base->pc = {failed}; }} continue;"));
+            }
+            Node::Catch(dst, next) => {
+                if !matches!(layouts.types[function.vars[*dst].ty], Type::Any) {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "failure Block destination is not Any",
+                    ));
+                }
+                emit_release_if_owned(layouts, function, *dst, writer);
+                writer.assign(&variable_name(*dst), "frame->pending_error");
+                if layouts.is_managed_value(function.vars[*dst].ty) {
+                    writer.assign(&owned_variable_name(*dst), "1");
+                }
+                writer.line(&format!("base->pc = {next}; continue;"));
+            }
+            Node::Fail => {
+                writer.line("if (frame->error_out == NULL) emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, \"unhandled error\", UINT16_C(15));");
+                writer.line("*frame->error_out = frame->pending_error;");
+                writer.line("emela_frame_return(fiber); return;");
+            }
             Node::Defect(value) => {
                 emit_return(
                     layouts,
@@ -1052,6 +1192,9 @@ pub(super) fn emit_function(
     for (name, _) in &strings.declarations {
         writer.line(&format!("#undef {name}"));
     }
+    if has_failure {
+        writer.line(&format!("#undef {}", variable_name(call_error_var)));
+    }
     writer.begin_block(&push_signature(layouts, function, name, environment));
     writer.line(&format!(
         "emela_frame *base = emela_frame_push(fiber, sizeof({name}_frame), {name}_step);"
@@ -1066,6 +1209,10 @@ pub(super) fn emit_function(
     }
     if has_result {
         writer.line("frame->result = result;");
+    }
+    if function.fails {
+        writer.line("if (emela_error_out != NULL) *emela_error_out = (EmelaError){0};");
+        writer.line("frame->error_out = emela_error_out;");
     }
     for &id in &function.params {
         writer.line(&format!(
@@ -1109,6 +1256,9 @@ pub(super) fn emit_function(
         writer.line("emela_fiber *fiber = emela_fiber_get(handle);");
         let mut args = vec!["fiber".to_owned()];
         args.extend(function.params.iter().map(|id| variable_name(*id)));
+        if function.fails {
+            args.push("NULL".into());
+        }
         if has_result {
             args.push("result".to_owned());
         }
@@ -1442,5 +1592,64 @@ pub(super) fn emit_sync_operation(
     writer.line("if (sync_caller->state != EMELA_FIBER_DONE) emela_scheduler_invalid();");
     writer.line("emela_fiber_release(sync_handle);");
     writer.end_block();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_sync_statement(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    statement: &Stmt,
+    failing: bool,
+    error: VarId,
+    label: LabelId,
+    index: usize,
+    next: usize,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    strings: &StringBufferPlan,
+    next_temp: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let mut statement = statement.clone();
+    if let Stmt::Let {
+        value: Value::Call { on_fail, .. },
+        ..
+    } = &mut statement
+    {
+        if on_fail.is_some() {
+            *on_fail = Some(OnFail::Break(label));
+        }
+    }
+    let mut blocks = if failing {
+        vec![BlockTarget {
+            label,
+            dst: Some(error),
+            exit: format!("emela_call_failed_{index}"),
+            used: false,
+            protect_depth: 0,
+        }]
+    } else {
+        vec![]
+    };
+    emit_statement(
+        layouts,
+        function,
+        &statement,
+        writer,
+        names,
+        strings,
+        &mut vec![],
+        &mut blocks,
+        &mut vec![],
+        next_temp,
+        &mut 0,
+    )?;
+    freeze_statement_result(layouts, function, &statement, writer);
+    writer.line(&format!("frame->base.pc = {next}; continue;"));
+    if failing {
+        writer.line(&format!(
+            "emela_call_failed_{index}: frame->base.pc = {next}; continue;"
+        ));
+    }
     Ok(())
 }
