@@ -4296,6 +4296,25 @@ fn emit_runtime(
     string_buffers: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if matches!(op, RuntimeOp::Hold | RuntimeOp::Unhold) {
+        if dst.is_some() || !args.is_empty() {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "Hold/Unhold arity or result",
+            ));
+        }
+        if layouts.has_unwind {
+            let operation = if op == RuntimeOp::Hold {
+                "hold"
+            } else {
+                "unhold"
+            };
+            writer.line(&format!(
+                "if (emela_current_fiber != NULL) emela_interrupt_{operation}(emela_current_fiber);"
+            ));
+        }
+        return Ok(());
+    }
     if op == RuntimeOp::Retire {
         if dst.is_some() || args.len() != 2 {
             return Err(invalid_flow_ir(
