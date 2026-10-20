@@ -96,15 +96,15 @@ pub fn work() -> Int use Async {
 #include "emela_embedded.h"
 #include "emela_board.h"
 static EmelaTask tasks[3];
-static int count, order;
-void mark(int32_t n) { assert(n == ++order); }
+static int count, order, queue_old;
+void mark(int32_t n) { assert(n == ++order); if (n == 2 && queue_old) assert(emela_task_complete_int(tasks[0], 99)); }
 void board_wait_start(EmelaTask t, int32_t n) { assert(n >= 1 && n <= 3); tasks[n - 1] = t; count++; }
 uint32_t emela_board_event_lock(void) { return 0; }
 void emela_board_event_unlock(uint32_t n) { (void)n; }
 _Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
 int main(void) {
   for (int i = 0; i < 1000; i++) {
-    int32_t value = -1; count = order = 0;
+    int32_t value = -1; count = order = 0; queue_old = i % 2;
     EmelaFiber f = emela_export_work_0_start(&value);
     while (emela_scheduler_run(1)) {}
     assert(count == 2 && order == 1);
@@ -266,8 +266,38 @@ fn protect_cleanup_call(flow: &mut Module) {
             let Some(position) = seq.stmts.iter().position(|&id| matches!(&function.stmts[id],
                 emela_lir::Stmt::Let { value: Value::Call { callee: Callee::Direct(target), .. }, .. } if *target == cleanup)) else { continue };
             assert_eq!(position + 1, seq.stmts.len());
+            let mut required = std::collections::HashSet::new();
+            let emela_lir::Stmt::Let { value, .. } = &function.stmts[seq.stmts[position]] else {
+                unreachable!()
+            };
+            value.for_each_var(|var| {
+                required.insert(var);
+            });
+            let mut prefix = std::collections::HashSet::new();
+            for &id in seq.stmts[..position].iter().rev() {
+                if let emela_lir::Stmt::Let {
+                    dst: Some(dst),
+                    value,
+                    ..
+                } = &function.stmts[id]
+                    && required.contains(dst)
+                {
+                    assert!(matches!(
+                        value,
+                        Value::EvExtend { .. } | Value::EvLookup { .. }
+                    ));
+                    prefix.insert(id);
+                    value.for_each_var(|var| {
+                        required.insert(var);
+                    });
+                }
+            }
             let body = function.seqs.alloc(emela_lir::Seq {
-                stmts: seq.stmts[..position].to_vec(),
+                stmts: seq.stmts[..position]
+                    .iter()
+                    .copied()
+                    .filter(|id| !prefix.contains(id))
+                    .collect(),
                 term: seq.term,
             });
             let cleanup = function.seqs.alloc(emela_lir::Seq {
@@ -280,7 +310,12 @@ fn protect_cleanup_call(flow: &mut Module) {
                 cleanup,
             });
             function.seqs[id] = emela_lir::Seq {
-                stmts: vec![protect],
+                stmts: seq.stmts[..position]
+                    .iter()
+                    .copied()
+                    .filter(|id| prefix.contains(id))
+                    .chain(std::iter::once(protect))
+                    .collect(),
                 term: Term::Unreachable,
             };
             count += 1;
@@ -532,6 +567,265 @@ int main(void) {{
   expected = 1; f = emela_export_invoke_1_start(old);
   while (!emela_fiber_done(f)) emela_scheduler_run(1);
   abort();
+}}
+"#
+        ),
+    );
+}
+
+#[test]
+fn await_of_interrupted_children_returns_owned_failures_repeatedly_and_for_unit() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Success, Failure}
+pub fn work() -> Bool use Async {
+  Fiber.scope(fn() {
+    child = Fiber.fork(fn() { 42 })
+    Fiber.interrupt(child)
+    first = Fiber.await(child) match { Failure(_) -> True
+      Success(_) -> False }
+    Fiber.await(child)
+    second = Fiber.await(child) match { Failure(_) -> True
+      Success(_) -> False }
+    unit = Fiber.fork(fn() { () })
+    Fiber.interrupt(unit)
+    third = Fiber.await(unit) match { Failure(_) -> True
+      Success(_) -> False }
+    first && second && third
+  })
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(&core, &options().with_heap_bytes(4096)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
+int main(void) {
+  for (int i = 0; i < 1000; i++) {
+    int32_t value = -1; EmelaFiber f = emela_export_work_0_start(i % 2 ? &value : NULL);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    if (i % 2) assert(value == 1);
+    emela_fiber_release(f);
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn await_waiters_receive_failure_after_interrupt_cleanup_before_interrupt_waiters() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Scope, Success, Failure}
+import Std.Deferred.{Deferred}
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+effect Marker { fn read() -> Int }
+handler Resource implements Marker { fn read() { 1 }
+  release { mark(4) } }
+pub fn work() -> Bool use Async {
+  Fiber.scope(fn() {
+    stop: Deferred[Int] = (use Scope).deferred()
+    child = Fiber.fork(fn() { with Resource { mark(1)
+      Deferred.await(stop) } })
+    a = Fiber.fork(fn() { mark(2)
+      result = Fiber.await(child) match { Failure(_) -> True
+        Success(_) -> False }
+      mark(5)
+      result })
+    b = Fiber.fork(fn() { mark(3)
+      Fiber.interrupt(child)
+      mark(6) })
+    result = Fiber.join(a)
+    Fiber.join(b)
+    result
+  })
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(
+            &core,
+            &options().with_deferred_capacity(1).with_frame_capacity(40),
+        )
+        .unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static int order;
+void mark(int32_t n) { assert(n == ++order); }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
+int main(void) {
+  for (int i = 0; i < 1000; i++) {
+    int32_t value = -1; order = 0;
+    EmelaFiber f = emela_export_work_0_start(&value);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    assert(value == 1 && order == 6); emela_fiber_release(f);
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn interruption_causes_survive_scope_and_heap_reuse_and_can_be_released_by_the_caller() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Success, Failure}
+import Std.Cause.{Cause}
+pub fn failure() -> Cause[{}] use Async {
+  Fiber.scope(fn() {
+    child = Fiber.fork(fn() { 42 })
+    Fiber.interrupt(child)
+    Fiber.await(child) match { Failure(c) -> c
+      Success(_) -> panic("expected interruption") }
+  })
+}
+pub fn keep(c: Cause[{}]) -> Cause[{}] { c }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(&core, &options().with_heap_bytes(4096)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
+int main(void) {
+  void *old = NULL;
+  EmelaFiber f = emela_export_failure_0_start(&old);
+  while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+  emela_fiber_release(f);
+  void *same = emela_export_keep_1(old); assert(same == old); emela_embedded_release(same);
+  for (int i = 0; i < 1000; i++) {
+    void *next = NULL; uint32_t kind;
+    f = emela_export_failure_0_start(i % 2 ? &next : NULL);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    emela_fiber_release(f);
+    memcpy(&kind, old, sizeof(kind)); assert(kind == 2);
+    if (i % 2) { assert(next != old); memcpy(&kind, next, sizeof(kind)); assert(kind == 2); emela_embedded_release(next); }
+  }
+  emela_embedded_release(old);
+}
+"#,
+    );
+}
+
+#[test]
+fn interrupted_cleanup_can_close_a_nested_scope_and_wait_for_its_child_release() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Scope}
+import Std.Deferred.{Deferred}
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+effect Wait { suspend fn get(n: Int) -> Int }
+handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+effect Marker { fn read() -> Int }
+handler Resource implements Marker { fn read() { 1 }
+  release { (use Wait).get(3)
+    mark(3) } }
+fn cleanup() -> () use {Async, Wait} {
+  Fiber.scope(fn() {
+    Fiber.fork(fn() { with Resource { mark(2)
+      (use Wait).get(1) } })
+    (use Wait).get(2)
+  })
+  mark(4)
+}
+pub fn work() -> Int use Async {
+  with Waiting {
+    Fiber.scope(fn() {
+      stop: Deferred[Int] = (use Scope).deferred()
+      child = Fiber.fork(fn() { mark(1)
+        Deferred.await(stop)
+        cleanup()
+        7 })
+      canceller = Fiber.fork(fn() { Fiber.interrupt(child) })
+      Fiber.join(canceller)
+      mark(5)
+      42
+    })
+  }
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let mut flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    protect_cleanup_call(&mut flow);
+    let id = u32::from(
+        flow.functions
+            .iter()
+            .find(|(_, f)| f.name == "work")
+            .unwrap()
+            .0
+            .into_raw(),
+    );
+    compile_and_run(
+        compile_flow(
+            &flow,
+            &options().with_deferred_capacity(1).with_frame_capacity(48),
+        )
+        .unwrap(),
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask tasks[3];
+static int count, order;
+void mark(int32_t n) {{ assert(n == ++order); }}
+void board_wait_start(EmelaTask t, int32_t n) {{ assert(n >= 1 && n <= 3); tasks[n - 1] = t; count++; }}
+uint32_t emela_board_event_lock(void) {{ return 0; }}
+void emela_board_event_unlock(uint32_t n) {{ (void)n; }}
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{ fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }}
+int main(void) {{
+  for (int i = 0; i < 1000; i++) {{
+    int32_t value = -1; count = order = 0;
+    EmelaFiber f = emela_export_work_{id}_start(&value);
+    while (emela_scheduler_run(1)) {{}}
+    assert(count == 2 && order == 2 && !emela_fiber_done(f));
+    assert(emela_task_complete_int(tasks[1], 2));
+    while (emela_scheduler_run(1)) {{}}
+    assert(count == 3 && order == 2 && !emela_task_complete_int(tasks[0], 0));
+    assert(emela_task_complete_int(tasks[2], 3));
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    assert(value == 42 && order == 5); emela_fiber_release(f);
+  }}
 }}
 "#
         ),

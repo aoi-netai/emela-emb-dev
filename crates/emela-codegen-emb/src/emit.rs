@@ -2190,7 +2190,9 @@ fn function_value_abi_type_supported(
         | Type::Evidence
         | Type::FiberScope => true,
         Type::Enum(enum_id, _) => {
-            layouts.enum_is_i32(enum_id) || layouts.core.enums[enum_id].external
+            layouts.enum_is_i32(enum_id)
+                || layouts.core.enums[enum_id].external
+                || layouts.is_cause(ty)
         }
         Type::Fn(function_type) => {
             if !seen.insert(ty) {
@@ -4136,8 +4138,8 @@ fn emit_coerce(
     let source_is_any = matches!(layouts.types[source_ty], Type::Any);
     let destination_is_any = matches!(layouts.types[destination_ty], Type::Any);
 
-    if (destination_is_any && layouts.is_fiber_handle(source_ty))
-        || (source_is_any && layouts.is_fiber_handle(destination_ty))
+    if (destination_is_any && layouts.is_runtime_handle(source_ty))
+        || (source_is_any && layouts.is_runtime_handle(destination_ty))
     {
         if destination_is_any {
             writer.assign(
@@ -4147,6 +4149,8 @@ fn emit_coerce(
         } else {
             let kind = if layouts.is_named_external(destination_ty, "Std.Fiber.Fiber") {
                 layouts.child_kind()
+            } else if layouts.is_cause(destination_ty) {
+                layouts.cause_kind()
             } else {
                 layouts.deferred_kind()
             };
@@ -8795,7 +8799,7 @@ impl<'a> TypeLayouts<'a> {
             return;
         }
         self.any_box_required = true;
-        if self.is_fiber_handle(ty) {
+        if self.is_runtime_handle(ty) {
             return;
         }
         if !self.any_box_ids.contains_key(&ty) {
@@ -9042,9 +9046,10 @@ impl<'a> TypeLayouts<'a> {
         matches!(&self.types[ty], Type::Enum(id, _) if self.core.enums[*id].external && self.core.enums[*id].name == name)
     }
 
-    fn is_fiber_handle(&self, ty: TypeId) -> bool {
+    fn is_runtime_handle(&self, ty: TypeId) -> bool {
         self.is_named_external(ty, "Std.Fiber.Fiber")
             || self.is_named_external(ty, "Std.Deferred.Deferred")
+            || self.is_cause(ty)
     }
 
     fn is_cause(&self, ty: TypeId) -> bool {
@@ -9095,7 +9100,7 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        if self.is_fiber_handle(ty) || self.is_cause(ty) {
+        if self.is_runtime_handle(ty) {
             return true;
         }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
@@ -9134,7 +9139,7 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        if self.is_fiber_handle(ty) || self.is_cause(ty) {
+        if self.is_runtime_handle(ty) {
             return true;
         }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
@@ -9208,8 +9213,7 @@ impl<'a> TypeLayouts<'a> {
 
     fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty)
-            || self.is_fiber_handle(ty)
-            || self.is_cause(ty)
+            || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope
@@ -9242,8 +9246,7 @@ impl<'a> TypeLayouts<'a> {
         writer: &mut Writer,
     ) {
         if self.is_managed_list(ty)
-            || self.is_fiber_handle(ty)
-            || self.is_cause(ty)
+            || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope
@@ -9275,8 +9278,7 @@ impl<'a> TypeLayouts<'a> {
 
     fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty)
-            || self.is_fiber_handle(ty)
-            || self.is_cause(ty)
+            || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope
@@ -9513,6 +9515,7 @@ impl<'a> TypeLayouts<'a> {
             writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
         }
         if self.has_scopes {
+            writer.line(&format!("case UINT32_C({}): break;", self.cause_kind()));
             writer.line(&format!("case UINT32_C({}): break;", self.scope_kind()));
             writer.line(&format!("case UINT32_C({}): {{", self.child_kind()));
             writer.line("emela_child *child = (emela_child *)value;");
@@ -9840,6 +9843,9 @@ impl<'a> TypeLayouts<'a> {
     }
     fn deferred_kind(&self) -> u32 {
         self.resume_kind() + 3
+    }
+    fn cause_kind(&self) -> u32 {
+        self.resume_kind() + 4
     }
 
     fn evidence_node_kind(&self) -> u32 {

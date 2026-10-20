@@ -43,6 +43,17 @@ pub(super) fn emit_runtime(
     layouts: &TypeLayouts<'_>,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if !layouts.child_await_types.is_empty() {
+        writer.line("typedef struct { uint32_t kind; } emela_cause;");
+        writer.begin_block("static inline void *emela_cause_interrupt(void)");
+        writer.line(&format!("emela_cause *cause = (emela_cause *)emela_heap_allocate(sizeof(*cause), UINT32_C({}));", layouts.cause_kind()));
+        writer.line(&format!(
+            "cause->kind = UINT32_C({});",
+            emela_core::CAUSE_INTERRUPT
+        ));
+        writer.line("return cause;");
+        writer.end_block();
+    }
     for &ty in &layouts.child_join_types {
         if layouts.type_repr(ty) == Repr::Void {
             continue;
@@ -67,7 +78,19 @@ pub(super) fn emit_runtime(
             "static void emela_child_await_{}(emela_child *child, void *result)",
             exit.index()
         ));
-        // Explicit Interrupt and Cause delivery are connected with the unwind runtime in 7.8.
+        let failure = layouts
+            .enum_fields(exit)
+            .and_then(|variants| variants.get(emela_core::EXIT_FAILURE));
+        if !failure.is_some_and(|fields| fields.len() == 1 && layouts.is_cause(fields[0])) {
+            return Err(invalid_flow_ir(
+                "Fiber.await",
+                "Exit Failure payload is not Cause",
+            ));
+        }
+        writer.begin_block("if (child->status == 2)");
+        writer.line(&format!("*({cty} *)result = ({cty}){{.tag = INT32_C({tag}), .payload.v{tag}.f0 = emela_cause_interrupt()}};", cty = layouts.c_type(exit), tag = emela_core::EXIT_FAILURE));
+        writer.line("return;");
+        writer.end_block();
         writer.line("if (child->status != 1) emela_scheduler_invalid();");
         if represented {
             writer.line("EmelaAny emela_v_0 = child->result;");

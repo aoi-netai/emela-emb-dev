@@ -452,6 +452,7 @@ fn contains_failing_function(
         }
         Type::List(t) | Type::Cell(t) => contains_failing_function(core, *t, seen),
         Type::Tuple(ts) => ts.iter().any(|&t| contains_failing_function(core, t, seen)),
+        Type::Enum(id, _) if core.enums[*id].name == "Std.Cause.Cause" => false,
         Type::Enum(id, args) => {
             args.iter()
                 .any(|&t| contains_failing_function(core, t, seen))

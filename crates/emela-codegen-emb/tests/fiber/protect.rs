@@ -343,3 +343,41 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn defects_in_suspend_protect_keep_the_configured_immediate_stop_policy() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+effect Marker { fn read() -> Int }
+handler Resource implements Marker { fn read() { 1 }
+  release { mark(99) } }
+pub fn work() -> Int use Async { with Resource { panic("bad") } }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(&core, &options()).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+void mark(int32_t n) { (void)n; abort(); }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {
+  assert(k == EMELA_DEFECT_PANIC && n == 3 && memcmp(m, "bad", n) == 0); exit(0);
+}
+int main(void) {
+  int32_t value = -1; EmelaFiber f = emela_export_work_0_start(&value);
+  while (!emela_fiber_done(f)) emela_scheduler_run(1);
+  abort();
+}
+"#,
+    );
+}
