@@ -18,6 +18,8 @@ mod child;
 mod deferred;
 #[path = "error.rs"]
 mod error_runtime;
+#[path = "owned.rs"]
+mod owned;
 #[path = "suspend.rs"]
 mod suspend;
 
@@ -462,6 +464,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         emit_closure_string_copy_helper(&layouts, &mut source);
         error_runtime::emit_ownership(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
+        owned::emit_helpers(&layouts, &mut source);
         if layouts.deferred_pool {
             source.line(&format!(
                 "#define EMELA_DEFERRED_KIND UINT32_C({})",
@@ -836,7 +839,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             takes_string_output,
         );
         if !string_buffers.declarations.is_empty()
-            && ((type_contains_string(&layouts, function.ret, &mut HashSet::new())
+            && ((layouts.has_inline_string(function.ret)
                 && !layouts.owned_string_returns.contains(&function.name))
                 || failure_value_contains_string(&layouts, function))
             && !takes_string_output
@@ -1085,6 +1088,7 @@ fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Write
     writer.end_block();
     writer.blank();
     writer.begin_block("static inline EmelaString emela_heap_own_string(EmelaString value)");
+    writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line("if (value.owner == NULL) return emela_heap_copy_string(value);");
     writer.line("emela_heap_retain(value.owner);");
     writer.line("return value;");
@@ -4355,10 +4359,12 @@ fn emit_coerce(
             &format!("{box_name}->type"),
             &format!("UINT32_C({box_type})"),
         );
-        if layouts.is_managed_value(source_ty) {
-            layouts.emit_retain_value_expression(source_ty, &source_name, writer);
-        }
-        writer.assign(&format!("{box_name}->payload.v{box_type}"), &source_name);
+        layouts.emit_owned_value_store(
+            source_ty,
+            &source_name,
+            &format!("{box_name}->payload.v{box_type}"),
+            writer,
+        );
         writer.assign(&format!("{destination_name}.tag"), "UINT32_C(0)");
         writer.assign(&format!("{destination_name}.payload.any_box"), &box_name);
         return Ok(());
@@ -5427,7 +5433,7 @@ fn emit_statement_inner(
                                         "((emela_closure_env_{environment} *){destination}.env)->c{capture_index}"
                                     ),
                                     &format!(
-                                        "emela_heap_copy_string({})",
+                                        "emela_heap_own_string({})",
                                         variable_name(capture.source)
                                     ),
                                 );
@@ -5946,12 +5952,14 @@ fn emit_list_value(
                 "UINT8_C(0)",
             );
         } else {
-            if layouts.is_managed_value(element_ty) {
-                emit_retain_operand(layouts, function, elem, writer);
-            }
             let expression =
                 operand_expression(elem).map_err(|variant| unsupported(&function.name, variant))?;
-            writer.assign(&format!("(({list_name} *){node_temp})->head"), &expression);
+            layouts.emit_owned_value_store(
+                element_ty,
+                &expression,
+                &format!("(({list_name} *){node_temp})->head"),
+                writer,
+            );
         }
         writer.assign(&format!("(({list_name} *){node_temp})->tail"), &temp);
         writer.assign(&temp, &node_temp);
@@ -7396,15 +7404,17 @@ fn emit_aggregate_field_store(
                 "recursive aggregate field has no heap box layout",
             )
         })?;
-        if layouts.is_managed_value(field_ty) {
-            emit_retain_operand(layouts, function, value, writer);
-        }
         let field_type = layouts.c_type(field_ty);
         writer.assign(
             target,
             &format!("emela_heap_allocate(sizeof({field_type}), UINT32_C({box_kind}))"),
         );
-        writer.assign(&format!("*(({field_type} *){target})"), &expression);
+        layouts.emit_owned_value_store(
+            field_ty,
+            &expression,
+            &format!("*(({field_type} *){target})"),
+            writer,
+        );
     } else {
         if layouts.is_managed_value(field_ty) {
             emit_retain_operand(layouts, function, value, writer);
