@@ -698,6 +698,7 @@ pub(super) fn emit_function(
             .any(|n| matches!(n, Node::CheckError { .. }));
     if has_failure {
         writer.line("  EmelaError call_error;");
+        writer.line("  int call_error_owned;");
         writer.line(&format!(
             "  EmelaError pending_error[{}];",
             graph.max_error_depth + 1
@@ -766,6 +767,10 @@ pub(super) fn emit_function(
             "#define {} (frame->call_error)",
             variable_name(call_error_var)
         ));
+        writer.line(&format!(
+            "#define {} (frame->call_error_owned)",
+            owned_variable_name(call_error_var)
+        ));
     }
     // Aliases let the shared emitter address persistent fields without stack copies.
     for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
@@ -818,7 +823,7 @@ pub(super) fn emit_function(
                     }
                 );
                 if failing {
-                    writer.line("frame->call_error = (EmelaError){0};");
+                    writer.line("emela_error_clear(&frame->call_error);");
                 }
                 if let Stmt::Let {
                     dst,
@@ -1208,6 +1213,9 @@ pub(super) fn emit_function(
                 writer.line("emela_frame_return(fiber); return;");
             }
             Node::SetError(error, next, slot) => {
+                writer.line(&format!(
+                    "emela_error_clear(&frame->pending_error[{slot}]);"
+                ));
                 emit_error_assignment(
                     layouts,
                     function,
@@ -1222,7 +1230,7 @@ pub(super) fn emit_function(
                 failed,
                 slot,
             } => {
-                writer.line(&format!("if (frame->call_error.tag == 0) base->pc = {normal}; else {{ frame->pending_error[{slot}] = frame->call_error; base->pc = {failed}; }} continue;"));
+                writer.line(&format!("if (frame->call_error.tag == 0) base->pc = {normal}; else {{ emela_error_clear(&frame->pending_error[{slot}]); frame->pending_error[{slot}] = frame->call_error; frame->call_error = (EmelaError){{0}}; base->pc = {failed}; }} continue;"));
             }
             Node::Catch(dst, next, slot) => {
                 if !matches!(layouts.types[function.vars[*dst].ty], Type::Any) {
@@ -1236,6 +1244,9 @@ pub(super) fn emit_function(
                     &variable_name(*dst),
                     &format!("frame->pending_error[{slot}]"),
                 );
+                writer.line(&format!(
+                    "frame->pending_error[{slot}] = (EmelaError){{0}};"
+                ));
                 if layouts.is_managed_value(function.vars[*dst].ty) {
                     writer.assign(&owned_variable_name(*dst), "1");
                 }
@@ -1245,6 +1256,9 @@ pub(super) fn emit_function(
                 writer.line("if (frame->error_out == NULL) emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, \"unhandled error\", UINT16_C(15));");
                 writer.line(&format!(
                     "*frame->error_out = frame->pending_error[{slot}];"
+                ));
+                writer.line(&format!(
+                    "frame->pending_error[{slot}] = (EmelaError){{0}};"
                 ));
                 writer.line("emela_frame_return(fiber); return;");
             }
@@ -1284,6 +1298,13 @@ pub(super) fn emit_function(
     writer.begin_block(&format!("static void {name}_drop(emela_frame *base)"));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
     writer.line("(void)frame;");
+    if has_failure {
+        writer.line("emela_error_clear(&frame->call_error);");
+        writer.line(&format!(
+            "for (uint32_t i = 0; i < {}; i++) emela_error_clear(&frame->pending_error[i]);",
+            graph.max_error_depth + 1
+        ));
+    }
     for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         emit_release_if_owned(layouts, function, id, writer);
     }
@@ -1300,6 +1321,7 @@ pub(super) fn emit_function(
     }
     if has_failure {
         writer.line(&format!("#undef {}", variable_name(call_error_var)));
+        writer.line(&format!("#undef {}", owned_variable_name(call_error_var)));
     }
     writer.begin_block(&push_signature(layouts, function, name, environment));
     writer.line(&format!(

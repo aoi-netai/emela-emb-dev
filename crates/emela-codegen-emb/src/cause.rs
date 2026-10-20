@@ -40,6 +40,7 @@ pub(super) fn emit_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
             "cause->kind = UINT32_C({}); cause->error = error;",
             emela_core::CAUSE_FAIL
         ));
+        writer.line("emela_error_retain(error);");
         writer.line("return cause;");
         writer.end_block();
     }
@@ -85,6 +86,9 @@ pub(super) fn emit_attempts(
             layouts.emit_release_value_expression(body, "frame->body", writer);
             if represented {
                 layouts.emit_release_value_expression(value, "frame->value", writer);
+            }
+            if ft.fails {
+                writer.line("emela_error_clear(&frame->error);");
             }
             writer.end_block();
             writer.begin_block(&format!(
@@ -153,8 +157,9 @@ pub(super) fn emit_attempts(
             }
             if ft.fails {
                 writer.begin_block("if (error.tag != 0)");
+                writer.line("void *cause = emela_cause_fail(error); emela_error_clear(&error);");
                 writer.line(&format!(
-                    "return ({ex}){{.tag = {}, .payload.v{}.f0 = emela_cause_fail(error)}};",
+                    "return ({ex}){{.tag = {}, .payload.v{}.f0 = cause}};",
                     emela_core::EXIT_FAILURE,
                     emela_core::EXIT_FAILURE
                 ));

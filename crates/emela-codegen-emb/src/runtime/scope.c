@@ -12,6 +12,7 @@ static void emela_scope_close(emela_scope *scope, EmelaFiber closer);
 static void emela_scope_failed(emela_scope *scope, EmelaError error) {
   if (scope->first_error.tag != 0) return;
   scope->first_error = error;
+  emela_error_retain(error);
   emela_fiber *owner = emela_resume_live(scope->owner);
   if (owner == NULL || scope->ended) emela_scheduler_invalid();
   emela_frame *target = &scope->frame->base;
@@ -95,13 +96,19 @@ static void emela_scope_drop(emela_frame *base) {
   emela_scope *scope = ((emela_scope_frame *)base)->scope;
   emela_scope_close(scope, (EmelaFiber){EMELA_SLOT_NONE, 0});
   emela_scope_finish(scope);
+#ifdef EMELA_FAILURE_RUNTIME
+  emela_error_clear(&((emela_scope_frame *)base)->body_error);
+#endif
   emela_heap_release(scope);
 }
 static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
   emela_scope_frame *frame = (emela_scope_frame *)base;
   emela_scope *scope = frame->scope;
 #ifdef EMELA_FAILURE_RUNTIME
-  if (frame->body_error.tag != 0) emela_scope_failed(scope, frame->body_error);
+  if (frame->body_error.tag != 0) {
+    emela_scope_failed(scope, frame->body_error);
+    emela_error_clear(&frame->body_error);
+  }
   if (fiber->failure_stop == base) fiber->failure_stop = NULL;
 #endif
   emela_scope_close(scope, (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation});
@@ -115,6 +122,7 @@ static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
   if (scope->first_error.tag != 0) {
     if (frame->error_out == NULL) emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, "unhandled error", UINT16_C(15));
     *frame->error_out = scope->first_error;
+    emela_error_retain(*frame->error_out);
   }
 #endif
   emela_frame_return(fiber);

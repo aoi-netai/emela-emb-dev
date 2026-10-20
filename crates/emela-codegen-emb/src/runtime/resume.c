@@ -85,6 +85,7 @@ static void emela_resume_after_step(emela_fiber *fiber) {
     if (!emela_resume_unavailable(resume)) {
       if (resume->error_out == NULL) emela_scheduler_invalid();
       *resume->error_out = resume->error;
+      emela_error_retain(*resume->error_out);
       resume->used = 1;
       if (!resume->initial) emela_resume_wake(resume);
     }
@@ -96,6 +97,9 @@ static void emela_resume_after_step(emela_fiber *fiber) {
     else emela_resume_boundary(emela_resume_live(resume->caller));
   }
   fiber->perform = NULL;
+#ifdef EMELA_FAILURE_RUNTIME
+  emela_error_clear(&resume->error);
+#endif
   emela_heap_release(resume);
   emela_fiber_release((EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation});
 }
