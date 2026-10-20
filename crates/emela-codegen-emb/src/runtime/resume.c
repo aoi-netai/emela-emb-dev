@@ -16,7 +16,11 @@ static emela_fiber *emela_resume_live(EmelaFiber handle) {
 }
 static int emela_resume_over(EmelaFiber root) {
   emela_fiber *fiber = emela_resume_live(root);
-  return fiber == NULL || fiber->state == EMELA_FIBER_DONE;
+  return fiber == NULL || fiber->state == EMELA_FIBER_DONE
+#ifdef EMELA_SCOPE_RUNTIME
+    || fiber->cancelled
+#endif
+    ;
 }
 static int emela_same_fiber(EmelaFiber a, EmelaFiber b) {
   return a.slot == b.slot && a.generation == b.generation;
@@ -49,7 +53,7 @@ static void emela_resume_boundary(emela_fiber *fiber) {
     if (resume->used) emela_resume_wake(resume);
   }
 }
-static emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
+static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
                                         const char *message, uint16_t length) {
   EmelaFiber handle = emela_fiber_create();
   emela_fiber *implementation = emela_fiber_get(handle);
@@ -64,7 +68,7 @@ static emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
   caller->state = EMELA_FIBER_WAITING;
   return implementation;
 }
-static emela_resume *emela_resume_prepare(void *environment) {
+static inline emela_resume *emela_resume_prepare(void *environment) {
   emela_resume *resume = (emela_resume *)environment;
   if (resume == NULL) emela_scheduler_invalid();
   /* Checking the root first also makes callbacks from previous invocations harmless. */
@@ -75,6 +79,12 @@ static emela_resume *emela_resume_prepare(void *environment) {
   return resume;
 }
 static void emela_resume_after_step(emela_fiber *fiber) {
+#ifdef EMELA_SCOPE_RUNTIME
+  if (fiber->state == EMELA_FIBER_DONE && fiber->child != NULL) {
+    emela_child_after_step(fiber);
+    return;
+  }
+#endif
   if (fiber->state != EMELA_FIBER_DONE || fiber->perform == NULL) return;
   emela_resume *resume = fiber->perform;
   if (resume->initial) {
@@ -90,6 +100,9 @@ static void emela_resume_sweep(void) {
   for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
     emela_fiber *fiber = &emela_fibers[slot];
     if (fiber->state == EMELA_FIBER_FREE || fiber->perform == NULL || !emela_resume_over(fiber->root)) continue;
+#ifdef EMELA_SCOPE_RUNTIME
+    if (fiber->active != 0) continue;
+#endif
     if (fiber->state == EMELA_FIBER_READY) emela_ready_remove(fiber);
 #ifdef EMELA_TASK_CAPACITY
     emela_task_abandon((EmelaFiber){slot, fiber->generation});
@@ -105,9 +118,17 @@ static void emela_resume_drive(emela_fiber *target) {
   emela_fiber *saved = emela_current_fiber, *work = target;
   target->state = EMELA_FIBER_RUNNING;
   for (;;) {
+    if (work->perform != NULL && emela_resume_over(work->root)) break;
+#ifdef EMELA_SCOPE_RUNTIME
+    if (work->cancelled) break;
+    work->active++;
+#endif
     emela_current_fiber = work;
     EmelaFiber parent = work->perform == NULL ? (EmelaFiber){EMELA_SLOT_NONE, 0} : work->perform->caller;
     work->top->step(work, work->top);
+#ifdef EMELA_SCOPE_RUNTIME
+    work->active--;
+#endif
     int ended = work->state == EMELA_FIBER_DONE;
     int target_ended = ended && work == target;
     emela_resume_after_step(work);
@@ -118,6 +139,10 @@ static void emela_resume_drive(emela_fiber *target) {
       emela_ready_remove(work);
       work->state = EMELA_FIBER_RUNNING;
     }
+#ifdef EMELA_SCOPE_RUNTIME
+    if (work->cancelled) break;
+    emela_scope_sweep();
+#endif
     if (work->state == EMELA_FIBER_RUNNING) continue;
     /* A nested operation that has not reached an actual suspension runs in this breath. */
     emela_fiber *child = NULL;
@@ -134,7 +159,7 @@ static void emela_resume_drive(emela_fiber *target) {
   }
   emela_current_fiber = saved;
 }
-static void emela_resume_commit(emela_resume *resume) {
+static inline void emela_resume_commit(emela_resume *resume) {
   if (resume->initial) return;
   emela_fiber *caller = emela_resume_live(resume->caller);
   if (caller == NULL || caller->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();

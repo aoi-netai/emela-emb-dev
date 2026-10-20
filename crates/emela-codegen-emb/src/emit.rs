@@ -30,7 +30,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // The input Flow IR was verified by compile_flow before backend lowering. Lifted closure
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
-    let mut closures = crate::static_closure::lower(flow)?;
+    let mut prepared_flow = flow.clone();
+    crate::fiber::normalize_scope_results(&mut prepared_flow);
+    let mut closures = crate::static_closure::lower(&prepared_flow)?;
     let mut lowered_flow = closures
         .module
         .take()
@@ -416,7 +418,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <stddef.h>");
     source.blank();
     if has_scheduler {
-        suspend::emit_runtime(&mut source, options, has_tasks, layouts.has_resumes);
+        suspend::emit_runtime(
+            &mut source,
+            options,
+            has_tasks,
+            layouts.has_resumes,
+            layouts.has_scopes,
+        );
+    }
+    if layouts.has_scopes {
+        source.line(include_str!("runtime/scope_types.c"));
     }
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
@@ -439,6 +450,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if layouts.has_resumes {
         suspend::emit_resume_runtime(&layouts, &mut source);
+    }
+    if layouts.has_scopes {
+        suspend::emit_scope_runtime(&layouts, &mut source)?;
     }
     let has_int_shift = has_builtin(
         flow,
@@ -2099,7 +2113,8 @@ fn function_value_abi_type_supported(
         | Type::Any
         | Type::List(_)
         | Type::Handler(_)
-        | Type::Evidence => true,
+        | Type::Evidence
+        | Type::FiberScope => true,
         Type::Enum(enum_id, _) => {
             layouts.enum_is_i32(enum_id) || layouts.core.enums[enum_id].external
         }
@@ -2647,6 +2662,10 @@ fn function_needs_heap(
         } => !elems.is_empty(),
         Stmt::Let {
             value: Value::ListHead(_) | Value::ListTail(_),
+            ..
+        } => true,
+        Stmt::Let {
+            value: Value::Fiber { .. },
             ..
         } => true,
         Stmt::Let {
@@ -4043,6 +4062,27 @@ fn emit_coerce(
     let source_is_any = matches!(layouts.types[source_ty], Type::Any);
     let destination_is_any = matches!(layouts.types[destination_ty], Type::Any);
 
+    if (destination_is_any && layouts.is_fiber_handle(source_ty))
+        || (source_is_any && layouts.is_fiber_handle(destination_ty))
+    {
+        if destination_is_any {
+            writer.assign(
+                &destination_name,
+                &format!("(EmelaAny){{.payload.any_box = {source_name}}}"),
+            );
+        } else {
+            let kind = if layouts.is_named_external(destination_ty, "Std.Fiber.Fiber") {
+                layouts.child_kind()
+            } else {
+                layouts.deferred_kind()
+            };
+            writer.line(&format!("if ({source_name}.tag != 0 || {source_name}.payload.any_box == NULL || emela_heap_header({source_name}.payload.any_box)->kind != UINT32_C({kind})) emela_scheduler_invalid();"));
+            writer.assign(&destination_name, &format!("{source_name}.payload.any_box"));
+        }
+        layouts.emit_retain_value_expression(destination_ty, &destination_name, writer);
+        return Ok(());
+    }
+
     if matches!(layouts.types[source_ty], Type::Fn(_))
         && matches!(layouts.types[destination_ty], Type::Fn(_))
     {
@@ -5131,6 +5171,13 @@ fn emit_statement_inner(
                         );
                         writer.assign(&format!("{destination}.env"), "NULL");
                     }
+                }
+                Value::Fiber {
+                    op,
+                    args,
+                    on_fail: None,
+                } => {
+                    suspend::emit_fiber_value(layouts, function, *dst, *op, args, writer)?;
                 }
                 Value::Handler { name, effect, ops } => {
                     emit_handler_value(layouts, function, *dst, *effect, name, ops, writer)?;
@@ -7705,6 +7752,12 @@ fn emit_return(
         Term::Return(Some(operand)) => {
             let mut expression = operand_expression(operand)
                 .map_err(|variant| unsupported(&function.name, variant))?;
+            // Flow uses an empty reference as the unobserved boxed Unit result of fork.
+            if function.ret == TypeId::ANY
+                && matches!(operand, Operand::Const(Const::String(s)) if s.is_empty())
+            {
+                expression = "(EmelaAny){0}".into();
+            }
             let mut moved = None;
             let copies_string_to_caller = string_buffers.returns_to_caller
                 && matches!(layouts.types[function.ret], Type::String);
@@ -8184,6 +8237,8 @@ struct TypeLayouts<'a> {
     handler_layout_ids: HashMap<EffectId, usize>,
     resume_types: Vec<TypeId>,
     has_resumes: bool,
+    has_scopes: bool,
+    fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
     any_box_required: bool,
@@ -8248,7 +8303,10 @@ impl<'a> TypeLayouts<'a> {
             handler_layouts: Vec::new(),
             handler_layout_ids: HashMap::new(),
             resume_types: Vec::new(),
-            has_resumes: suspend::has_operations(flow, emitted),
+            has_resumes: suspend::has_operations(flow, emitted)
+                || crate::fiber::has_scopes(flow, emitted),
+            has_scopes: crate::fiber::has_scopes(flow, emitted),
+            fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
             any_box_required: false,
@@ -8286,6 +8344,27 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Fork,
+                        args,
+                        ..
+                    } => {
+                        if let Some(Operand::Var(body)) = args.get(1) {
+                            let ty = function.vars[*body].ty;
+                            if !layouts.fork_types.contains(&ty) {
+                                layouts.fork_types.push(ty);
+                            }
+                        }
+                        layouts.any_abi = true;
+                        layouts.any_box_required = true;
+                    }
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Deferred,
+                        ..
+                    } => {
+                        layouts.any_abi = true;
+                        layouts.any_box_required = true;
+                    }
                     Value::Handler { effect, ops, .. } => {
                         let operations = ops
                             .iter()
@@ -8445,7 +8524,7 @@ impl<'a> TypeLayouts<'a> {
                 match layouts.types[ty].clone() {
                     Type::List(_) => {}
                     Type::Cell(_) => {}
-                    Type::Handler(_) | Type::Evidence => {}
+                    Type::Handler(_) | Type::Evidence | Type::FiberScope => {}
                     Type::Fn(_) => {}
                     Type::Any => {}
                     Type::Enum(enum_id, _) if layouts.core.enums[enum_id].error => {
@@ -8473,6 +8552,9 @@ impl<'a> TypeLayouts<'a> {
             return;
         }
         self.any_box_required = true;
+        if self.is_fiber_handle(ty) {
+            return;
+        }
         if !self.any_box_ids.contains_key(&ty) {
             let index = self.any_box_types.len();
             self.any_box_types.push(ty);
@@ -8682,6 +8764,15 @@ impl<'a> TypeLayouts<'a> {
         }
     }
 
+    fn is_named_external(&self, ty: TypeId, name: &str) -> bool {
+        matches!(&self.types[ty], Type::Enum(id, _) if self.core.enums[*id].external && self.core.enums[*id].name == name)
+    }
+
+    fn is_fiber_handle(&self, ty: TypeId) -> bool {
+        self.is_named_external(ty, "Std.Fiber.Fiber")
+            || self.is_named_external(ty, "Std.Deferred.Deferred")
+    }
+
     fn error_enum(&self, ty: TypeId) -> Option<EnumId> {
         match self.types[ty] {
             Type::Enum(id, _) if self.core.enums[id].error => Some(id),
@@ -8726,12 +8817,15 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if self.is_fiber_handle(ty) {
+            return true;
+        }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
             return true;
         }
         if matches!(
             self.types[ty],
-            Type::String | Type::List(_) | Type::Handler(_) | Type::Evidence
+            Type::String | Type::List(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
         ) {
             return true;
         }
@@ -8762,12 +8856,15 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if self.is_fiber_handle(ty) {
+            return true;
+        }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
             return true;
         }
         if matches!(
             self.types[ty],
-            Type::List(_) | Type::Handler(_) | Type::Evidence
+            Type::List(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
         ) {
             return true;
         }
@@ -8832,7 +8929,13 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
-        if self.is_managed_list(ty) || matches!(self.types[ty], Type::Handler(_) | Type::Evidence) {
+        if self.is_managed_list(ty)
+            || self.is_fiber_handle(ty)
+            || matches!(
+                self.types[ty],
+                Type::Handler(_) | Type::Evidence | Type::FiberScope
+            )
+        {
             writer.line(&format!("emela_heap_retain({expression});"));
         } else if self.any_box_required && matches!(self.types[ty], Type::Any) {
             writer.begin_block(&format!("if (({expression}).tag == UINT32_C(0))"));
@@ -8859,7 +8962,13 @@ impl<'a> TypeLayouts<'a> {
         tail: &str,
         writer: &mut Writer,
     ) {
-        if self.is_managed_list(ty) || matches!(self.types[ty], Type::Handler(_) | Type::Evidence) {
+        if self.is_managed_list(ty)
+            || self.is_fiber_handle(ty)
+            || matches!(
+                self.types[ty],
+                Type::Handler(_) | Type::Evidence | Type::FiberScope
+            )
+        {
             writer.line(&format!(
                 "emela_heap_enqueue({expression}, {pending}, {tail});"
             ));
@@ -8885,7 +8994,13 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
-        if self.is_managed_list(ty) || matches!(self.types[ty], Type::Handler(_) | Type::Evidence) {
+        if self.is_managed_list(ty)
+            || self.is_fiber_handle(ty)
+            || matches!(
+                self.types[ty],
+                Type::Handler(_) | Type::Evidence | Type::FiberScope
+            )
+        {
             writer.line(&format!("emela_heap_release({expression});"));
         } else if self.any_box_required && matches!(self.types[ty], Type::Any) {
             writer.begin_block(&format!("if (({expression}).tag == UINT32_C(0))"));
@@ -9115,6 +9230,17 @@ impl<'a> TypeLayouts<'a> {
         writer.end_block();
         if self.has_resumes {
             writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
+        }
+        if self.has_scopes {
+            writer.line(&format!("case UINT32_C({}): break;", self.scope_kind()));
+            writer.line(&format!("case UINT32_C({}): {{", self.child_kind()));
+            writer.line("emela_child *child = (emela_child *)value;");
+            writer.line("emela_heap_enqueue(child->scope, pending, tail);");
+            writer.line("if (child->result.tag == 0) emela_heap_enqueue(child->result.payload.any_box, pending, tail);");
+            writer.line("break; }");
+            writer.line(&format!("case UINT32_C({}): {{", self.deferred_kind()));
+            writer.line("emela_heap_enqueue(((emela_deferred *)value)->scope, pending, tail);");
+            writer.line("break; }");
         }
         for (index, environment) in environments.iter().enumerate() {
             let kind = self.closure_environment_kind(index);
@@ -9361,6 +9487,7 @@ impl<'a> TypeLayouts<'a> {
             writer.line("typedef struct emela_any_box {");
             writer.line("  uint32_t type;");
             writer.line("  union {");
+            writer.line("    uint8_t _empty;");
             for (index, &ty) in self.any_box_types.iter().enumerate() {
                 writer.line(&format!("    {} v{index};", self.c_type(ty)));
             }
@@ -9415,6 +9542,16 @@ impl<'a> TypeLayouts<'a> {
 
     fn resume_kind(&self) -> u32 {
         self.any_box_kind() + 1
+    }
+
+    fn scope_kind(&self) -> u32 {
+        self.resume_kind() + 1
+    }
+    fn child_kind(&self) -> u32 {
+        self.resume_kind() + 2
+    }
+    fn deferred_kind(&self) -> u32 {
+        self.resume_kind() + 3
     }
 
     fn evidence_node_kind(&self) -> u32 {

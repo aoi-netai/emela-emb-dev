@@ -25,6 +25,190 @@ pub(crate) fn has_scopes(module: &Module, emitted: &HashSet<emela_lir::FnId>) ->
     })
 }
 
+// Scope's polymorphic operations use one ABI, independent of the child value type.
+pub(crate) fn normalize_scope_results(module: &mut Module) {
+    let mut operations = HashMap::new();
+    for (_, f) in module.functions.iter() {
+        for (_, s) in f.stmts.iter() {
+            if let Stmt::Let {
+                value: Value::Handler { effect, ops, .. },
+                ..
+            } = s
+            {
+                operations.insert(
+                    *effect,
+                    ops.iter().map(|v| f.vars[*v].ty).collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+    for id in crate::emit::runtime_reachable(module) {
+        let mut before: HashMap<_, Vec<_>> = HashMap::new();
+        let mut after = HashMap::new();
+        let f = &mut module.functions[id];
+        for (stmt, s) in f.stmts.clone().iter() {
+            let Stmt::Let {
+                dst,
+                value:
+                    Value::Call {
+                        callee: emela_lir::Callee::Op { effect, op, .. },
+                        args,
+                        ..
+                    },
+                ..
+            } = s
+            else {
+                continue;
+            };
+            if !module.core.effects[*effect]
+                .name
+                .starts_with("Std.Fiber.Scope[")
+                || module.core.effects[*effect].ops[*op].type_params == 0
+            {
+                continue;
+            }
+            if let Some(Type::Fn(ft)) = operations
+                .get(effect)
+                .and_then(|ops| ops.get(*op))
+                .map(|t| &module.core.types[*t])
+            {
+                for (i, (arg, &expected)) in args.iter().zip(&ft.params).enumerate() {
+                    let emela_lir::Operand::Var(arg) = arg else {
+                        continue;
+                    };
+                    let actual = f.vars[*arg].ty;
+                    if actual == expected {
+                        continue;
+                    }
+                    let (Type::Fn(from), Type::Fn(to)) =
+                        (&module.core.types[actual], &module.core.types[expected])
+                    else {
+                        continue;
+                    };
+                    if from.params != to.params || from.ev != to.ev {
+                        continue;
+                    }
+                    let adapted = f.vars.alloc(emela_lir::VarData {
+                        hint: "scope_argument".into(),
+                        ty: expected,
+                        repr: emela_lir::Repr::Ref,
+                    });
+                    let value = if from.ret == to.ret {
+                        Value::Coerce(*arg)
+                    } else if to.ret == TypeId::ANY
+                        && emela_lir::repr_of(&module.core, from.ret) == emela_lir::Repr::Ref
+                    {
+                        // Flow can pass reference results directly to a polymorphic operation.
+                        // Our tagged Any ABI needs an explicit box, including for String/List.
+                        let params: Vec<_> = from
+                            .params
+                            .iter()
+                            .copied()
+                            .chain(from.ev.then_some(TypeId::EVIDENCE))
+                            .filter(|ty| {
+                                emela_lir::repr_of(&module.core, *ty) != emela_lir::Repr::Void
+                            })
+                            .map(|ty| {
+                                f.vars.alloc(emela_lir::VarData {
+                                    hint: "child_arg".into(),
+                                    ty,
+                                    repr: emela_lir::repr_of(&module.core, ty),
+                                })
+                            })
+                            .collect();
+                        let result = f.vars.alloc(emela_lir::VarData {
+                            hint: "child_value".into(),
+                            ty: from.ret,
+                            repr: emela_lir::Repr::Ref,
+                        });
+                        let boxed = f.vars.alloc(emela_lir::VarData {
+                            hint: "child_box".into(),
+                            ty: TypeId::ANY,
+                            repr: emela_lir::Repr::Ref,
+                        });
+                        let call = f.stmts.alloc(Stmt::Let {
+                            dst: Some(result),
+                            value: Value::Call {
+                                callee: emela_lir::Callee::Indirect(*arg),
+                                args: params.iter().copied().map(Into::into).collect(),
+                                suspends: from.suspends,
+                                on_fail: from.fails.then_some(emela_lir::OnFail::Propagate),
+                            },
+                            on_defect: None,
+                            on_suspend: None,
+                        });
+                        let box_value = f.stmts.alloc(Stmt::Let {
+                            dst: Some(boxed),
+                            value: Value::Coerce(result),
+                            on_defect: None,
+                            on_suspend: None,
+                        });
+                        let body = f.seqs.alloc(emela_lir::Seq {
+                            stmts: vec![call, box_value],
+                            term: Term::Return(Some(boxed.into())),
+                        });
+                        Value::Closure(Box::new(emela_lir::Closure {
+                            params,
+                            captures: vec![*arg],
+                            body,
+                            suspends: to.suspends,
+                        }))
+                    } else {
+                        continue;
+                    };
+                    let convert = f.stmts.alloc(Stmt::Let {
+                        dst: Some(adapted),
+                        value,
+                        on_defect: None,
+                        on_suspend: None,
+                    });
+                    before.entry(stmt).or_default().push(convert);
+                    if let Stmt::Let {
+                        value: Value::Call { args, .. },
+                        ..
+                    } = &mut f.stmts[stmt]
+                    {
+                        args[i] = adapted.into();
+                    }
+                }
+            }
+            let Some(dst) = dst.filter(|v| f.vars[*v].ty != TypeId::ANY) else {
+                continue;
+            };
+            let raw = f.vars.alloc(emela_lir::VarData {
+                hint: "scope_result".into(),
+                ty: TypeId::ANY,
+                repr: emela_lir::Repr::Ref,
+            });
+            if let Stmt::Let { dst, .. } = &mut f.stmts[stmt] {
+                *dst = Some(raw);
+            }
+            let convert = f.stmts.alloc(Stmt::Let {
+                dst: Some(dst),
+                value: Value::Coerce(raw),
+                on_defect: None,
+                on_suspend: None,
+            });
+            after.insert(stmt, convert);
+        }
+        for (_, seq) in f.seqs.iter_mut() {
+            seq.stmts = seq
+                .stmts
+                .iter()
+                .flat_map(|s| {
+                    before
+                        .get(s)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .chain(std::iter::once(*s))
+                        .chain(after.get(s).copied())
+                })
+                .collect();
+        }
+    }
+}
+
 // Generic Scope lowering can conservatively mark wrappers as failing even when E is empty.
 // Erase those flags only in a closed, failure-free program, never at an unknown C boundary.
 pub(crate) fn erase_inert_failures(module: &mut Module, closures: &mut ClosureLowering) {

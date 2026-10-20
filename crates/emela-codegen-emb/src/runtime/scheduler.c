@@ -4,6 +4,12 @@ typedef struct emela_frame emela_frame;
 typedef struct emela_fiber emela_fiber;
 #ifdef EMELA_RESUME_RUNTIME
 typedef struct emela_resume emela_resume;
+#ifdef EMELA_SCOPE_RUNTIME
+typedef struct emela_child emela_child;
+static void emela_child_after_step(emela_fiber *fiber);
+static void emela_scope_sweep(void);
+#endif
+static void emela_resume_drive(emela_fiber *fiber);
 static void emela_resume_boundary(emela_fiber *fiber);
 static void emela_resume_after_step(emela_fiber *fiber);
 static void emela_resume_sweep(void);
@@ -33,6 +39,11 @@ struct emela_fiber {
 #ifdef EMELA_RESUME_RUNTIME
   EmelaFiber root;
   emela_resume *perform;
+#ifdef EMELA_SCOPE_RUNTIME
+  emela_child *child;
+  unsigned active;
+  int cancelled;
+#endif
 #ifdef EMELA_TASK_CAPACITY
   EmelaTask pending_task;
 #endif
@@ -99,6 +110,11 @@ static EmelaFiber emela_fiber_create(void) {
 #ifdef EMELA_RESUME_RUNTIME
   fiber->root = (EmelaFiber){slot, fiber->generation};
   fiber->perform = NULL;
+#ifdef EMELA_SCOPE_RUNTIME
+  fiber->child = NULL;
+  fiber->active = 0;
+  fiber->cancelled = 0;
+#endif
 #ifdef EMELA_TASK_CAPACITY
   fiber->pending_task = (EmelaTask){EMELA_SLOT_NONE, 0};
 #endif
@@ -147,11 +163,18 @@ uint32_t emela_scheduler_run(uint32_t budget) {
 #ifdef EMELA_RESUME_RUNTIME
     emela_current_fiber = fiber;
 #endif
+#ifdef EMELA_SCOPE_RUNTIME
+    emela_resume_drive(fiber);
+#else
     fiber->top->step(fiber, fiber->top);
+#endif
 #ifdef EMELA_RESUME_RUNTIME
     emela_current_fiber = NULL;
     emela_resume_after_step(fiber);
     emela_resume_sweep();
+#ifdef EMELA_SCOPE_RUNTIME
+    emela_scope_sweep();
+#endif
 #endif
     steps++;
     if (fiber->state == EMELA_FIBER_RUNNING) emela_ready_push(fiber);

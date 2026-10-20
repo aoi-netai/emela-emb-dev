@@ -14,7 +14,7 @@ pub(super) fn validate(
     emitted: &HashSet<FnId>,
     options: &Options,
 ) -> Result<bool, Vec<Error>> {
-    let mut enabled = has_operations(flow, emitted);
+    let mut enabled = has_operations(flow, emitted) || crate::fiber::has_scopes(flow, emitted);
     for (id, function) in flow.functions.iter().filter(|(id, _)| emitted.contains(id)) {
         if !function.suspends {
             continue;
@@ -55,6 +55,14 @@ pub(super) fn validate(
                             "failure edge in a suspend frame (phase 7 follow-up)",
                         ));
                     }
+                    Value::Fiber {
+                        op:
+                            emela_core::FiberOp::Scope { fails: false }
+                            | emela_core::FiberOp::Fork
+                            | emela_core::FiberOp::Deferred,
+                        on_fail: None,
+                        ..
+                    } => {}
                     Value::Fiber { .. } => {
                         return Err(unsupported(
                             &function.name,
@@ -157,7 +165,16 @@ pub(super) fn task_signature(layouts: &TypeLayouts<'_>, function: &Function, nam
     format!("void {name}({})", params.join(", "))
 }
 
-pub(super) fn emit_runtime(writer: &mut Writer, options: &Options, tasks: bool, resumes: bool) {
+pub(super) fn emit_runtime(
+    writer: &mut Writer,
+    options: &Options,
+    tasks: bool,
+    resumes: bool,
+    scopes: bool,
+) {
+    if scopes {
+        writer.line("#define EMELA_SCOPE_RUNTIME 1");
+    }
     if resumes {
         writer.line("#define EMELA_RESUME_RUNTIME 1");
     }
@@ -431,6 +448,63 @@ pub(super) fn emit_function(
         .body
         .ok_or_else(|| invalid_flow_ir(&function.name, "suspend function without body"))?;
     let entry = graph.sequence(function, body, None, usize::MAX)?;
+    let mut active: HashSet<_> = function.params.iter().copied().collect();
+    if let Some(env) = environment {
+        active.extend(
+            layouts.closure_environments[env]
+                .captures
+                .iter()
+                .map(|c| c.local),
+        );
+    }
+    for node in &graph.nodes {
+        let mut operands = Vec::new();
+        match node {
+            Node::Statement(id, _) => {
+                if let Stmt::Let { dst, value, .. } = &function.stmts[*id] {
+                    active.extend(*dst);
+                    value.for_each_var(|v| {
+                        active.insert(v);
+                    });
+                    if let Value::FnRef(target) = value
+                        && let Some(&env) = layouts.closure_functions.get(target)
+                    {
+                        active.extend(
+                            layouts.closure_environments[env]
+                                .captures
+                                .iter()
+                                .map(|c| c.source),
+                        );
+                    }
+                }
+            }
+            Node::Assign(values, _) => {
+                for (v, op) in values {
+                    active.insert(*v);
+                    operands.push(op);
+                }
+            }
+            Node::Branch(op, _, _) | Node::Defect(op) => operands.push(op),
+            Node::Switch(SwitchOn::Tag(v) | SwitchOn::Lit(v), ..) => {
+                active.insert(*v);
+            }
+            Node::Return(value) => operands.extend(value),
+            Node::Unreachable => {}
+        }
+        for op in operands {
+            if let Operand::Var(v) = op {
+                active.insert(*v);
+            }
+        }
+    }
+    // Cell cleanup is shared with the synchronous emitter and still uses all Cell locals.
+    active.extend(
+        function
+            .vars
+            .iter()
+            .filter(|(_, v)| matches!(layouts.types[v.ty], Type::Cell(_)))
+            .map(|(id, _)| id),
+    );
     let strings = StringBufferPlan::new(
         layouts,
         function,
@@ -444,7 +518,7 @@ pub(super) fn emit_function(
     if has_result {
         writer.line(&format!("  {} *result;", layouts.c_type(function.ret)));
     }
-    for (id, var) in function.vars.iter() {
+    for (id, var) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         writer.line(&format!(
             "  {} local_{};",
             layouts.c_type(var.ty),
@@ -477,7 +551,7 @@ pub(super) fn emit_function(
     ));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
     // Aliases let the shared emitter address persistent fields without stack copies.
-    for (id, _) in function.vars.iter() {
+    for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         writer.line(&format!(
             "#define {} (frame->local_{})",
             variable_name(id),
@@ -514,6 +588,48 @@ pub(super) fn emit_function(
             Node::Statement(id, next) => {
                 let statement = &function.stmts[*id];
                 if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Fiber {
+                            op: emela_core::FiberOp::Scope { fails: false },
+                            args,
+                            on_fail: None,
+                        },
+                    ..
+                } = statement
+                {
+                    let [Operand::Var(body)] = args.as_slice() else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "Scope body is not a function value",
+                        ));
+                    };
+                    let Type::Fn(ft) = &layouts.types[function.vars[*body].ty] else {
+                        return Err(invalid_flow_ir(&function.name, "Scope body type"));
+                    };
+                    if ft.fails || ft.ev || !ft.suspends || ft.params != [TypeId::FIBER_SCOPE] {
+                        return Err(unsupported(&function.name, "Scope body ABI"));
+                    }
+                    prepare_result(layouts, function, *dst, writer);
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    writer.line("emela_scope *scope = emela_scope_begin(fiber);");
+                    let body = variable_name(*body);
+                    writer.line(&format!(
+                        "if ({body}.call == NULL) emela_scheduler_invalid();"
+                    ));
+                    let mut call_args = vec![
+                        "fiber".to_owned(),
+                        format!("{body}.env"),
+                        "scope".to_owned(),
+                    ];
+                    if layouts.type_repr(ft.ret) != Repr::Void {
+                        call_args.push(
+                            dst.map(|v| format!("&{}", variable_name(v)))
+                                .unwrap_or_else(|| "NULL".into()),
+                        );
+                    }
+                    writer.line(&format!("{body}.call({}); return;", call_args.join(", ")));
+                } else if let Stmt::Let {
                     dst,
                     value:
                         Value::Call {
@@ -732,8 +848,13 @@ pub(super) fn emit_function(
             Node::Return(value) => {
                 if let Some(value) = value {
                     writer.begin_block("if (frame->result != NULL)");
-                    let expression = operand_expression(value)
+                    let mut expression = operand_expression(value)
                         .map_err(|why| unsupported(&function.name, why))?;
+                    if function.ret == TypeId::ANY
+                        && matches!(value, Operand::Const(Const::String(s)) if s.is_empty())
+                    {
+                        expression = "(EmelaAny){0}".into();
+                    }
                     writer.decl(&layouts.c_type(function.ret), "returned", Some(&expression));
                     retain_frame_value(layouts, function.ret, "returned", writer);
                     writer.line(&format!("*frame->result = returned;"));
@@ -761,12 +882,12 @@ pub(super) fn emit_function(
     writer.begin_block(&format!("static void {name}_drop(emela_frame *base)"));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
     writer.line("(void)frame;");
-    for (id, _) in function.vars.iter() {
+    for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         emit_release_if_owned(layouts, function, id, writer);
     }
     emit_cell_cleanup(layouts, function, writer);
     writer.end_block();
-    for (id, _) in function.vars.iter() {
+    for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         writer.line(&format!("#undef {}", variable_name(id)));
         writer.line(&format!("#undef {}", owned_variable_name(id)));
         writer.line(&format!("#undef {}", cell_storage_name(id)));
@@ -930,6 +1051,114 @@ pub(super) fn emit_resume_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer
         writer.line("emela_resume_commit(resume);");
         writer.end_block();
     }
+}
+
+pub(super) fn emit_scope_runtime(
+    layouts: &TypeLayouts<'_>,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    for (name, kind) in [
+        ("SCOPE", layouts.scope_kind()),
+        ("CHILD", layouts.child_kind()),
+        ("DEFERRED", layouts.deferred_kind()),
+    ] {
+        writer.line(&format!("#define EMELA_{name}_KIND UINT32_C({kind})"));
+    }
+    writer.line(include_str!("runtime/scope.c"));
+    for &ty in &layouts.fork_types {
+        let Type::Fn(ft) = &layouts.types[ty] else {
+            return Err(unsupported("Fork", "child is not a function"));
+        };
+        if ft.fails || ft.ev || !ft.suspends || !ft.params.is_empty() || ft.ret != TypeId::ANY {
+            return Err(unsupported(
+                "Fork",
+                "child must be a non-failing suspending fn() -> Any",
+            ));
+        }
+        let index = ty.index();
+        let cty = layouts.c_type(ty);
+        writer.line(&format!(
+            "typedef struct {{ emela_frame base; {cty} body; }} emela_fork_frame_{index};"
+        ));
+        writer.line(&format!("_Static_assert(sizeof(emela_fork_frame_{index}) <= EMELA_FRAME_BYTES, \"increase frame_bytes for Fork\");"));
+        writer.begin_block(&format!(
+            "static void emela_fork_drop_{index}(emela_frame *base)"
+        ));
+        writer.line(&format!(
+            "emela_fork_frame_{index} *frame = (emela_fork_frame_{index} *)base;"
+        ));
+        writer.line("(void)frame;");
+        if layouts.is_managed_value(ty) {
+            layouts.emit_release_value_expression(ty, "frame->body", writer);
+        }
+        writer.end_block();
+        writer.begin_block(&format!(
+            "static void emela_fork_step_{index}(emela_fiber *fiber, emela_frame *base)"
+        ));
+        writer.line(&format!(
+            "emela_fork_frame_{index} *frame = (emela_fork_frame_{index} *)base;"
+        ));
+        writer.begin_block("if (base->pc == 0)");
+        writer.line("base->pc = 1;");
+        writer.line("if (frame->body.call == NULL) emela_scheduler_invalid();");
+        writer.line("frame->body.call(fiber, frame->body.env, &fiber->child->result);");
+        writer.line("return;");
+        writer.end_block();
+        writer.line("emela_frame_return(fiber);");
+        writer.end_block();
+        writer.begin_block(&format!(
+            "static inline EmelaAny emela_fork_{index}(emela_scope *scope, {cty} body)"
+        ));
+        writer.line("emela_fiber *fiber = emela_child_begin(scope);");
+        writer.line(&format!("emela_fork_frame_{index} *frame = (emela_fork_frame_{index} *)emela_frame_push(fiber, sizeof(*frame), emela_fork_step_{index});"));
+        writer.line(&format!("frame->base.drop = emela_fork_drop_{index};"));
+        writer.line("frame->body = body;");
+        if layouts.is_managed_value(ty) {
+            layouts.emit_retain_value_expression(ty, "body", writer);
+        }
+        writer.line("emela_ready_push(fiber);");
+        writer.line("emela_heap_retain(fiber->child);");
+        writer.line("return (EmelaAny){.payload.any_box = fiber->child};");
+        writer.end_block();
+    }
+    Ok(())
+}
+
+pub(super) fn emit_fiber_value(
+    _layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    op: emela_core::FiberOp,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let expression = match (op, args) {
+        (emela_core::FiberOp::Fork, [scope, Operand::Var(body)]) => format!(
+            "emela_fork_{}({}, {})",
+            function.vars[*body].ty.index(),
+            operand_expression(scope).map_err(|w| unsupported(&function.name, w))?,
+            variable_name(*body)
+        ),
+        (emela_core::FiberOp::Deferred, [scope]) => format!(
+            "emela_deferred_create({})",
+            operand_expression(scope).map_err(|w| unsupported(&function.name, w))?
+        ),
+        _ => {
+            return Err(unsupported(
+                &function.name,
+                &format!("Fiber::{} (phase 7 follow-up)", op.name()),
+            ));
+        }
+    };
+    if let Some(dst) = dst {
+        writer.assign(&variable_name(dst), &expression);
+    } else {
+        writer.begin_block("");
+        writer.line(&format!("EmelaAny discarded = {expression};"));
+        writer.line("emela_heap_release(discarded.payload.any_box);");
+        writer.end_block();
+    }
+    Ok(())
 }
 
 pub(super) fn emit_operation(
