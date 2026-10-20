@@ -4904,10 +4904,7 @@ fn emit_statement_inner(
                 )?,
                 Value::ListIsEmpty(list) => {
                     let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "Value::ListIsEmpty has no Bool destination",
-                        ));
+                        return Ok(());
                     };
                     writer.assign(
                         &variable_name(*dst),

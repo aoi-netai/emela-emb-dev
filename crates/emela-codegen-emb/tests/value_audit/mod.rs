@@ -195,3 +195,7 @@ fn discarded_enum_fields_accept_represented_and_unit_fields() {
 fn discarded_tuple_projections_accept_represented_and_unit_fields() {
     run_discarded("tuple_get", 0);
 }
+#[test]
+fn discarded_list_emptiness_is_heapless() {
+    run_discarded("list_empty", 0);
+}
