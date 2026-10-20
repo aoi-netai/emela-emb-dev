@@ -174,7 +174,24 @@ fn closed_set_function_flow(mode: &str) -> Module {
 
 #[test]
 fn concrete_function_sets_are_normalized_before_value_abi_validation() {
-    let flow = closed_set_function_flow("closed");
+    let mut flow = closed_set_function_flow("closed");
+    let closed = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name == "sets")
+        .unwrap()
+        .1
+        .vars
+        .iter()
+        .find(|(_, v)| matches!(flow.core.types[v.ty], Type::Fn(_)))
+        .unwrap()
+        .1
+        .ty;
+    let mut unused = FnBuilder::new(&flow.core, "unused");
+    unused.param("f", closed);
+    unused.set_ret(TypeId::INT);
+    unused.term(Term::Return(Some(Const::Int(0).into())));
+    flow.add(unused.finish());
     let output = compile_flow(&flow, &Options::default()).expect("closed sets have an exact ABI");
     compile_and_run(
         output,

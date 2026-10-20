@@ -8,11 +8,7 @@ use crate::{Error, ErrorKind};
 
 pub(crate) fn normalize(module: &mut Module) -> Result<(), Vec<Error>> {
     let mut normalized = HashMap::new();
-    let reachable = crate::emit::runtime_reachable(module);
-    for (id, function) in module.functions.iter_mut() {
-        if !reachable.contains(&id) {
-            continue;
-        }
+    for (_, function) in module.functions.iter_mut() {
         let mut resolve = |ty| {
             normalize_type(&mut module.core.types, ty, &mut normalized).map_err(|reason| {
                 vec![Error {
