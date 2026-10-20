@@ -240,6 +240,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if has_tasks {
         header.line(include_str!("runtime/task.h"));
+        if suspend::has_failing_tasks(flow, &emitted_functions) {
+            header.line(include_str!("runtime/task_failure.h"));
+        }
         for (id, function) in flow
             .functions
             .iter()
@@ -423,6 +426,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <stddef.h>");
     source.blank();
     if has_scheduler {
+        if suspend::has_failing_tasks(flow, &emitted_functions) {
+            source.line("#define EMELA_TASK_FAILURE_RUNTIME 1");
+        }
         suspend::emit_runtime(
             &mut source,
             options,
@@ -474,6 +480,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         error_runtime::emit_ownership(&layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
+    }
+    if suspend::has_failing_tasks(flow, &emitted_functions) {
+        suspend::emit_task_failure_ownership(&layouts, &mut source);
     }
     cause::emit_runtime(&layouts, &mut source);
     if layouts.has_resumes {

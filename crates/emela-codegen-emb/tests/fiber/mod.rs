@@ -14,6 +14,7 @@ mod notes;
 mod overlap;
 mod payload;
 mod protect;
+mod task_failure;
 
 fn options() -> Options {
     Options::default()

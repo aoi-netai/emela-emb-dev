@@ -20,11 +20,8 @@ pub(super) fn validate(
             continue;
         }
         enabled = true;
-        if function.constant || (function.fails && function.external.is_some()) {
-            return Err(unsupported(
-                &function.name,
-                "const suspend function or failing external task ABI",
-            ));
+        if function.constant {
+            return Err(unsupported(&function.name, "const suspend function"));
         }
         if function.external.is_some()
             && (!scalar(&flow.core.types, function.ret)
@@ -127,6 +124,40 @@ pub(super) fn has_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bo
     flow.functions
         .iter()
         .any(|(id, f)| emitted.contains(&id) && f.suspends && f.external.is_some())
+}
+
+pub(super) fn has_failing_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .any(|(id, f)| emitted.contains(&id) && f.suspends && f.fails && f.external.is_some())
+}
+
+pub(super) fn emit_task_failure_ownership(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    writer.begin_block("static void emela_task_own_error(EmelaError *error)");
+    writer.begin_block("switch (error->tag)");
+    for &(id, ty) in &layouts.error_types {
+        writer.line(&format!("case UINT32_C({}):", enum_index(id) + 1));
+        writer.begin_block("");
+        let value = format!("error->payload.e{}", enum_index(id));
+        let variant = if layouts.aggregate_ids.contains_key(&ty) {
+            format!("{value}.tag")
+        } else {
+            value.clone()
+        };
+        writer.line(&format!(
+            "if ((uint32_t)({variant}) >= UINT32_C({})) emela_scheduler_invalid();",
+            layouts.core.enums[id].variants.len()
+        ));
+        layouts.emit_own_value_in_place(ty, &value, writer);
+        writer.line("break;");
+        writer.end_block();
+    }
+    writer.line("default: emela_scheduler_invalid();");
+    writer.end_block();
+    if layouts.has_error_notes() {
+        writer.line("emela_heap_retain(error->notes);");
+    }
+    writer.end_block();
 }
 
 pub(super) fn has_protects(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
@@ -581,8 +612,13 @@ pub(super) fn emit_function(
         } else {
             "result"
         };
+        let error = if function.fails {
+            "emela_error_out"
+        } else {
+            "NULL"
+        };
         writer.line(&format!(
-            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind});"
+            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind}, {error});"
         ));
         let mut args = vec!["task".to_owned()];
         args.extend(function.params.iter().copied().map(variable_name));

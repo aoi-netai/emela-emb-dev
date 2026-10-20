@@ -8,15 +8,30 @@ typedef struct {
   uint32_t next;
   uint32_t state;
   uint32_t kind;
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+  EmelaError *error_out;
+#endif
 } emela_task_slot;
-typedef struct { EmelaTask task; emela_task_value value; } emela_event;
+typedef struct {
+  EmelaTask task;
+  emela_task_value value;
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+  EmelaTaskFailureProducer producer;
+  EmelaTaskContextRelease release;
+  void *context;
+#endif
+} emela_event;
 static emela_task_slot emela_tasks[EMELA_TASK_CAPACITY];
 static emela_event emela_events[EMELA_EVENT_CAPACITY];
 static uint32_t emela_task_free;
 static uint32_t emela_event_head, emela_event_tail, emela_event_count;
 static int emela_tasks_initialized;
 
-static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kind) {
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+static void emela_task_own_error(EmelaError *error);
+#endif
+
+static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kind, void *error_out) {
   /* Initialization runs once in the main context, before any handle is published. */
   if (!emela_tasks_initialized) {
     for (uint32_t i = 0; i < EMELA_TASK_CAPACITY; i++)
@@ -40,6 +55,11 @@ static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kin
   task->fiber = (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation};
   task->result = result;
   task->kind = kind;
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+  task->error_out = (EmelaError *)error_out;
+#else
+  (void)error_out;
+#endif
   task->state = EMELA_TASK_PENDING;
   fiber->state = EMELA_FIBER_WAITING;
   EmelaTask handle = {slot, task->generation};
@@ -68,7 +88,7 @@ static int emela_task_complete(EmelaTask handle, uint32_t kind, emela_task_value
     emela_board_event_unlock(irq_state);
     emela_board_defect(EMELA_DEFECT_HEAP_EXHAUSTED, "fixed event queue exhausted", UINT16_C(27));
   }
-  emela_events[emela_event_tail] = (emela_event){handle, value};
+  emela_events[emela_event_tail] = (emela_event){.task = handle, .value = value};
   emela_event_tail = (emela_event_tail + 1) % EMELA_EVENT_CAPACITY;
   emela_event_count++;
   task->state = EMELA_TASK_QUEUED;
@@ -88,6 +108,33 @@ int emela_task_complete_float(EmelaTask task, double value) {
   return emela_task_complete(task, EMELA_TASK_FLOAT, (emela_task_value){.f64 = value});
 }
 
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+int emela_task_fail(EmelaTask handle, EmelaTaskFailureProducer producer,
+                    void *context, EmelaTaskContextRelease release) {
+  if (producer == NULL) return 0;
+  uint32_t irq_state = emela_board_event_lock();
+  if (handle.slot >= EMELA_TASK_CAPACITY) {
+    emela_board_event_unlock(irq_state);
+    return 0;
+  }
+  emela_task_slot *task = &emela_tasks[handle.slot];
+  if (task->generation != handle.generation || task->state != EMELA_TASK_PENDING || task->error_out == NULL) {
+    emela_board_event_unlock(irq_state);
+    return 0;
+  }
+  if (emela_event_count == EMELA_EVENT_CAPACITY) {
+    emela_board_event_unlock(irq_state);
+    emela_board_defect(EMELA_DEFECT_HEAP_EXHAUSTED, "fixed event queue exhausted", UINT16_C(27));
+  }
+  emela_events[emela_event_tail] = (emela_event){.task = handle, .producer = producer, .release = release, .context = context};
+  emela_event_tail = (emela_event_tail + 1) % EMELA_EVENT_CAPACITY;
+  emela_event_count++;
+  task->state = EMELA_TASK_QUEUED;
+  emela_board_event_unlock(irq_state);
+  return 1;
+}
+#endif
+
 static int emela_task_dispatch_one(void) {
   uint32_t irq_state = emela_board_event_lock();
   if (emela_event_count == 0) {
@@ -100,7 +147,10 @@ static int emela_task_dispatch_one(void) {
   emela_task_slot *task = &emela_tasks[event.task.slot];
   if (task->generation != event.task.generation || task->state != EMELA_TASK_QUEUED) {
     emela_board_event_unlock(irq_state);
-#ifdef EMELA_RESUME_RUNTIME
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+    if (event.release != NULL) event.release(event.context);
+#endif
+#ifdef EMELA_UNWIND_RUNTIME
     return 1; /* A completed root abandoned this task before the queued event was consumed. */
 #else
     emela_scheduler_invalid();
@@ -109,6 +159,9 @@ static int emela_task_dispatch_one(void) {
   EmelaFiber owner = task->fiber;
   void *result = task->result;
   uint32_t kind = task->kind;
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+  EmelaError *error_out = task->error_out;
+#endif
   task->state = EMELA_TASK_FREE;
   task->next = emela_task_free;
   emela_task_free = event.task.slot;
@@ -119,6 +172,16 @@ static int emela_task_dispatch_one(void) {
   fiber->pending_task = (EmelaTask){EMELA_SLOT_NONE, 0};
 #endif
   if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
+#ifdef EMELA_TASK_FAILURE_RUNTIME
+  if (event.producer != NULL) {
+    if (error_out == NULL) emela_scheduler_invalid();
+    EmelaError error = {0};
+    event.producer(event.context, &error);
+    emela_task_own_error(&error);
+    if (event.release != NULL) event.release(event.context);
+    *error_out = error;
+  } else
+#endif
   if (result != NULL) {
     switch (kind) {
       case EMELA_TASK_UNIT: break;
