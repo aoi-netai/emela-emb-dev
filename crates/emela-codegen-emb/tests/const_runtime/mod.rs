@@ -767,17 +767,22 @@ pub fn text() -> Int { (value,text)=CAPTURE(IDENTITY("42"))()
 "#;
     let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
     let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
-    let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(8192)).unwrap();
-    let integer = export(&output, "integer");
-    let text = export(&output, "text");
-    output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
+    for cycles in [false, true] {
+        let mut flow = flow.clone();
+        if cycles {
+            gc_anchor::add(&mut flow);
+        }
+        let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(8192)).unwrap();
+        let integer = export(&output, "integer");
+        let text = export(&output, "text");
+        output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
 unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;n+=!b->is_free;p+=b->size;}return n;}
 "#);
-    for choice in [1, 2] {
-        compile_and_run(
-            output.clone(),
-            &format!(
-                r#"
+        for choice in [1, 2] {
+            compile_and_run(
+                output.clone(),
+                &format!(
+                    r#"
 #include <assert.h>
 #include <stdlib.h>
 #include "emela_embedded.h"
@@ -790,8 +795,9 @@ void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializatio
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
 int main(void){{assert({integer}()==42);assert({text}()==42);unsigned baseline=test_live();assert(initializations==6&&ticks==2);for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({text}()==42);assert(test_live()==baseline);}}assert(initializations==6&&ticks==2&&marks==2002);return 0;}}
 "#
-            ),
-        );
+                ),
+            );
+        }
     }
 }
 
@@ -806,45 +812,50 @@ fn polymorphic_const_callable_families_preserve_async_failure_evidence_and_selec
     )
     .unwrap();
     let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
-    let mut output = compile_flow(
-        &flow,
-        &Options::default()
-            .with_heap_bytes(32768)
-            .with_frame_bytes(1024),
-    )
-    .unwrap();
-    let names = [
-        "integer",
-        "text",
-        "evidence",
-        "failing",
-        "asynchronous",
-        "choice_integer",
-        "choice_text",
-        "enum_integer",
-        "enum_text",
-        "caught",
-    ]
-    .map(|n| export(&output, n));
-    output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
+    for cycles in [false, true] {
+        let mut flow = flow.clone();
+        if cycles {
+            gc_anchor::add(&mut flow);
+        }
+        let mut output = compile_flow(
+            &flow,
+            &Options::default()
+                .with_heap_bytes(32768)
+                .with_frame_bytes(1024),
+        )
+        .unwrap();
+        let names = [
+            "integer",
+            "text",
+            "evidence",
+            "failing",
+            "asynchronous",
+            "choice_integer",
+            "choice_text",
+            "enum_integer",
+            "enum_text",
+            "caught",
+        ]
+        .map(|n| export(&output, n));
+        output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
 unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;n+=!b->is_free;p+=b->size;}return n;}
 "#);
-    let [
-        integer,
-        text,
-        evidence,
-        failing,
-        asynchronous,
-        choice_integer,
-        choice_text,
-        enum_integer,
-        enum_text,
-        caught,
-    ] = names;
-    compile_and_run(
-        output,
-        &format!(
-            r#"
+        let [
+            integer,
+            text,
+            evidence,
+            failing,
+            asynchronous,
+            choice_integer,
+            choice_text,
+            enum_integer,
+            enum_text,
+            caught,
+        ] = names;
+        compile_and_run(
+            output,
+            &format!(
+                r#"
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -861,8 +872,9 @@ int main(void){{unsigned baseline=0;for(unsigned i=0;i<1001;i++){{
  if(i==0)baseline=test_live();else assert(test_live()==baseline);
  }}assert(initializations==9);return 0;}}
 "#
-        ),
-    );
+            ),
+        );
+    }
 }
 
 #[test]
