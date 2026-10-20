@@ -243,3 +243,7 @@ fn discarded_error_test_accepts_a_caught_error_descriptor() {
 fn discarded_error_projection_accepts_a_caught_error_descriptor() {
     run_discarded("as_error", 0);
 }
+#[test]
+fn discarded_coerce_without_a_target_type_is_a_noop() {
+    run_discarded("coerce", 0);
+}

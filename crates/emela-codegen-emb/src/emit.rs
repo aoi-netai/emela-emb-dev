@@ -3733,7 +3733,7 @@ fn emit_coerce(
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let Some(dst) = dst else {
-        return Err(invalid_flow_ir(&function.name, "Coerce has no destination"));
+        return Ok(());
     };
     let source_ty = function.vars[source].ty;
     let destination_ty = function.vars[dst].ty;
