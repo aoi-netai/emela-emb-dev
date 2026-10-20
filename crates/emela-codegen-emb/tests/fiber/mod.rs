@@ -5,6 +5,7 @@ mod aggregate_abi;
 mod attempt;
 mod await_;
 mod cause;
+mod child_reclaim;
 mod failure;
 mod function_aggregate;
 mod interrupt;

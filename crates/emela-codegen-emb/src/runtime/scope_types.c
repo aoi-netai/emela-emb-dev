@@ -22,7 +22,8 @@ struct emela_scope {
 };
 struct emela_child {
   emela_scope *scope;
-  emela_child *next; /* Non-owning link; the scope holds one reference per child. */
+  emela_child *previous;
+  emela_child *next; /* Non-owning: executions, handles, and waiters own children. */
   EmelaFiber execution;
   EmelaAny result;
   int status;
@@ -34,6 +35,13 @@ struct emela_child {
   emela_child_waiter *tail;
 #endif
 };
+static void emela_child_unlink(emela_child *child) {
+  if (child->previous != NULL) child->previous->next = child->next;
+  else if (child->scope->children == child) child->scope->children = child->next;
+  else return;
+  if (child->next != NULL) child->next->previous = child->previous;
+  child->previous = child->next = NULL;
+}
 /* The constructor is part of Scope's generated handler, even if never called. */
 struct emela_deferred {
   emela_scope *scope;

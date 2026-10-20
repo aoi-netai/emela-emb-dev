@@ -45,11 +45,11 @@ static void emela_scope_finish(emela_scope *scope) {
 #ifdef EMELA_DEFERRED_CAPACITY
   emela_deferred_scope_end(scope);
 #endif
-  emela_child *child = scope->children;
-  scope->children = NULL;
-  while (child != NULL) {
-    emela_child *next = child->next;
-    child->next = NULL;
+  while (scope->children != NULL) {
+    emela_child *child = scope->children;
+    emela_heap_retain(child);
+    /* Releasing a result may destroy this child or another child in the weak list. */
+    emela_child_unlink(child);
 #ifdef EMELA_CHILD_WAIT_RUNTIME
     emela_child_publish(child);
 #endif
@@ -57,8 +57,10 @@ static void emela_scope_finish(emela_scope *scope) {
     EmelaAny result = child->result;
     child->result = (EmelaAny){0};
     if (result.tag == 0) emela_heap_release(result.payload.any_box);
+#ifdef EMELA_FAILURE_RUNTIME
+    emela_error_clear(&child->error);
+#endif
     emela_heap_release(child);
-    child = next;
   }
 }
 static void emela_scope_close(emela_scope *scope, EmelaFiber closer) {
@@ -117,6 +119,8 @@ static void emela_scope_drop(emela_frame *base) {
   emela_scope_finish(scope);
 #ifdef EMELA_FAILURE_RUNTIME
   emela_error_clear(&((emela_scope_frame *)base)->body_error);
+  /* Escaping errors own a separate copy; scope-local payloads may capture child handles. */
+  emela_error_clear(&scope->first_error);
 #endif
   emela_heap_release(scope);
 }
@@ -188,7 +192,8 @@ static inline emela_fiber *emela_child_begin(emela_scope *scope) {
   emela_child *child = (emela_child *)emela_heap_allocate(sizeof(emela_child), EMELA_CHILD_KIND);
   *child = (emela_child){.scope = scope, .next = scope->children, .execution = handle};
   emela_heap_retain(scope);
-  emela_heap_retain(child); /* The execution context and scope each hold one reference. */
+  /* The initial reference belongs to the execution context. The scope list is weak. */
+  if (scope->children != NULL) scope->children->previous = child;
   scope->children = child;
   scope->running++;
   fiber->child = child;

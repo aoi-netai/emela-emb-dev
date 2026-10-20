@@ -592,6 +592,7 @@ pub(super) fn emit_function(
     }
     // A synthetic error destination reuses the synchronous call emitter's validated ABI.
     let mut lowered = function.clone();
+    discard_unused_child_handles(layouts, &mut lowered);
     let call_error_var = lowered.vars.alloc(emela_lir::VarData {
         hint: "call_error".into(),
         ty: TypeId::ANY,
@@ -1427,6 +1428,76 @@ pub(super) fn emit_function(
         writer.end_block();
     }
     Ok(())
+}
+
+fn discard_unused_child_handles(layouts: &TypeLayouts<'_>, function: &mut Function) {
+    let mut used = HashSet::new();
+    for (_, statement) in function.stmts.iter() {
+        match statement {
+            Stmt::Let { value, .. } => for_each_string_plan_var(layouts, value, |id| {
+                used.insert(id);
+            }),
+            Stmt::If { cond, .. } => count_operand(cond, &mut |id| {
+                used.insert(id);
+            }),
+            Stmt::Switch {
+                on: SwitchOn::Tag(id) | SwitchOn::Lit(id),
+                ..
+            }
+            | Stmt::Dup(id)
+            | Stmt::Drop(id) => {
+                used.insert(*id);
+            }
+            Stmt::Loop { inits, .. } => {
+                for value in inits {
+                    count_operand(value, &mut |id| {
+                        used.insert(id);
+                    });
+                }
+            }
+            Stmt::Block { .. } | Stmt::Protect { .. } => {}
+        }
+    }
+    for (_, sequence) in function.seqs.iter() {
+        let mut add = |id| {
+            used.insert(id);
+        };
+        match &sequence.term {
+            Term::Return(value) | Term::Yield(value) | Term::Break { value, .. } => {
+                if let Some(value) = value {
+                    count_operand(value, &mut add);
+                }
+            }
+            Term::Fail(value) | Term::Defect(value) => count_operand(value, &mut add),
+            Term::Recur(values) => {
+                for value in values {
+                    count_operand(value, &mut add);
+                }
+            }
+            Term::Unwind | Term::Unreachable => {}
+        }
+    }
+    for (_, statement) in function.stmts.iter_mut() {
+        if let Stmt::Let {
+            dst: destination @ Some(_),
+            value:
+                Value::Call { .. }
+                | Value::Fiber {
+                    op: emela_core::FiberOp::Fork,
+                    ..
+                },
+            ..
+        } = statement
+        {
+            let id = destination.unwrap();
+            if !used.contains(&id)
+                && layouts.is_named_external(function.vars[id].ty, "Std.Fiber.Fiber")
+            {
+                // A source-level discarded handle must not become a persistent frame owner.
+                *destination = None;
+            }
+        }
+    }
 }
 
 pub(super) fn retain_frame_value(
