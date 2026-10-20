@@ -9,6 +9,7 @@ mod support;
 mod deferred;
 mod fiber;
 mod owned;
+mod string_append;
 mod suspend;
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};

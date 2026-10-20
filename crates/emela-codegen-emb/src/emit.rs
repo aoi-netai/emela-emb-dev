@@ -3534,8 +3534,15 @@ fn emit_builtin(
                         "dynamic String append has no planned output buffer",
                     ));
                 };
+                // A literal cannot alias writable output. Keeping its copy unconditional
+                // also avoids GCC diagnosing the impossible output-equals-literal branch.
+                let copy_left = if matches!(args[0], Operand::Const(Const::String(_))) {
+                    "INT32_C(1)".to_owned()
+                } else {
+                    format!("(({}).data != {buffer})", expressions[0])
+                };
                 format!(
-                    "emela_emb_string_append({}, {}, {buffer}, {capacity})",
+                    "emela_emb_string_append({}, {}, {buffer}, {capacity}, {copy_left})",
                     expressions[0], expressions[1]
                 )
             }
@@ -4656,7 +4663,7 @@ fn emit_string_ends_with_helper(writer: &mut Writer) {
 
 fn emit_string_append_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity)",
+        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
     );
     writer.begin_block(
         "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",
@@ -4665,7 +4672,7 @@ fn emit_string_append_helper(writer: &mut Writer) {
         "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
     );
     writer.end_block();
-    writer.begin_block("if (left.data != buffer)");
+    writer.begin_block("if (copy_left)");
     writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)left.length; ++i)");
     writer.line("buffer[i] = left.data[i];");
     writer.end_block();
