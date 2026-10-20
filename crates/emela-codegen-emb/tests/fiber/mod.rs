@@ -1,5 +1,7 @@
 use super::*;
 
+mod join;
+
 fn options() -> Options {
     Options::default()
         .with_heap_bytes(8192)

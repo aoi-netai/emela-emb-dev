@@ -10,6 +10,8 @@ use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
+#[path = "child.rs"]
+mod child;
 #[path = "deferred.rs"]
 mod deferred;
 #[path = "suspend.rs"]
@@ -435,6 +437,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         );
     }
     if layouts.has_scopes {
+        if !layouts.child_join_types.is_empty() {
+            source.line("#define EMELA_CHILD_WAIT_RUNTIME");
+        }
         source.line(include_str!("runtime/scope_types.c"));
     }
     if layouts.deferred_pool {
@@ -470,6 +475,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         suspend::emit_resume_runtime(&layouts, &mut source);
     }
     if layouts.has_scopes {
+        if !layouts.child_join_types.is_empty() {
+            source.line(include_str!("runtime/child_wait.c"));
+            child::emit_runtime(&layouts, &mut source)?;
+        }
         suspend::emit_scope_runtime(&layouts, &mut source)?;
     }
     if layouts.deferred_pool {
@@ -8318,6 +8327,7 @@ struct TypeLayouts<'a> {
     deferred_read_types: Vec<TypeId>,
     deferred_poll_types: Vec<TypeId>,
     deferred_await_types: Vec<TypeId>,
+    child_join_types: Vec<TypeId>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8401,6 +8411,7 @@ impl<'a> TypeLayouts<'a> {
             deferred_read_types: Vec::new(),
             deferred_poll_types: Vec::new(),
             deferred_await_types: Vec::new(),
+            child_join_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8439,6 +8450,23 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Join,
+                        args,
+                        ..
+                    } => {
+                        let [handle] = args.as_slice() else {
+                            return Err(invalid_flow_ir(&function.name, "Join arity"));
+                        };
+                        let ty = child::value_type(&layouts, function, handle)?;
+                        if dst.is_some_and(|dst| function.vars[dst].ty != ty) {
+                            return Err(invalid_flow_ir(&function.name, "Join result type"));
+                        }
+                        layouts.add_any_box_type(ty);
+                        if !layouts.child_join_types.contains(&ty) {
+                            layouts.child_join_types.push(ty);
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::DeferredAwait,
                         args,

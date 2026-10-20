@@ -22,8 +22,12 @@ pub(super) fn value_type(
     }
 }
 
-fn coerce_function(layouts: &TypeLayouts<'_>, source: TypeId, destination: TypeId) -> Function {
-    let mut f = Function::new("Deferred value");
+pub(super) fn coerce_function(
+    layouts: &TypeLayouts<'_>,
+    source: TypeId,
+    destination: TypeId,
+) -> Function {
+    let mut f = Function::new("runtime value");
     f.vars.alloc(emela_lir::VarData {
         hint: "source".into(),
         ty: source,

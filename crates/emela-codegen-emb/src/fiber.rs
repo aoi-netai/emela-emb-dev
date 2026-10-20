@@ -20,6 +20,7 @@ pub(crate) fn has_scopes(module: &Module, emitted: &HashSet<emela_lir::FnId>) ->
                                 | FiberOp::Deferred
                                 | FiberOp::Complete
                                 | FiberOp::Poll
+                                | FiberOp::Join
                                 | FiberOp::DeferredAwait,
                             ..
                         },
