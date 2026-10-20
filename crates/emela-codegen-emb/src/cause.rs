@@ -12,6 +12,34 @@ pub(super) fn emit_types(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     writer.line("} emela_cause;");
 }
 
+pub(super) fn emit_infallible_raise(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    if !layouts.has_cause_raise {
+        return;
+    }
+    writer.begin_block("static inline void emela_infallible_cause_fail(EmelaError error)");
+    writer.line("(void)error;");
+    if layouts.has_scopes && layouts.has_error_abi {
+        writer.begin_block("if (emela_current_fiber != NULL)");
+        writer.begin_block("for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++)");
+        writer.line("emela_fiber *owner = &emela_fibers[slot];");
+        writer.line("if (owner->state == EMELA_FIBER_FREE || !emela_same_fiber(owner->root, emela_current_fiber->root)) continue;");
+        writer.begin_block("for (emela_frame *at = owner->top; at != NULL; at = at->parent)");
+        writer.line("if (at->has_failure != emela_scope_has_failure || ((emela_scope_frame *)at)->scope->first_error.tag == 0) continue;");
+        // The scope already owns this failure and its notes; do not report it a second time.
+        writer.line("if (owner->failure_stop == NULL) owner->failure_stop = at;");
+        writer.begin_block("for (uint32_t index = 0; index < EMELA_FIBER_CAPACITY; index++)");
+        writer.line("emela_fiber *context = &emela_fibers[index];");
+        writer.line("if (context->state != EMELA_FIBER_FREE && emela_same_fiber(context->root, owner->root)) context->forced = 1;");
+        writer.end_block();
+        writer.line("return;");
+        writer.end_block();
+        writer.end_block();
+        writer.end_block();
+    }
+    writer.line("emela_board_defect(EMELA_DEFECT_ASSERT, \"assertion failed: empty Cause failed\", UINT16_C(34));");
+    writer.end_block();
+}
+
 pub(super) fn emit_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     if !layouts.has_causes {
         return;

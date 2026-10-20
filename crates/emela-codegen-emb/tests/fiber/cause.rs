@@ -236,3 +236,195 @@ fn compile_flow_keeps_rejecting_a_cause_failure_without_a_channel() {
     assert!(errors.iter().any(|e| e.kind == ErrorKind::InvalidFlowIr
         && e.message.contains("fails a body that cannot fail")));
 }
+
+#[test]
+fn failed_empty_cause_raised_in_cleanup_returns_to_its_failing_scope() {
+    let source = r#"
+import Std.Fiber.{Fiber, Success, Failure}
+import Std.Cause.{Cause}
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+error Boom(n: Int)
+effect Wait { suspend fn get(n: Int) -> Int }
+handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+fn bounce(c: Cause[{}]) -> () { Cause.raise(c) }
+fn bounce_async(c: Cause[{}]) -> () use Wait { (use Wait).get(3)
+ Cause.raise(c)
+}
+fn cleanup(child: Fiber[Int], asynchronous: Bool) -> () use {Async, Wait} {
+ mark(1)
+ Fiber.await(child) match { Success(_) -> mark(99)
+  Failure(c) -> if asynchronous { bounce_async(c) } else { bounce(c) }
+ }
+ mark(98)
+}
+fn protected(child: Fiber[Int], asynchronous: Bool) -> Int use {Async, Wait} {
+ (use Wait).get(2)
+ cleanup(child, asynchronous)
+ 0
+}
+pub fn work(asynchronous: Bool) -> Int use Async {
+ with Waiting { Fiber.scope(fn() {
+  child = Fiber.fork(fn() { (use Wait).get(1)
+   fail Boom(n: 42)
+  })
+  protected(child, asynchronous)
+ }) escape { Boom(n) -> { mark(2)
+  n
+ } } }
+}
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    let mut flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    super::interrupt::protect_cleanup_call(&mut flow);
+    let mut output = compile_flow(
+        &flow,
+        &options()
+            .with_heap_bytes(4096)
+            .with_task_capacity(3)
+            .with_event_capacity(3),
+    )
+    .unwrap();
+    super::notes::add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+static EmelaTask tasks[3];static int count, order;
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+void board_wait_start(EmelaTask t,int32_t n) { assert(n>=1 && n<=3);tasks[n-1]=t;count++; }
+void mark(int32_t n) { assert(n==++order); }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }
+int main(void) {
+ for(int i=0;i<1000;i++) {
+  int32_t result=-1;count=order=0;int asynchronous=i%2;
+  EmelaFiber f=emela_export_work_0_start(asynchronous,i%3 ? &result:NULL);
+  while(emela_scheduler_run(1)) {} assert(count==2);
+  assert(emela_task_complete_int(tasks[0],0));while(emela_scheduler_run(1)) {}
+  if(asynchronous) {
+   assert(count==3 && order==1 && !emela_fiber_done(f));
+   assert(emela_task_complete_int(tasks[2],0));
+  }
+  while(!emela_fiber_done(f)) { assert(emela_scheduler_run(1)); }
+  assert((i%3 ? result==42:result==-1) && order==2);
+  assert(!emela_task_complete_int(tasks[1],0));emela_fiber_release(f);assert(test_heap_empty());
+ }
+}
+"#,
+    );
+}
+
+#[test]
+fn interruption_raised_by_cleanup_replaces_a_body_failure() {
+    for mode in 0..3 {
+        let protected = match mode {
+            0 => {
+                "fn protected(c: Cause[{}]) -> Int fails Boom { with Res { failure()\n cleanup(c)\n 0 } }"
+            }
+            1 => {
+                "fn protected(c: Cause[{}]) -> Int fails Boom use Wait { with Res { (use Wait).get(3)\n failure()\n cleanup(c)\n 0 } }"
+            }
+            _ => {
+                "fn protected(c: Cause[{}]) -> Int { with Res { failure()\n cleanup(c)\n 0 } escape { Boom(n) -> { mark(3)\n n } } }"
+            }
+        };
+        let source = format!(
+            r#"
+import Std.Fiber.{{Fiber, Success, Failure}}
+import Std.Cause.{{Cause, Fail, Die, Interrupt}}
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+@external(c, "mark")
+fn mark(n: Int) -> () use {{}}
+error Boom(n: Int)
+effect Wait {{ suspend fn get(n: Int) -> Int }}
+handler Waiting implements Wait {{ suspend fn get(n,resume) {{ resume(wait(n)) }} }}
+effect Resource {{ fn read() -> Int }}
+handler Res implements Resource {{ fn read() {{ 0 }}
+ release {{ mark(2) }}
+}}
+fn failure() -> Int fails Boom {{ fail Boom(n: 42) }}
+fn cleanup(c: Cause[{{}}]) -> () {{ mark(1)
+ Cause.raise(c)
+ mark(99)
+}}
+{protected}
+pub fn make(failing: Bool) -> Cause[{{}}] use Async {{ with Waiting {{ Fiber.scope(fn() {{
+ if failing {{ fail Boom(n: 0) }}
+ child = Fiber.fork(fn() {{ (use Wait).get(1) }})
+ (use Wait).get(2)
+ Fiber.interrupt(child)
+ Fiber.await(child) match {{ Success(_) -> panic("unexpected")
+  Failure(c) -> c
+ }}
+}}) escape {{ Boom(_) -> panic("unexpected") }} }} }}
+pub fn work(c: Cause[{{}}], failing: Bool) -> Int use Async {{ with Waiting {{
+ Fiber.scope(fn() {{
+  if failing {{ fail Boom(n: 0) }}
+  child = Fiber.fork(fn() {{ protected(c) }})
+  Fiber.await(child) match {{ Success(n) -> n
+   Failure(again) -> Cause.kind(again) match {{ Interrupt -> 42
+    Fail -> -2
+    Die -> -3
+   }}
+  }}
+ }}) escape {{ Boom(n) -> {{ mark(3)
+  n
+ }} }}
+}} }}
+"#
+        );
+        let core = support::try_lower(&[("main.emel", &source)], Roots::Exported).unwrap();
+        let mut flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+        super::interrupt::protect_cleanup_call(&mut flow);
+        let mut output = compile_flow(
+            &flow,
+            &options()
+                .with_heap_bytes(4096)
+                .with_task_capacity(3)
+                .with_event_capacity(3),
+        )
+        .unwrap();
+        super::notes::add_heap_check(&mut output);
+        let harness = format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+static EmelaTask tasks[3];static int count, order;
+uint32_t emela_board_event_lock(void) {{ return 0; }}
+void emela_board_event_unlock(uint32_t p) {{ (void)p; }}
+void board_wait_start(EmelaTask t,int32_t n) {{ assert(n>=1 && n<=3);tasks[n-1]=t;count++; }}
+void mark(int32_t n) {{ assert(n==++order); }}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {{ fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }}
+int main(void) {{
+ for(int i=0;i<1000;i++) {{
+  count=order=0;void *cause=NULL;EmelaFiber f=emela_export_make_0_start(0,&cause);
+  while(emela_scheduler_run(1)) {{}} assert(count==2);
+  assert(emela_task_complete_int(tasks[1],0));
+  while(!emela_fiber_done(f)) {{ assert(emela_scheduler_run(1)); }}
+  emela_fiber_release(f);count=0;int32_t result=-1;
+  f=emela_export_work_1_start(cause,0,i%3 ? &result:NULL);
+  while(emela_scheduler_run(1)) {{}}
+  if({mode}==1) {{ assert(count==1);assert(emela_task_complete_int(tasks[2],0)); }}
+  while(!emela_fiber_done(f)) {{ assert(emela_scheduler_run(1)); }}
+  assert(order==2 && (i%3 ? result==42:result==-1));
+  emela_fiber_release(f);emela_embedded_release(cause);assert(test_heap_empty());
+ }}
+}}
+"#
+        );
+        compile_and_run(output, &harness);
+    }
+}

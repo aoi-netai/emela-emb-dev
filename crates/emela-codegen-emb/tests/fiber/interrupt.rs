@@ -304,11 +304,26 @@ pub(super) fn protect_cleanup_call(flow: &mut Module) {
                 stmts: vec![seq.stmts[position]],
                 term: Term::Yield(None),
             });
-            let protect = function.stmts.alloc(emela_lir::Stmt::Protect {
-                dst: None,
-                body,
-                cleanup,
-            });
+            let (dst, term) = match &function.seqs[body].term {
+                Term::Yield(Some(value)) => {
+                    let ty = match value {
+                        Operand::Var(v) => function.vars[*v].ty,
+                        Operand::Const(Const::Int(_)) => TypeId::INT,
+                        _ => panic!("unsupported cleanup fixture result"),
+                    };
+                    let dst = function.vars.alloc(emela_lir::VarData {
+                        hint: "protected_result".into(),
+                        ty,
+                        repr: emela_lir::repr_of(&flow.core, ty),
+                    });
+                    (Some(dst), Term::Yield(Some(dst.into())))
+                }
+                Term::Yield(None) => (None, Term::Yield(None)),
+                _ => (None, Term::Unreachable),
+            };
+            let protect = function
+                .stmts
+                .alloc(emela_lir::Stmt::Protect { dst, body, cleanup });
             function.seqs[id] = emela_lir::Seq {
                 stmts: seq.stmts[..position]
                     .iter()
@@ -316,7 +331,7 @@ pub(super) fn protect_cleanup_call(flow: &mut Module) {
                     .filter(|id| prefix.contains(id))
                     .chain(std::iter::once(protect))
                     .collect(),
-                term: Term::Unreachable,
+                term,
             };
             count += 1;
         }

@@ -622,3 +622,63 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn a_failing_suspend_entry_without_unwind_features_needs_no_unwind_fields() {
+    let mut core = emela_core::Module::new();
+    let error = core.add_enum(EnumDef {
+        name: "Boom".into(),
+        params: 0,
+        variants: vec![VariantDef::positional("Boom", vec![TypeId::INT])],
+        error: true,
+        external: false,
+    });
+    let ty = core.enum_type(error, vec![]);
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "failure");
+    b.set_exported()
+        .set_suspends()
+        .set_fails()
+        .set_ret(TypeId::INT);
+    let value = b.assign(
+        "error",
+        ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: error,
+                variant: 0,
+            },
+            args: vec![Const::Int(42).into()],
+        },
+    );
+    b.term(Term::Fail(value.into()));
+    flow.add(b.finish());
+    compile_and_run(
+        compile_flow(
+            &flow,
+            &options()
+                .with_heap_bytes(0)
+                .with_fiber_capacity(1)
+                .with_frame_capacity(2)
+                .with_frame_bytes(128)
+                .with_task_capacity(0)
+                .with_event_capacity(0),
+        )
+        .unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {
+ assert(k==EMELA_DEFECT_UNHANDLED_ERROR && n==15 && memcmp(m,"unhandled error",15)==0);exit(0);
+}
+int main(void) {
+ EmelaFiber f=emela_export_failure_0_start(NULL);
+ while(!emela_fiber_done(f)) { assert(emela_scheduler_run(1)); }
+ abort();
+}
+"#,
+    );
+}

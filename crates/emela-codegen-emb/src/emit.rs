@@ -496,6 +496,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         suspend::emit_scope_runtime(&layouts, &mut source)?;
     }
     cause::emit_attempts(&layouts, &mut source)?;
+    cause::emit_infallible_raise(&layouts, &mut source);
     if layouts.deferred_pool {
         deferred::emit_runtime(&layouts, &mut source)?;
     }
@@ -7413,6 +7414,20 @@ fn emit_aggregate_field_store(
 }
 
 fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<String, Vec<Error>> {
+    if crate::fiber::is_infallible_cause_fail(function) {
+        if function.params.len() != 1
+            || function.vars[function.params[0]].ty != TypeId::ANY
+            || function.ret != TypeId::NEVER
+            || function.fails
+            || function.suspends
+        {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "invalid backend Cause landing binding",
+            ));
+        }
+        return Ok(crate::fiber::INFALLIBLE_CAUSE_FAIL.into());
+    }
     let Some(external) = &function.external else {
         return Err(unsupported(&function.name, "missing external binding"));
     };
