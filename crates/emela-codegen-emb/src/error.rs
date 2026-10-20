@@ -50,6 +50,9 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
         writer
             .line("static inline void emela_error_add_note(EmelaError *first, EmelaError other);");
     }
+    if layouts.has_resumes {
+        writer.line("static _Noreturn void emela_operation_failed_after_resume(const char *duplicate_message, uint16_t duplicate_length, EmelaError error);");
+    }
 }
 
 pub(super) fn needs_display(layouts: &TypeLayouts<'_>) -> bool {
@@ -111,6 +114,44 @@ pub(super) fn emit_display(
     }
     writer.line("return (EmelaString){.data = output, .length = (uint16_t)length};");
     writer.end_block();
+    if layouts.has_resumes {
+        const DUPLICATE_PREFIX: &str = "resume called twice in ";
+        const SUFFIX: &str = " failed after resume: ";
+        writer.begin_block("static _Noreturn void emela_operation_failed_after_resume(const char *duplicate_message, uint16_t duplicate_length, EmelaError error)");
+        writer.line(&format!(
+            "if (duplicate_length < {}) emela_scheduler_invalid();",
+            DUPLICATE_PREFIX.len()
+        ));
+        writer.line(&format!(
+            "uint32_t where_length = duplicate_length - {};",
+            DUPLICATE_PREFIX.len()
+        ));
+        writer.line(&format!(
+            "uint32_t prefix_length = where_length + {};",
+            SUFFIX.len()
+        ));
+        writer.line(&format!(
+            "uint32_t allocation = prefix_length - 7 + UINT32_C({capacity});"
+        ));
+        writer.line("if (allocation > UINT16_MAX) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));");
+        writer.line(&format!(
+            "char *output = (char *)emela_heap_allocate(allocation, UINT32_C({}));",
+            layouts.string_owner_kind()
+        ));
+        // The prefix overwrites "error: " after formatting, without a second scratch buffer.
+        writer.line(&format!("EmelaString text = emela_error_to_string(error, output + prefix_length - 7, UINT16_C({capacity}));"));
+        writer.line(&format!(
+            "for (uint32_t i = 0; i < where_length; i++) output[i] = duplicate_message[{} + i];",
+            DUPLICATE_PREFIX.len()
+        ));
+        writer.line(&format!(
+            "for (uint32_t i = 0; i < {}; i++) output[where_length + i] = {}[i];",
+            SUFFIX.len(),
+            c_string_literal(SUFFIX.as_bytes())
+        ));
+        writer.line("emela_board_defect(EMELA_DEFECT_PANIC, output, (uint16_t)(prefix_length + text.length - 7));");
+        writer.end_block();
+    }
     if layouts.has_error_notes() {
         writer.begin_block("static inline void emela_error_ensure_notes(EmelaError *error)");
         writer.begin_block("if (error->notes == NULL)");

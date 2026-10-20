@@ -81,7 +81,7 @@ static void emela_resume_after_step(emela_fiber *fiber) {
   emela_resume *resume = fiber->perform;
 #ifdef EMELA_FAILURE_RUNTIME
   if (resume->error.tag != 0) {
-    if (resume->used) emela_board_defect(EMELA_DEFECT_PANIC, "operation failed after resume", UINT16_C(29));
+    if (resume->used) emela_operation_failed_after_resume(resume->duplicate_message, resume->duplicate_length, resume->error);
     if (!emela_resume_unavailable(resume)) {
       if (resume->error_out == NULL) emela_scheduler_invalid();
       *resume->error_out = resume->error;

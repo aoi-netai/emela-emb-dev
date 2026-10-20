@@ -322,7 +322,8 @@ pub fn work() -> Int use Async {
 #include "emela_embedded.h"
 #include "emela_board.h"
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {
- assert(k==EMELA_DEFECT_PANIC && n==29 && memcmp(m,"operation failed after resume",29)==0); exit(0);
+ const char *expected="operation `tick` of handler `Ticking` failed after resume: Boom";
+ assert(k==EMELA_DEFECT_PANIC && n==strlen(expected) && memcmp(m,expected,n)==0); exit(0);
 }
 int main(void) {
  EmelaFiber f=emela_export_work_0_start(NULL);
@@ -566,6 +567,57 @@ int main(void) {
   while(!emela_fiber_done(f)) assert(emela_scheduler_run(1));
   assert(result==42);emela_fiber_release(f);
  }
+}
+"#,
+    );
+}
+
+#[test]
+fn delayed_failure_after_resume_formats_owned_error_after_the_call_frame_returns() {
+    let source = r#"
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+error Boom(n: Int)
+effect Wait { suspend fn get(n: Int) -> Int }
+handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+effect Tick { suspend fn tick() -> Int fails Boom }
+handler Ticking implements Tick {
+ suspend fn tick(resume) { resume(42)
+  (use Wait).get(1)
+  fail Boom(n: -2147483647 - 1)
+ }
+}
+fn issue() -> Int use { Tick } { (use Tick).tick() escape { Boom(_) -> -1 } }
+pub fn work() -> Int use Async {
+ with Waiting { with Ticking {
+  n = issue()
+  (use Wait).get(2)
+  n
+ } }
+}
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    compile_and_run(
+        compile(&core, &options()).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask tasks[2]; static int32_t result=-99; static int phase, count;
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+void board_wait_start(EmelaTask t,int32_t n) { assert(n==1 || n==2);tasks[n-1]=t;count++; }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {
+ const char *expected="operation `tick` of handler `Ticking` failed after resume: Boom(n: -2147483648)";
+ assert(phase==1 && result==-99 && k==EMELA_DEFECT_PANIC && n==strlen(expected) && memcmp(m,expected,n)==0);exit(0);
+}
+int main(void) {
+ EmelaFiber f=emela_export_work_0_start(&result);
+ while(emela_scheduler_run(1)) {} assert(!emela_fiber_done(f) && count==2);
+ phase=1;assert(emela_task_complete_int(tasks[0],0));
+ while(emela_scheduler_run(1)) {} abort();
 }
 "#,
     );
