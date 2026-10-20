@@ -129,7 +129,7 @@ fn zero() -> Int { with BoardZero { (use Zero).read() } }
 const B = 1 / zero()
 const A = { dbg("A")
  B }
-const SELF = if zero() == 0 { SELF + 0 } else { 42 }
+const SELF = if zero() == 0 { SELF } else { 42 }
 pub fn bad() -> Int { A }
 pub fn self_ref() -> Int { SELF }
 "#,

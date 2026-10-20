@@ -25,6 +25,10 @@ pub fn loopify(module: &mut Module) {
 
 /// Does nothing if there is no self tail call. Returns whether the function was rewritten.
 pub fn loopify_function(module: &mut Module, f: FnId) -> bool {
+    // A const reference re-enters its lazy getter and must diagnose self-reference (spec 5.6).
+    if module.functions[f].constant {
+        return false;
+    }
     let arity = module.functions[f].params.len();
     if !has_tail_self_call(&module.functions[f].body, f, arity) {
         return false;

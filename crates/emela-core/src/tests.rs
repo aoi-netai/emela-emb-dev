@@ -564,3 +564,21 @@ fn verify_checks_operations() {
 fn tuple(es: Vec<Expr>) -> Expr {
     Expr::Tuple(es)
 }
+
+#[test]
+fn loopify_preserves_const_self_reference_for_lazy_evaluation() {
+    let mut m = Module::new();
+    let constant = m.declare("SELF", false);
+    m.define(
+        constant,
+        vec![],
+        TypeId::INT,
+        if_(bool(true), call(constant, vec![]), int(42)),
+    );
+    m.functions[constant].constant = true;
+    let before = m.functions[constant].body.clone();
+    assert!(!tail::loopify_function(&mut m, constant));
+    assert_eq!(m.functions[constant].body, before);
+    tail::loopify(&mut m);
+    assert_eq!(m.functions[constant].body, before);
+}
