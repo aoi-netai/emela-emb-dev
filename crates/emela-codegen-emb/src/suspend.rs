@@ -311,14 +311,24 @@ enum Node {
     Branch(Operand, usize, usize),
     Switch(SwitchOn, Vec<(CaseKey, usize)>, Option<usize>),
     Return(Option<Operand>),
-    SetError(Operand, usize),
-    CheckError { normal: usize, failed: usize },
-    Catch(VarId, usize),
-    Fail,
+    SetError(Operand, usize, usize),
+    CheckError {
+        normal: usize,
+        failed: usize,
+        slot: usize,
+    },
+    Catch(VarId, usize, usize),
+    Fail(usize),
     Defect(Operand),
     Unreachable,
-    Protect { cleanup: usize, body: usize },
-    Leave { keep: usize, next: usize },
+    Protect {
+        cleanup: usize,
+        body: usize,
+    },
+    Leave {
+        keep: usize,
+        next: usize,
+    },
     CleanupEnd,
 }
 
@@ -335,10 +345,22 @@ struct Graph {
     loops: Vec<LoopTarget>,
     depth: usize,
     max_depth: usize,
+    error_depth: usize,
+    max_error_depth: usize,
 }
 
 impl Graph {
     fn add(&mut self, node: Node) -> usize {
+        let slot = match &node {
+            Node::SetError(_, _, slot)
+            | Node::CheckError { slot, .. }
+            | Node::Catch(_, _, slot)
+            | Node::Fail(slot) => Some(*slot),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            self.max_error_depth = self.max_error_depth.max(slot);
+        }
         let id = self.nodes.len();
         self.nodes.push(node);
         id
@@ -366,7 +388,7 @@ impl Graph {
                         "suspend failure without a channel",
                     ));
                 }
-                let fail = self.add(Node::Fail);
+                let fail = self.add(Node::Fail(self.error_depth));
                 Ok(self.leave(0, fail))
             }
             OnFail::Break(label) => {
@@ -379,7 +401,7 @@ impl Graph {
                         "suspend failure Block without error destination",
                     )
                 })?;
-                let catch = self.add(Node::Catch(dst, next));
+                let catch = self.add(Node::Catch(dst, next, self.error_depth));
                 Ok(self.leave(depth, catch))
             }
             OnFail::Handle { .. } => Err(invalid_flow_ir(
@@ -406,7 +428,7 @@ impl Graph {
             Term::Defect(value) => self.add(Node::Defect(value.clone())),
             Term::Fail(error) => {
                 let fail = self.failure(function, OnFail::Propagate)?;
-                self.add(Node::SetError(error.clone(), fail))
+                self.add(Node::SetError(error.clone(), fail, self.error_depth))
             }
             Term::Unreachable => self.add(Node::Unreachable),
             Term::Break { label, value } => {
@@ -449,6 +471,7 @@ impl Graph {
                         self.add(Node::CheckError {
                             normal: entry,
                             failed,
+                            slot: self.error_depth,
                         })
                     } else {
                         entry
@@ -516,7 +539,9 @@ impl Graph {
                     self.depth += 1;
                     self.max_depth = self.max_depth.max(self.depth);
                     let end = self.add(Node::CleanupEnd);
+                    self.error_depth += 1;
                     let cleanup = self.sequence(function, *cleanup, None, end)?;
+                    self.error_depth -= 1;
                     let leave = self.add(Node::Leave {
                         keep: depth,
                         next: entry,
@@ -582,6 +607,8 @@ pub(super) fn emit_function(
         loops: vec![],
         depth: 0,
         max_depth: 0,
+        error_depth: 0,
+        max_error_depth: 0,
     };
     let body = function
         .body
@@ -623,19 +650,21 @@ pub(super) fn emit_function(
                     operands.push(op);
                 }
             }
-            Node::Branch(op, _, _) | Node::Defect(op) | Node::SetError(op, _) => operands.push(op),
+            Node::Branch(op, _, _) | Node::Defect(op) | Node::SetError(op, _, _) => {
+                operands.push(op)
+            }
             Node::Switch(SwitchOn::Tag(v) | SwitchOn::Lit(v), ..) => {
                 active.insert(*v);
             }
             Node::Return(value) => operands.extend(value),
-            Node::Catch(dst, _) => {
+            Node::Catch(dst, _, _) => {
                 active.insert(*dst);
             }
             Node::Unreachable
             | Node::Protect { .. }
             | Node::Leave { .. }
             | Node::CleanupEnd
-            | Node::Fail
+            | Node::Fail(_)
             | Node::CheckError { .. } => {}
         }
         for op in operands {
@@ -669,7 +698,10 @@ pub(super) fn emit_function(
             .any(|n| matches!(n, Node::CheckError { .. }));
     if has_failure {
         writer.line("  EmelaError call_error;");
-        writer.line("  EmelaError pending_error;");
+        writer.line(&format!(
+            "  EmelaError pending_error[{}];",
+            graph.max_error_depth + 1
+        ));
     }
     if function.fails {
         writer.line("  EmelaError *error_out;");
@@ -1175,14 +1207,24 @@ pub(super) fn emit_function(
                 }
                 writer.line("emela_frame_return(fiber); return;");
             }
-            Node::SetError(error, next) => {
-                emit_error_assignment(layouts, function, error, "frame->pending_error", writer)?;
+            Node::SetError(error, next, slot) => {
+                emit_error_assignment(
+                    layouts,
+                    function,
+                    error,
+                    &format!("frame->pending_error[{slot}]"),
+                    writer,
+                )?;
                 writer.line(&format!("base->pc = {next}; continue;"));
             }
-            Node::CheckError { normal, failed } => {
-                writer.line(&format!("if (frame->call_error.tag == 0) base->pc = {normal}; else {{ frame->pending_error = frame->call_error; base->pc = {failed}; }} continue;"));
+            Node::CheckError {
+                normal,
+                failed,
+                slot,
+            } => {
+                writer.line(&format!("if (frame->call_error.tag == 0) base->pc = {normal}; else {{ frame->pending_error[{slot}] = frame->call_error; base->pc = {failed}; }} continue;"));
             }
-            Node::Catch(dst, next) => {
+            Node::Catch(dst, next, slot) => {
                 if !matches!(layouts.types[function.vars[*dst].ty], Type::Any) {
                     return Err(invalid_flow_ir(
                         &function.name,
@@ -1190,15 +1232,20 @@ pub(super) fn emit_function(
                     ));
                 }
                 emit_release_if_owned(layouts, function, *dst, writer);
-                writer.assign(&variable_name(*dst), "frame->pending_error");
+                writer.assign(
+                    &variable_name(*dst),
+                    &format!("frame->pending_error[{slot}]"),
+                );
                 if layouts.is_managed_value(function.vars[*dst].ty) {
                     writer.assign(&owned_variable_name(*dst), "1");
                 }
                 writer.line(&format!("base->pc = {next}; continue;"));
             }
-            Node::Fail => {
+            Node::Fail(slot) => {
                 writer.line("if (frame->error_out == NULL) emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, \"unhandled error\", UINT16_C(15));");
-                writer.line("*frame->error_out = frame->pending_error;");
+                writer.line(&format!(
+                    "*frame->error_out = frame->pending_error[{slot}];"
+                ));
                 writer.line("emela_frame_return(fiber); return;");
             }
             Node::Defect(value) => {

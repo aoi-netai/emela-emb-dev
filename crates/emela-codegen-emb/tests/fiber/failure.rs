@@ -403,3 +403,170 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn caught_failure_inside_suspending_release_does_not_replace_the_original_error() {
+    let mut core = emela_core::Module::new();
+    let error = core.add_enum(EnumDef {
+        name: "Boom".into(),
+        params: 0,
+        variants: vec![VariantDef::positional("Boom", vec![TypeId::INT])],
+        error: true,
+        external: false,
+    });
+    let error_ty = core.enum_type(error, vec![]);
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "failure");
+    b.set_fails().set_ret(TypeId::INT);
+    let n = b.param("n", TypeId::INT);
+    let value = b.assign(
+        "error",
+        error_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: error,
+                variant: 0,
+            },
+            args: vec![n.into()],
+        },
+    );
+    b.term(Term::Fail(value.into()));
+    let failure = flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "wait");
+    b.set_suspends();
+    let wait = flow.add(b.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".into(),
+            host: HostRef::Global("host_wait".into()),
+        }],
+    }));
+    let mut b = FnBuilder::new(&flow.core, "mark");
+    b.param("n", TypeId::INT);
+    let mark = flow.add(b.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".into(),
+            host: HostRef::Global("mark".into()),
+        }],
+    }));
+    let mut b = FnBuilder::new(&flow.core, "work");
+    b.set_exported().set_suspends().set_ret(TypeId::INT);
+    let caught = b.var("caught", TypeId::ANY);
+    b.block(Some(caught), "caught", |b, label| {
+        b.protect(
+            None,
+            |b| {
+                b.let_(
+                    None,
+                    Value::Call {
+                        callee: Callee::Direct(failure),
+                        args: vec![Const::Int(42).into()],
+                        suspends: false,
+                        on_fail: Some(OnFail::Break(label)),
+                    },
+                );
+                b.term(Term::Unreachable);
+            },
+            |b| {
+                let nested = b.var("nested", TypeId::ANY);
+                b.block(Some(nested), "release_error", |b, label| {
+                    b.let_(
+                        None,
+                        Value::Call {
+                            callee: Callee::Direct(failure),
+                            args: vec![Const::Int(7).into()],
+                            suspends: false,
+                            on_fail: Some(OnFail::Break(label)),
+                        },
+                    );
+                    b.term(Term::Unreachable);
+                });
+                let typed = b.assign(
+                    "typed",
+                    error_ty,
+                    Value::AsError {
+                        enum_id: error,
+                        error: nested,
+                    },
+                );
+                let n = b.assign(
+                    "n",
+                    TypeId::INT,
+                    Value::Field {
+                        ctor: CtorRef {
+                            enum_id: error,
+                            variant: 0,
+                        },
+                        base: typed,
+                        index: 0,
+                    },
+                );
+                b.let_(
+                    None,
+                    Value::Call {
+                        callee: Callee::Direct(mark),
+                        args: vec![n.into()],
+                        suspends: false,
+                        on_fail: None,
+                    },
+                );
+                b.let_(
+                    None,
+                    Value::Call {
+                        callee: Callee::Direct(wait),
+                        args: vec![],
+                        suspends: true,
+                        on_fail: None,
+                    },
+                );
+            },
+        );
+        b.term(Term::Unreachable);
+    });
+    let typed = b.assign(
+        "typed",
+        error_ty,
+        Value::AsError {
+            enum_id: error,
+            error: caught,
+        },
+    );
+    let n = b.assign(
+        "n",
+        TypeId::INT,
+        Value::Field {
+            ctor: CtorRef {
+                enum_id: error,
+                variant: 0,
+            },
+            base: typed,
+            index: 0,
+        },
+    );
+    b.term(Term::Return(Some(n.into())));
+    flow.add(b.finish());
+    compile_and_run(
+        compile_flow(&flow, &options().with_heap_bytes(0)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask task;static int marks;
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+void board_wait_start(EmelaTask t) { task=t; }
+void mark(int32_t n) { assert(n==7);marks++; }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }
+int main(void) {
+ for(int i=0;i<1000;i++) {
+  marks=0;int32_t result=-1;EmelaFiber f=emela_export_work_3_start(&result);
+  while(emela_scheduler_run(1)) {}assert(marks==1 && result==-1);
+  assert(emela_task_complete_unit(task));
+  while(!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+  assert(result==42);emela_fiber_release(f);
+ }
+}
+"#,
+    );
+}
