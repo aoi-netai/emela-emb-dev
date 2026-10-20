@@ -2,6 +2,7 @@
 
 #include "emela_embedded.h"
 #include "emela_board.h"
+#include "validation_stack.h"
 
 void _init(void) {}
 void _fini(void) {}
@@ -52,6 +53,7 @@ _Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uin
         *gpioa_bsrr = UINT32_C(1) << 8;
     }
 
+    emela_validation_stack_sample();
     for (;;) {
         __asm volatile("wfi");
     }

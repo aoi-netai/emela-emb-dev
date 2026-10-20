@@ -1,15 +1,28 @@
 ENTRY(Reset_Handler)
 
-/* Leave the last 256 bytes of RAM free for the Cortex-M exception stack. */
-_estack = ORIGIN(RAM) + LENGTH(RAM) - 0x100;
-_Min_Heap_Size = 0x200;
-_Min_Stack_Size = 0x1000;
+/* Exceptions and thread mode share MSP; reserve its actual descending range. */
+PROVIDE(__emela_stack_size = 16K);
+PROVIDE(__emela_stack_guard_size = 256);
+_Min_Heap_Size = 0;
+_Min_Stack_Size = __emela_stack_size;
 
 MEMORY
 {
   FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
   RAM   (xrw) : ORIGIN = 0x20000000, LENGTH = 128K
 }
+
+__emela_stack_top__ = ORIGIN(RAM) + LENGTH(RAM);
+__emela_stack_bottom__ = __emela_stack_top__ - __emela_stack_size;
+__emela_stack_guard_end__ = __emela_stack_bottom__;
+__emela_stack_guard_start__ = __emela_stack_guard_end__ - __emela_stack_guard_size;
+_estack = __emela_stack_top__;
+
+ASSERT(__emela_stack_size > 0 && (__emela_stack_size % 8) == 0,
+       "MSP stack size must be a positive multiple of 8")
+ASSERT(__emela_stack_guard_size >= 32 && (__emela_stack_guard_size % 8) == 0,
+       "MSP guard size must be at least 32 and a multiple of 8")
+ASSERT(__emela_stack_guard_start__ >= ORIGIN(RAM), "MSP reservation exceeds RAM")
 
 SECTIONS
 {
@@ -94,6 +107,7 @@ SECTIONS
     . = ALIGN(4);
     _edata = .;
   } > RAM AT> FLASH
+  __emela_flash_image_end__ = LOADADDR(.data) + SIZEOF(.data);
 
   .bss :
   {
@@ -107,15 +121,32 @@ SECTIONS
     __bss_end__ = .;
   } > RAM
 
-  ._user_heap_stack :
+  .noinit (NOLOAD) :
   {
     . = ALIGN(8);
-    PROVIDE(end = .);
-    PROVIDE(_end = .);
-    . = . + _Min_Heap_Size;
-    . = . + _Min_Stack_Size;
+    *(.noinit .noinit*)
     . = ALIGN(8);
   } > RAM
+  __emela_static_ram_end__ = .;
+  PROVIDE(end = .);
+  PROVIDE(_end = .);
+  PROVIDE(__HeapBase = .);
+  PROVIDE(__HeapLimit = .);
+
+  .emela_stack_guard __emela_stack_guard_start__ (NOLOAD) :
+  {
+    . += __emela_stack_guard_size;
+  } > RAM
+
+  .emela_stack __emela_stack_bottom__ (NOLOAD) :
+  {
+    . += __emela_stack_size;
+  } > RAM
+
+  ASSERT(__emela_static_ram_end__ <= __emela_stack_guard_start__,
+         "static RAM overlaps MSP guard/stack")
+  ASSERT(__emela_flash_image_end__ <= ORIGIN(FLASH) + LENGTH(FLASH),
+         "Flash image including initialized data exceeds FLASH")
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }

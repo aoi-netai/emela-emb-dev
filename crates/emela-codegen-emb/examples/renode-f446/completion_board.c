@@ -4,6 +4,7 @@
 
 #include "completion_probe.h"
 #include "emela_board.h"
+#include "validation_stack.h"
 
 void _init(void) {}
 void _fini(void) {}
@@ -19,6 +20,7 @@ static void signal(unsigned pin) {
 }
 
 static _Noreturn void stop(void) {
+    emela_validation_stack_sample();
     for (;;) __asm volatile("wfi");
 }
 
