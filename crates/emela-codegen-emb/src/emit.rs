@@ -1961,9 +1961,13 @@ fn aggregate_function_abi_supported(
         AggregateKind::Tuple(fields) => vec![fields.as_slice()],
         AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
     };
-    let supported = fields.into_iter().flatten().all(|&field| {
-        layouts.type_repr(field) == Repr::Void
-            || function_value_abi_type_supported(layouts, field, seen)
+    let supported = fields.into_iter().enumerate().all(|(variant, fields)| {
+        fields.iter().enumerate().all(|(index, &field)| {
+            // Opaque owned edges use the heap header ABI; materialized payload roots are checked separately.
+            layouts.is_recursive_box_field(ty, variant, index)
+                || layouts.type_repr(field) == Repr::Void
+                || function_value_abi_type_supported(layouts, field, seen)
+        })
     });
     seen.remove(&ty);
     supported
@@ -8886,6 +8890,7 @@ impl<'a> TypeLayouts<'a> {
                     if layouts
                         .recursive_edges
                         .contains(&(aggregate.ty, variant, field))
+                        && layouts.has_materialized_payload(field_ty)
                         && !layouts.recursive_box_ids.contains_key(&field_ty)
                     {
                         let index = layouts.recursive_box_types.len();
@@ -9012,14 +9017,6 @@ impl<'a> TypeLayouts<'a> {
         active: &mut HashSet<TypeId>,
         validated: &mut HashSet<TypeId>,
     ) -> Result<(), Vec<Error>> {
-        if let Type::Enum(id, _) = self.types[ty]
-            && self.expanding_enums.contains(&id)
-        {
-            return Err(unsupported(
-                function,
-                "recursive enum type that changes its type arguments without a finite closure",
-            ));
-        }
         if validated.contains(&ty) || !active.insert(ty) {
             return Ok(());
         }
@@ -9035,7 +9032,12 @@ impl<'a> TypeLayouts<'a> {
                 .collect(),
             _ => vec![],
         };
+        let lazy_fields =
+            matches!(self.types[ty], Type::Enum(id, _) if self.expanding_enums.contains(&id));
         for dependency in dependencies {
+            if lazy_fields && self.type_repr(dependency) == Repr::Ref {
+                continue;
+            }
             self.validate_finite_types(dependency, function, active, validated)?;
         }
         active.remove(&ty);
@@ -9049,15 +9051,6 @@ impl<'a> TypeLayouts<'a> {
         function: &str,
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>> {
-        if let Type::Enum(id, _) = self.types[ty]
-            && self.expanding_enums.contains(&id)
-        {
-            return Err(unsupported(
-                function,
-                "recursive enum type that changes its type arguments without a finite closure",
-            ));
-        }
-
         if let Type::Enum(id, args) = self.types[ty].clone()
             && self.core.enums[id].name == "Std.Fiber.Exit"
             && args
@@ -9155,7 +9148,9 @@ impl<'a> TypeLayouts<'a> {
                 if self.type_repr(field) == Repr::Void {
                     continue;
                 }
-                if matches!(states.get(&field), Some(1)) {
+                let lazy_field = matches!(self.types[ty], Type::Enum(id, _) if self.expanding_enums.contains(&id))
+                    && self.type_repr(field) == Repr::Ref;
+                if lazy_field || matches!(states.get(&field), Some(1)) {
                     self.recursive_edges.insert((ty, variant, index));
                 } else {
                     self.collect(field, function, states)?;
@@ -9405,6 +9400,20 @@ impl<'a> TypeLayouts<'a> {
 
     fn is_recursive_box_field(&self, owner: TypeId, variant: usize, field: usize) -> bool {
         self.recursive_edges.contains(&(owner, variant, field))
+    }
+
+    fn has_materialized_payload(&self, ty: TypeId) -> bool {
+        match self.types[ty] {
+            Type::Enum(id, _) if self.enum_layout_required(id) => {
+                self.aggregate_ids.contains_key(&ty)
+            }
+            Type::Tuple(_) => self.aggregate_ids.contains_key(&ty),
+            Type::Fn(_) => self.function_types.contains(&ty),
+            Type::List(_) => self.list_ids.contains_key(&ty),
+            Type::Cell(_) => self.cell_ids.contains_key(&ty),
+            Type::Any => self.any_abi,
+            _ => true,
+        }
     }
 
     fn recursive_box_kind(&self, ty: TypeId) -> Option<u32> {
@@ -9717,7 +9726,7 @@ impl<'a> TypeLayouts<'a> {
             writer.begin_block("");
             self.emit_enqueue_value_expression(
                 box_ty,
-                &format!("(*((const {} *)value))", self.c_type(box_ty)),
+                &format!("(*(({} const *)value))", self.c_type(box_ty)),
                 "pending",
                 "tail",
                 writer,

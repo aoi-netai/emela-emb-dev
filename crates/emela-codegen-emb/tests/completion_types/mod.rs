@@ -78,3 +78,41 @@ int main(void) {{for(unsigned i=0;i<1000;i++) {{assert({run}(0)==42);assert(test
         ),
     );
 }
+
+#[test]
+fn growing_recursive_enum_materializes_only_payload_types_used_by_the_program() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub fn work(n: Int) -> Int {
+  value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42])) }
+  value match { End(number) -> number
+    Next(rest) -> rest match { End(values) -> List.length(values)
+      Next(_) -> 0 } }
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let mut output = compile(&core, &Options::default().with_heap_bytes(4096))
+        .expect("finite uses of an expanding generic enum");
+    let run = export_name(&output, "work");
+    add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *s,uint16_t n) {{ (void)k;(void)s;(void)n;abort(); }}
+int main(void) {{for(unsigned i=0;i<1000;i++) {{assert({run}(0)==42);assert(test_heap_empty());assert({run}(1)==1);assert(test_heap_empty());}}return 0;}}
+"#
+        ),
+    );
+}

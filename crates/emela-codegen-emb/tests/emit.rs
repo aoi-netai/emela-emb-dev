@@ -1137,7 +1137,7 @@ fn boxes_recursive_enum_fields_and_releases_deep_values_iteratively() {
 }
 
 #[test]
-fn rejects_recursive_enum_types_that_change_type_arguments() {
+fn supports_growing_recursive_enum_types_without_expanding_unused_payloads() {
     let mut core = emela_core::Module::new();
     let enum_id = core.add_enum(EnumDef {
         name: "Growing".to_owned(),
@@ -1172,10 +1172,8 @@ fn rejects_recursive_enum_types_that_change_type_arguments() {
     let mut flow = Module::new(core);
     flow.add(function);
 
-    let errors = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
-        .expect_err("reject infinitely expanding generic recursive layouts");
-    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
-    assert!(errors[0].message.contains("changes its type arguments"));
+    compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("unused growing payloads remain opaque without expanding their layouts");
 }
 
 #[test]
