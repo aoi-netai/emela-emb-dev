@@ -892,7 +892,7 @@ pub(super) fn emit_function(
                                     op,
                                 },
                             args,
-                            on_fail: None,
+                            on_fail,
                             ..
                         },
                     ..
@@ -904,7 +904,20 @@ pub(super) fn emit_function(
                         .map(|id| format!("&{}", variable_name(id)))
                         .unwrap_or_else(|| "NULL".to_owned());
                     emit_operation(
-                        layouts, function, *dst, *handler, *effect, *op, args, "fiber", &result,
+                        layouts,
+                        function,
+                        *dst,
+                        *handler,
+                        *effect,
+                        *op,
+                        args,
+                        "fiber",
+                        &result,
+                        if on_fail.is_some() {
+                            Some("&frame->call_error")
+                        } else {
+                            None
+                        },
                         writer,
                     )?;
                     writer.begin_block("if (fiber->state == EMELA_FIBER_READY)");
@@ -1544,6 +1557,7 @@ pub(super) fn emit_operation(
     args: &[Operand],
     caller: &str,
     result: &str,
+    error_out: Option<&str>,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let index = *layouts.handler_layout_ids.get(&effect).ok_or_else(|| {
@@ -1553,7 +1567,7 @@ pub(super) fn emit_operation(
     let Type::Fn(ft) = &layouts.types[ty] else {
         unreachable!()
     };
-    if ft.fails || ft.ev || !ft.suspends {
+    if ft.ev || !ft.suspends {
         return Err(unsupported(
             &function.name,
             "suspend operation with failure or unsupported effect ABI",
@@ -1572,7 +1586,12 @@ pub(super) fn emit_operation(
     if let Some(dst) = dst {
         prepare_result(layouts, function, Some(dst), writer);
     }
-    writer.line(&format!("emela_fiber *implementation = emela_operation_begin({caller}, {result}, {pointer}->resume_error_{operation}, {pointer}->resume_error_length_{operation});"));
+    let error_arg = if layouts.has_error_abi {
+        format!(", {}", error_out.unwrap_or("NULL"))
+    } else {
+        String::new()
+    };
+    writer.line(&format!("emela_fiber *implementation = emela_operation_begin({caller}, {result}, {pointer}->resume_error_{operation}, {pointer}->resume_error_length_{operation}{error_arg});"));
     let mut arguments = vec![
         "implementation".to_owned(),
         format!("{pointer}->op_{operation}.env"),
@@ -1588,6 +1607,9 @@ pub(super) fn emit_operation(
         layouts.c_type(resume_ty),
         resume_ty.index()
     ));
+    if ft.fails {
+        arguments.push("&implementation->perform->error".into());
+    }
     writer.line(&format!(
         "if ({pointer}->op_{operation}.call == NULL) emela_scheduler_invalid();"
     ));
@@ -1618,6 +1640,7 @@ pub(super) fn emit_sync_operation(
     effect: EffectId,
     operation: usize,
     args: &[Operand],
+    error_out: Option<&str>,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     writer.begin_block("");
@@ -1637,6 +1660,7 @@ pub(super) fn emit_sync_operation(
         args,
         "sync_caller",
         &result,
+        error_out,
         writer,
     )?;
     writer.begin_block("if (implementation->state == EMELA_FIBER_READY)");

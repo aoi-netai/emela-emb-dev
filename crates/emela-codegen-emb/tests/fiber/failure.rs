@@ -253,3 +253,82 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn suspend_operation_failure_before_resume_reaches_its_call_edge() {
+    let source = r#"
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+error Boom(n: Int)
+effect Wait { suspend fn get(n: Int) -> Int fails Boom }
+handler Waiting implements Wait {
+ suspend fn get(n,resume) {
+  x = wait(n)
+  if n == 0 { resume(x) } else { fail Boom(n: x) }
+ }
+}
+pub fn caught(n: Int) -> Int use Async {
+ with Waiting { (use Wait).get(n) escape { Boom(n) -> n } }
+}
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    compile_and_run(
+        compile(&core, &options().with_heap_bytes(2048)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask task;
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+void board_wait_start(EmelaTask t,int32_t n) { (void)n;task=t; }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }
+int main(void) {
+ for(int i=0;i<1000;i++) {
+  int32_t result=-1;EmelaFiber f=emela_export_caught_0_start(i%2,&result);
+  while(emela_scheduler_run(1)) {}
+  assert(emela_task_complete_int(task,42));
+  while(!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+  assert(result==42);emela_fiber_release(f);
+ }
+}
+"#,
+    );
+}
+
+#[test]
+fn operation_failure_after_resume_stops_without_writing_a_stale_error_pointer() {
+    let source = r#"
+error Boom
+effect Tick { suspend fn tick() -> Int fails Boom }
+handler Ticking implements Tick {
+ suspend fn tick(resume) { resume(42)
+  fail Boom
+ }
+}
+pub fn work() -> Int use Async {
+ with Ticking { (use Tick).tick() escape { Boom -> 0 } }
+}
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    compile_and_run(
+        compile(&core, &options()).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {
+ assert(k==EMELA_DEFECT_PANIC && n==29 && memcmp(m,"operation failed after resume",29)==0); exit(0);
+}
+int main(void) {
+ EmelaFiber f=emela_export_work_0_start(NULL);
+ while(!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+ abort();
+}
+"#,
+    );
+}

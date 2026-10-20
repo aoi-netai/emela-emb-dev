@@ -7,6 +7,10 @@ struct emela_resume {
   uint16_t duplicate_length;
   int initial;
   int used;
+#ifdef EMELA_FAILURE_RUNTIME
+  EmelaError *error_out;
+  EmelaError error;
+#endif
 };
 static int emela_resume_unavailable(emela_resume *resume) {
   emela_fiber *root = emela_resume_live(resume->root);
@@ -34,7 +38,11 @@ static void emela_resume_boundary(emela_fiber *fiber) {
   }
 }
 static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
-                                        const char *message, uint16_t length) {
+                                        const char *message, uint16_t length
+#ifdef EMELA_FAILURE_RUNTIME
+    , EmelaError *error_out
+#endif
+) {
   EmelaFiber handle = emela_fiber_create();
   emela_fiber *implementation = emela_fiber_get(handle);
   implementation->root = caller->root;
@@ -45,6 +53,9 @@ static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *resu
     .root = caller->root, .result = result,
     .duplicate_message = message, .duplicate_length = length, .initial = 1
   };
+#ifdef EMELA_FAILURE_RUNTIME
+  resume->error_out = error_out;
+#endif
   implementation->perform = resume;
   caller->state = EMELA_FIBER_WAITING;
   return implementation;
@@ -68,6 +79,17 @@ static void emela_resume_after_step(emela_fiber *fiber) {
 #endif
   if (fiber->state != EMELA_FIBER_DONE || fiber->perform == NULL) return;
   emela_resume *resume = fiber->perform;
+#ifdef EMELA_FAILURE_RUNTIME
+  if (resume->error.tag != 0) {
+    if (resume->used) emela_board_defect(EMELA_DEFECT_PANIC, "operation failed after resume", UINT16_C(29));
+    if (!emela_resume_unavailable(resume)) {
+      if (resume->error_out == NULL) emela_scheduler_invalid();
+      *resume->error_out = resume->error;
+      resume->used = 1;
+      if (!resume->initial) emela_resume_wake(resume);
+    }
+  }
+#endif
   if (resume->initial) {
     resume->initial = 0;
     if (resume->used) emela_resume_wake(resume);

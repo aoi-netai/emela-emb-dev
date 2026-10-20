@@ -5036,10 +5036,41 @@ fn emit_statement_inner(
                     args,
                     on_fail,
                     ..
-                } if layouts.core.effects[*effect].ops[*op].suspend && on_fail.is_none() => {
+                } if layouts.core.effects[*effect].ops[*op].suspend => {
+                    writer.begin_block("");
+                    if on_fail.is_some() {
+                        writer.line("EmelaError operation_error = {0};");
+                    }
                     suspend::emit_sync_operation(
-                        layouts, function, *dst, *handler, *effect, *op, args, writer,
+                        layouts,
+                        function,
+                        *dst,
+                        *handler,
+                        *effect,
+                        *op,
+                        args,
+                        on_fail.map(|_| "&operation_error"),
+                        writer,
                     )?;
+                    if let Some(edge) = on_fail {
+                        writer.begin_block("if (operation_error.tag != 0)");
+                        emit_call_failure_edge(
+                            layouts,
+                            function,
+                            *edge,
+                            "operation_error",
+                            writer,
+                            names,
+                            string_buffers,
+                            loops,
+                            blocks,
+                            protects,
+                            next_temp,
+                            next_label,
+                        )?;
+                        writer.end_block();
+                    }
+                    writer.end_block();
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
