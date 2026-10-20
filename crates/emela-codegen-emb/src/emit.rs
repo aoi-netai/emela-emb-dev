@@ -385,20 +385,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 return true;
             }
             !function.constant
-                && (function
-                    .seqs
-                    .iter()
-                    .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
-                    || function.stmts.iter().any(|(_, statement)| {
-                        matches!(
-                            statement,
-                            Stmt::Switch {
-                                on: SwitchOn::Tag(_),
-                                default: None,
-                                ..
-                            }
-                        )
-                    }))
+                && (function.seqs.iter().any(|(_, sequence)| {
+                    matches!(&sequence.term, Term::Defect(_) | Term::Unreachable)
+                }) || function.stmts.iter().any(|(_, statement)| {
+                    matches!(
+                        statement,
+                        Stmt::Switch {
+                            on: SwitchOn::Tag(_),
+                            default: None,
+                            ..
+                        }
+                    )
+                }))
         });
     if needs_defect_hook {
         board_header.line(
@@ -6323,6 +6321,8 @@ fn emit_compound_sequence(
             emit_failure_return(layouts, function, writer);
         }
         Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
+        Term::Unreachable => writer
+            .line("emela_board_defect(EMELA_DEFECT_ASSERT, \"unreachable code\", UINT16_C(16));"),
         other => return Err(unsupported(&function.name, term_name(other))),
     }
     Ok(())
@@ -7825,6 +7825,8 @@ fn emit_return(
             emit_failure_return(layouts, function, writer);
         }
         Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
+        Term::Unreachable => writer
+            .line("emela_board_defect(EMELA_DEFECT_ASSERT, \"unreachable code\", UINT16_C(16));"),
         other => return Err(unsupported(&function.name, term_name(other))),
     }
 

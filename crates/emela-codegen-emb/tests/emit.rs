@@ -5938,3 +5938,37 @@ fn compile_and_run(output: Output, harness_source: &str) {
         .expect("run generated C program");
     assert!(run.success(), "generated C returned {:?}", run.code());
 }
+
+#[test]
+fn synchronous_exhaustive_matches_and_list_loops_accept_unreachable_terminators() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+pub fn classify(n: Int) -> Int {
+  value = if n > 0 { Some(n) } else { None }
+  value match {
+    Some(x) -> x + 1
+    None -> 0
+  }
+}
+pub fn length() -> Int { List.length([1, 2, 3]) }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(&core, &Options::default().with_heap_bytes(2048)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { (void)k; (void)m; (void)n; abort(); }
+int main(void) {
+  for (int i = 0; i < 1000; i++) { assert(emela_export_classify_0(i) == (i ? i + 1 : 0)); assert(emela_export_length_1() == 3); }
+}
+"#,
+    );
+}
