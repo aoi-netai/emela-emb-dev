@@ -8412,7 +8412,8 @@ impl<'a> TypeLayouts<'a> {
             has_resumes: suspend::has_operations(flow, emitted)
                 || crate::fiber::has_scopes(flow, emitted),
             has_unwind: suspend::has_operations(flow, emitted)
-                || crate::fiber::has_scopes(flow, emitted),
+                || crate::fiber::has_scopes(flow, emitted)
+                || suspend::has_protects(flow, emitted),
             has_scopes: crate::fiber::has_scopes(flow, emitted),
             deferred_pool,
             deferred_complete_types: Vec::new(),

@@ -1,4 +1,39 @@
 /* A context is reclaimed only after its operation contexts and cleanup frames have ended. */
+typedef struct {
+  uint32_t cleanup;
+  uint32_t next;
+  uint32_t keep;
+  int running;
+} emela_protection;
+static inline void emela_interrupt_hold(emela_fiber *fiber) {
+  if (fiber->holds == UINT32_MAX) emela_scheduler_exhausted();
+  fiber->holds++;
+}
+static inline void emela_interrupt_unhold(emela_fiber *fiber) {
+  if (fiber->holds == 0) emela_scheduler_invalid();
+  fiber->holds--;
+}
+static inline void emela_protection_leave(emela_fiber *fiber, emela_protection *guards,
+                                         uint32_t depth, uint32_t keep, uint32_t next, uint32_t *pc) {
+  if (keep > depth) emela_scheduler_invalid();
+  if (keep == depth) { *pc = next; return; }
+  emela_protection *guard = &guards[depth - 1];
+  if (guard->running) emela_scheduler_invalid();
+  guard->running = 1;
+  guard->next = next;
+  guard->keep = keep;
+  emela_interrupt_hold(fiber);
+  *pc = guard->cleanup;
+}
+static inline int emela_protection_finish(emela_fiber *fiber, emela_protection *guards,
+                                         uint32_t *depth, uint32_t *pc) {
+  if (*depth == 0 || !guards[*depth - 1].running) emela_scheduler_invalid();
+  emela_protection guard = guards[--*depth];
+  emela_interrupt_unhold(fiber);
+  if (fiber->cancelled && fiber->holds == 0) return 0;
+  emela_protection_leave(fiber, guards, *depth, guard.keep, guard.next, pc);
+  return 1;
+}
 static int emela_unwind_has_operations(EmelaFiber owner) {
 #ifdef EMELA_RESUME_RUNTIME
   for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {

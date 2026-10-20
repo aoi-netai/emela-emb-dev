@@ -106,13 +106,13 @@ static void emela_ready_push(emela_fiber *fiber) {
   emela_ready_tail = slot;
 }
 #ifdef EMELA_UNWIND_RUNTIME
-static emela_fiber *emela_resume_live(EmelaFiber handle) {
+static inline emela_fiber *emela_resume_live(EmelaFiber handle) {
   if (handle.slot >= EMELA_FIBER_CAPACITY) return NULL;
   emela_fiber *fiber = &emela_fibers[handle.slot];
   if (fiber->state == EMELA_FIBER_FREE || fiber->generation != handle.generation) return NULL;
   return fiber;
 }
-static int emela_same_fiber(EmelaFiber a, EmelaFiber b) {
+static inline int emela_same_fiber(EmelaFiber a, EmelaFiber b) {
   return a.slot == b.slot && a.generation == b.generation;
 }
 static void emela_ready_remove(emela_fiber *fiber) {

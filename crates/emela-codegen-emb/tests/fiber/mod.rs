@@ -2,6 +2,7 @@ use super::*;
 
 mod await_;
 mod join;
+mod protect;
 
 fn options() -> Options {
     Options::default()

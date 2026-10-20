@@ -39,12 +39,6 @@ pub(super) fn validate(
             ));
         }
         for (_, stmt) in function.stmts.iter() {
-            if matches!(stmt, Stmt::Protect { .. }) {
-                return Err(unsupported(
-                    &function.name,
-                    "Protect cleanup in a suspend function (phase 7 follow-up)",
-                ));
-            }
             if let Stmt::Let { value, .. } = stmt {
                 match value {
                     Value::Call {
@@ -133,6 +127,17 @@ pub(super) fn has_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bo
     flow.functions
         .iter()
         .any(|(id, f)| emitted.contains(&id) && f.suspends && f.external.is_some())
+}
+
+pub(super) fn has_protects(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && function.suspends
+            && function
+                .stmts
+                .iter()
+                .any(|(_, stmt)| matches!(stmt, Stmt::Protect { .. }))
+    })
 }
 
 pub(super) fn external_symbol(
@@ -297,18 +302,24 @@ enum Node {
     Return(Option<Operand>),
     Defect(Operand),
     Unreachable,
+    Protect { cleanup: usize, body: usize },
+    Leave { keep: usize, next: usize },
+    CleanupEnd,
 }
 
 #[derive(Clone)]
 struct LoopTarget {
     vars: Vec<VarId>,
     entry: usize,
+    depth: usize,
 }
 
 struct Graph {
     nodes: Vec<Node>,
-    blocks: HashMap<LabelId, (Option<VarId>, usize)>,
+    blocks: HashMap<LabelId, (Option<VarId>, usize, usize)>,
     loops: Vec<LoopTarget>,
+    depth: usize,
+    max_depth: usize,
 }
 
 impl Graph {
@@ -323,6 +334,14 @@ impl Graph {
         self.add(Node::Assign(values, next))
     }
 
+    fn leave(&mut self, keep: usize, next: usize) -> usize {
+        if self.depth > keep {
+            self.add(Node::Leave { keep, next })
+        } else {
+            next
+        }
+    }
+
     fn sequence(
         &mut self,
         function: &Function,
@@ -333,14 +352,18 @@ impl Graph {
         let sequence = &function.seqs[seq];
         let mut entry = match &sequence.term {
             Term::Yield(value) => self.assign(dst, value, next),
-            Term::Return(value) => self.add(Node::Return(value.clone())),
+            Term::Return(value) => {
+                let returned = self.add(Node::Return(value.clone()));
+                self.leave(0, returned)
+            }
             Term::Defect(value) => self.add(Node::Defect(value.clone())),
             Term::Unreachable => self.add(Node::Unreachable),
             Term::Break { label, value } => {
-                let &(dst, next) = self.blocks.get(label).ok_or_else(|| {
+                let &(dst, next, depth) = self.blocks.get(label).ok_or_else(|| {
                     invalid_flow_ir(&function.name, "suspend Break without enclosing Block")
                 })?;
-                self.assign(dst, value, next)
+                let assign = self.assign(dst, value, next);
+                self.leave(depth, assign)
             }
             Term::Recur(values) => {
                 let target = self
@@ -350,10 +373,11 @@ impl Graph {
                         invalid_flow_ir(&function.name, "suspend Recur without enclosing Loop")
                     })?
                     .clone();
-                self.add(Node::Assign(
+                let assign = self.add(Node::Assign(
                     target.vars.into_iter().zip(values.clone()).collect(),
                     target.entry,
-                ))
+                ));
+                self.leave(target.depth, assign)
             }
             _ => {
                 return Err(unsupported(
@@ -396,7 +420,7 @@ impl Graph {
                     self.add(Node::Switch(*on, cases, default))
                 }
                 Stmt::Block { dst, label, body } => {
-                    self.blocks.insert(*label, (*dst, entry));
+                    self.blocks.insert(*label, (*dst, entry, self.depth));
                     let body = self.sequence(function, *body, *dst, entry)?;
                     self.blocks.remove(label);
                     body
@@ -411,6 +435,7 @@ impl Graph {
                     self.loops.push(LoopTarget {
                         vars: vars.clone(),
                         entry: head,
+                        depth: self.depth,
                     });
                     let body = self.sequence(function, *body, *dst, entry)?;
                     self.loops.pop();
@@ -419,6 +444,20 @@ impl Graph {
                         vars.iter().copied().zip(inits.clone()).collect(),
                         head,
                     ))
+                }
+                Stmt::Protect { dst, body, cleanup } => {
+                    let depth = self.depth;
+                    self.depth += 1;
+                    self.max_depth = self.max_depth.max(self.depth);
+                    let end = self.add(Node::CleanupEnd);
+                    let cleanup = self.sequence(function, *cleanup, None, end)?;
+                    let leave = self.add(Node::Leave {
+                        keep: depth,
+                        next: entry,
+                    });
+                    let body = self.sequence(function, *body, *dst, leave)?;
+                    self.depth = depth;
+                    self.add(Node::Protect { cleanup, body })
                 }
                 _ => {
                     return Err(unsupported(
@@ -464,6 +503,8 @@ pub(super) fn emit_function(
         nodes: vec![],
         blocks: HashMap::new(),
         loops: vec![],
+        depth: 0,
+        max_depth: 0,
     };
     let body = function
         .body
@@ -510,7 +551,7 @@ pub(super) fn emit_function(
                 active.insert(*v);
             }
             Node::Return(value) => operands.extend(value),
-            Node::Unreachable => {}
+            Node::Unreachable | Node::Protect { .. } | Node::Leave { .. } | Node::CleanupEnd => {}
         }
         for op in operands {
             if let Operand::Var(v) = op {
@@ -536,6 +577,10 @@ pub(super) fn emit_function(
     let has_result = layouts.type_repr(function.ret) != Repr::Void;
     writer.line(&format!("typedef struct {name}_frame {{"));
     writer.line("  emela_frame base;");
+    if graph.max_depth != 0 {
+        writer.line(&format!("  emela_protection guards[{}];", graph.max_depth));
+        writer.line("  uint32_t guard_depth;");
+    }
     if has_result {
         writer.line(&format!("  {} *result;", layouts.c_type(function.ret)));
     }
@@ -567,6 +612,16 @@ pub(super) fn emit_function(
     }
     writer.line(&format!("}} {name}_frame;"));
     writer.line(&format!("_Static_assert(sizeof({name}_frame) <= EMELA_FRAME_BYTES, \"increase Options::with_frame_bytes for {name}\");"));
+    if graph.max_depth != 0 {
+        writer.begin_block(&format!(
+            "static int {name}_unwind(emela_fiber *fiber, emela_frame *base)"
+        ));
+        writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+        writer.line("if (frame->guard_depth == 0) return 0;");
+        writer.line("emela_protection_leave(fiber, frame->guards, frame->guard_depth, 0, UINT32_MAX, &base->pc);");
+        writer.line("return 1;");
+        writer.end_block();
+    }
     writer.begin_block(&format!(
         "static void {name}_step(emela_fiber *fiber, emela_frame *base)"
     ));
@@ -598,7 +653,7 @@ pub(super) fn emit_function(
         writer.line(&format!("#define {name} (frame->{name})"));
     }
     writer.begin_block("for (;;)");
-    if layouts.has_resumes {
+    if layouts.has_unwind {
         writer.line("if (fiber->cancelled && fiber->holds == 0) return;");
     }
     writer.begin_block("switch (frame->base.pc)");
@@ -953,6 +1008,22 @@ pub(super) fn emit_function(
                 )?;
             }
             Node::Unreachable => writer.line("emela_scheduler_invalid();"),
+            Node::Protect { cleanup, body } => {
+                writer.line(&format!(
+                    "if (frame->guard_depth >= {}) emela_scheduler_invalid();",
+                    graph.max_depth
+                ));
+                writer.line(&format!("frame->guards[frame->guard_depth++] = (emela_protection){{.cleanup = {cleanup}}};"));
+                writer.line(&format!("base->pc = {body}; continue;"));
+            }
+            Node::Leave { keep, next } => {
+                writer.line(&format!("emela_protection_leave(fiber, frame->guards, frame->guard_depth, {keep}, {next}, &base->pc);"));
+                writer.line("continue;");
+            }
+            Node::CleanupEnd => {
+                writer.line("if (!emela_protection_finish(fiber, frame->guards, &frame->guard_depth, &base->pc)) return;");
+                writer.line("continue;");
+            }
         }
         writer.end_block();
     }
@@ -986,6 +1057,9 @@ pub(super) fn emit_function(
     writer.line("for (size_t offset = sizeof(emela_frame); offset < sizeof(*frame); offset++) ((unsigned char *)frame)[offset] = 0;");
     writer.line(&format!("frame->base.pc = {entry};"));
     writer.line(&format!("frame->base.drop = {name}_drop;"));
+    if graph.max_depth != 0 {
+        writer.line(&format!("frame->base.unwind = {name}_unwind;"));
+    }
     if has_result {
         writer.line("frame->result = result;");
     }
