@@ -25,7 +25,7 @@ fn main() {
         .with_string_capacity(64)
         .with_fiber_capacity(8)
         .with_frame_capacity(24)
-        .with_frame_bytes(256)
+        .with_frame_bytes(272)
         .with_deferred_capacity(0)
         .with_task_capacity(3)
         .with_event_capacity(3)

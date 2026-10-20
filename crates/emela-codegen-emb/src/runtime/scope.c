@@ -9,10 +9,14 @@ struct emela_scope_frame {
 };
 static void emela_scope_close(emela_scope *scope, EmelaFiber closer);
 #ifdef EMELA_FAILURE_RUNTIME
-static void emela_scope_failed(emela_scope *scope, EmelaError error) {
-  if (scope->first_error.tag != 0) return;
-  scope->first_error = error;
-  emela_error_retain(error);
+static void emela_scope_failed(emela_scope *scope, EmelaError *error) {
+  if (scope->first_error.tag != 0) {
+    emela_error_add_note(&scope->first_error, *error);
+    return;
+  }
+  emela_error_ensure_notes(error);
+  scope->first_error = *error;
+  emela_error_retain(*error);
   emela_fiber *owner = emela_resume_live(scope->owner);
   if (owner == NULL || scope->ended) emela_scheduler_invalid();
   emela_frame *target = &scope->frame->base;
@@ -71,7 +75,7 @@ static void emela_child_after_step(emela_fiber *fiber) {
 #ifdef EMELA_FAILURE_RUNTIME
   if (child->error.tag != 0) {
     child->status = 3;
-    emela_scope_failed(scope, child->error);
+    emela_scope_failed(scope, &child->error);
   }
 #endif
 #ifdef EMELA_CHILD_WAIT_RUNTIME
@@ -106,7 +110,7 @@ static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
   emela_scope *scope = frame->scope;
 #ifdef EMELA_FAILURE_RUNTIME
   if (frame->body_error.tag != 0) {
-    emela_scope_failed(scope, frame->body_error);
+    emela_scope_failed(scope, &frame->body_error);
     emela_error_clear(&frame->body_error);
   }
   if (fiber->failure_stop == base) fiber->failure_stop = NULL;

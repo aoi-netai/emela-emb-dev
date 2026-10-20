@@ -704,6 +704,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         ));
     }
     source.blank();
+    error_runtime::emit_display(
+        &layouts,
+        &names,
+        &string_output_functions,
+        options.string_capacity(),
+        &mut source,
+    )?;
 
     for (id, function) in flow
         .functions
@@ -2645,10 +2652,12 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
                 matches!(
                     stmt,
                     Stmt::Let {
-                        value: Value::Fiber {
-                            op: emela_core::FiberOp::CauseToString,
-                            ..
-                        },
+                        value: Value::Fiber { .. }
+                            | Value::Call {
+                                callee: Callee::Op { .. },
+                                suspends: true,
+                                ..
+                            },
                         ..
                     }
                 )

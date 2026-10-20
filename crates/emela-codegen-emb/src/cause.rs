@@ -252,7 +252,7 @@ pub(super) fn emit_to_string(
     function: &Function,
     dst: Option<VarId>,
     args: &[Operand],
-    names: &HashMap<FnId, String>,
+    _names: &HashMap<FnId, String>,
     strings: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
@@ -284,43 +284,7 @@ pub(super) fn emit_to_string(
     writer.end_block();
     if layouts.has_error_abi {
         writer.begin_block("else if (cause->kind == 0)");
-        writer.line("if (capacity < 7) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));");
-        writer.begin_block("switch (cause->error.tag)");
-        for &(error, _) in &layouts.error_types {
-            let show = layouts
-                .error_shows
-                .iter()
-                .find(|(e, _)| *e == error)
-                .and_then(|(_, id)| names.get(id).map(|name| (*id, name)))
-                .ok_or_else(|| {
-                    unsupported(
-                        &function.name,
-                        "Cause.to_string without an error show function",
-                    )
-                })?;
-            let (id, name) = show;
-            writer.begin_block(&format!("case UINT32_C({}):", enum_index(error) + 1));
-            let output = if strings.has_string_output_call(id) {
-                ", output + 7, (uint16_t)(capacity - 7)"
-            } else {
-                ""
-            };
-            writer.line(&format!(
-                "text = {name}(cause->error.payload.e{}{output});",
-                enum_index(error)
-            ));
-            writer.line("break;");
-            writer.end_block();
-        }
-        writer.line(
-            "default: emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));",
-        );
-        writer.end_block();
-        writer.line("if (text.length > capacity - 7) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));");
-        writer.line("if (text.data != output + 7) for (uint32_t i = 0; i < text.length; i++) output[7 + i] = text.data[i];");
-        writer.line("for (uint32_t i = 0; i < 7; i++) output[i] = \"error: \"[i];");
-        writer.line("emela_heap_release(text.owner);");
-        writer.line("text = (EmelaString){.data = output, .length = (uint16_t)(7 + text.length)};");
+        writer.line("text = emela_error_to_string(cause->error, output, capacity);");
         writer.end_block();
     }
     writer.begin_block("else");

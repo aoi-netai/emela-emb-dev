@@ -6,6 +6,7 @@ mod cause;
 mod failure;
 mod interrupt;
 mod join;
+mod notes;
 mod protect;
 
 fn options() -> Options {
