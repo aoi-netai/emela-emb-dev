@@ -4,6 +4,8 @@
 
 過去の [`emela-fix-259/examples/embedded-bus`](../../../../emela-fix-259/examples/embedded-bus) は、ボード設定やRenode構成を調べる参考資料として使う。その `run.sh` は当時の `emela-cli` と旧backendをビルドするため、現行 `emela-codegen-emb` の確認には使わない。このcrateのsmoke fixtureは現在のbackend APIを直接呼び出す。
 
+最終受入のhost検査・O0/O2・容量不足を含む一括実行は完了ロードマップ5を参照する。以下は単独smokeの手順である。
+
 ## 必要なもの
 
 - Rust workspaceのbuildに必要な環境
@@ -20,7 +22,7 @@
 | `STM32CUBE_F4` | `$STM32_RENODE_ROOT/.tools/stm32cube/STM32CubeF4-1.28.3` | STM32CubeF4 |
 | `RENODE` | `$STM32_RENODE_ROOT/.tools/stm32cube/renode-1.16.1/renode` | Renode executable |
 | `RENODE_PLATFORM` | `$(dirname "$RENODE")/platforms/cpus/stm32f4.repl` | STM32F4 platform description |
-| `EMELA_EMB_RENODE_OUT` | `/tmp/emela-codegen-emb-renode-smoke` | 生成物とログの出力先 |
+| `EMELA_EMB_RENODE_OUT` | `/tmp/emela-codegen-emb-renode-scalar` | 生成物とログの出力先 |
 
 ## 実行
 
@@ -46,7 +48,7 @@ bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 
 1. [`examples/renode_smoke.rs`](../examples/renode_smoke.rs) を `cargo run` し、CoreからFlow IRを経由してCを生成する。
 2. 生成C、board fixture、CMSIS system source、F446 startupをCortex-M4向けにcompileし、ELFとmap fileを作る。
-3. STM32F4 platformでRenodeを起動し、ELFを100 ms相当実行する。
+3. STM32F4 platformでRenodeを起動し、ELFを500 ms相当実行する。
 4. `GPIOA_ODR` のPA5・PA6・PA7 bitがHighになったことを確認する。PA5は条件の真側で42、PA6は偽側で34を受け取ったこと、PA7はdivision-by-zero defect hookが期待したkindとmessageを受け取ったことを示す。異常値はPA8で示す。
 
 主な出力は `EMELA_EMB_RENODE_OUT` 以下に保存される。
@@ -58,7 +60,7 @@ bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 | `firmware.map` | linker map |
 | `renode.log` | Renode実行ログ |
 
-正常終了時には、最後に `PASS: generated Emela entry exercised both branches and the defect hook, GPIOA_ODR=0x000000e0` が表示される。
+正常終了時には `PASSED: scalar/O2: .../report.json` が表示される。`metrics.json`の`gpioa_odr`が224（`0xe0`）であることと、共通stack/resource検査の成功をrunnerが確認する。
 
 ## 確認範囲と制約
 
