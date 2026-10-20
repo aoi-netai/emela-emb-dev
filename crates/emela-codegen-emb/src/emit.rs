@@ -22,6 +22,8 @@ mod error_runtime;
 mod owned;
 #[path = "suspend.rs"]
 mod suspend;
+#[path = "task_values.rs"]
+mod task_values;
 
 const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
@@ -63,7 +65,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let emitted_functions = runtime_reachable(flow);
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
+    let task_value_types = task_values::result_types(flow, &emitted_functions);
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
+    task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
     let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
@@ -212,14 +216,21 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if has_tasks {
         header.line(include_str!("runtime/task.h"));
+        if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
+            header.line(include_str!("runtime/task_context.h"));
+        }
         if suspend::has_failing_tasks(flow, &emitted_functions) {
             header.line(include_str!("runtime/task_failure.h"));
         }
+        task_values::emit_header(&layouts, &task_value_types, &mut header);
         for (id, function) in flow
             .functions
             .iter()
             .filter(|(id, f)| emitted_functions.contains(id) && f.suspends && f.external.is_some())
         {
+            if !suspend::scalar(&layouts.types, function.ret) {
+                header.line(&format!("/* Success: emela_task_complete_value_{}. Arguments are borrowed only during start. */", function.ret.index()));
+            }
             header.line(&format!(
                 "{};",
                 suspend::task_signature(&layouts, function, &names[&id])
@@ -398,6 +409,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <stddef.h>");
     source.blank();
     if has_scheduler {
+        if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
+            source.line("#define EMELA_TASK_CONTEXT_RUNTIME 1");
+        }
+        if !task_value_types.is_empty() {
+            task_values::emit_union(&task_value_types, &mut source);
+        }
         if suspend::has_failing_tasks(flow, &emitted_functions) {
             source.line("#define EMELA_TASK_FAILURE_RUNTIME 1");
         }
@@ -459,6 +476,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if suspend::has_failing_tasks(flow, &emitted_functions) {
         suspend::emit_task_failure_ownership(&layouts, &mut source);
     }
+    task_values::emit_dispatch(&layouts, &task_value_types, &mut source);
     cause::emit_runtime(&layouts, &mut source);
     if layouts.has_resumes {
         suspend::emit_resume_runtime(&layouts, &mut source);

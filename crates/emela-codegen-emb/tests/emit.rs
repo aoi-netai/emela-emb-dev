@@ -14,6 +14,7 @@ mod fiber;
 mod owned;
 mod string_append;
 mod suspend;
+mod task_values;
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{

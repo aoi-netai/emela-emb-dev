@@ -17,6 +17,12 @@ typedef struct {
   emela_task_value value;
 #ifdef EMELA_TASK_FAILURE_RUNTIME
   EmelaTaskFailureProducer producer;
+#endif
+#ifdef EMELA_TASK_VALUE_RUNTIME
+  emela_task_value_producer value_producer;
+  int produced_value;
+#endif
+#ifdef EMELA_TASK_CONTEXT_RUNTIME
   EmelaTaskContextRelease release;
   void *context;
 #endif
@@ -29,6 +35,10 @@ static int emela_tasks_initialized;
 
 #ifdef EMELA_TASK_FAILURE_RUNTIME
 static void emela_task_own_error(EmelaError *error);
+#endif
+#ifdef EMELA_TASK_VALUE_RUNTIME
+static void emela_task_deliver_value(uint32_t kind, emela_task_value_producer producer,
+                                     void *context, EmelaTaskContextRelease release, void *result);
 #endif
 
 static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kind, void *error_out) {
@@ -108,6 +118,34 @@ int emela_task_complete_float(EmelaTask task, double value) {
   return emela_task_complete(task, EMELA_TASK_FLOAT, (emela_task_value){.f64 = value});
 }
 
+#ifdef EMELA_TASK_VALUE_RUNTIME
+static int emela_task_complete_value(EmelaTask handle, uint32_t kind,
+                                     emela_task_value_producer producer, void *context,
+                                     EmelaTaskContextRelease release) {
+  uint32_t irq_state = emela_board_event_lock();
+  if (handle.slot >= EMELA_TASK_CAPACITY) {
+    emela_board_event_unlock(irq_state);
+    return 0;
+  }
+  emela_task_slot *task = &emela_tasks[handle.slot];
+  if (task->generation != handle.generation || task->state != EMELA_TASK_PENDING || task->kind != kind) {
+    emela_board_event_unlock(irq_state);
+    return 0;
+  }
+  if (emela_event_count == EMELA_EVENT_CAPACITY) {
+    emela_board_event_unlock(irq_state);
+    emela_board_defect(EMELA_DEFECT_HEAP_EXHAUSTED, "fixed event queue exhausted", UINT16_C(27));
+  }
+  emela_events[emela_event_tail] = (emela_event){.task = handle, .value_producer = producer,
+    .produced_value = 1, .context = context, .release = release};
+  emela_event_tail = (emela_event_tail + 1) % EMELA_EVENT_CAPACITY;
+  emela_event_count++;
+  task->state = EMELA_TASK_QUEUED;
+  emela_board_event_unlock(irq_state);
+  return 1;
+}
+#endif
+
 #ifdef EMELA_TASK_FAILURE_RUNTIME
 int emela_task_fail(EmelaTask handle, EmelaTaskFailureProducer producer,
                     void *context, EmelaTaskContextRelease release) {
@@ -147,7 +185,7 @@ static int emela_task_dispatch_one(void) {
   emela_task_slot *task = &emela_tasks[event.task.slot];
   if (task->generation != event.task.generation || task->state != EMELA_TASK_QUEUED) {
     emela_board_event_unlock(irq_state);
-#ifdef EMELA_TASK_FAILURE_RUNTIME
+#ifdef EMELA_TASK_CONTEXT_RUNTIME
     if (event.release != NULL) event.release(event.context);
 #endif
 #ifdef EMELA_UNWIND_RUNTIME
@@ -180,6 +218,11 @@ static int emela_task_dispatch_one(void) {
     emela_task_own_error(&error);
     if (event.release != NULL) event.release(event.context);
     *error_out = error;
+  } else
+#endif
+#ifdef EMELA_TASK_VALUE_RUNTIME
+  if (event.produced_value) {
+    emela_task_deliver_value(kind, event.value_producer, event.context, event.release, result);
   } else
 #endif
   if (result != NULL) {

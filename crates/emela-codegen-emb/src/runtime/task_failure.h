@@ -8,7 +8,6 @@
  * A board-held managed value must have its own retained reference throughout the lease.
  */
 typedef void (*EmelaTaskFailureProducer)(void *context, EmelaError *error);
-typedef void (*EmelaTaskContextRelease)(void *context);
 
 /* ISR-safe: only queues pointers in fixed storage; performs no allocation or callbacks.
  * Returning one transfers a context lease until exactly one release callback (if non-NULL).

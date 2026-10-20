@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn scalar(types: &TypeTable, ty: TypeId) -> bool {
+pub(super) fn scalar(types: &TypeTable, ty: TypeId) -> bool {
     matches!(
         types[ty],
         Type::Int | Type::Int64 | Type::Float | Type::Bool | Type::Unit | Type::Never
@@ -22,18 +22,6 @@ pub(super) fn validate(
         enabled = true;
         if function.constant {
             return Err(unsupported(&function.name, "const suspend function"));
-        }
-        if function.external.is_some()
-            && (!scalar(&flow.core.types, function.ret)
-                || function
-                    .params
-                    .iter()
-                    .any(|p| !scalar(&flow.core.types, function.vars[*p].ty)))
-        {
-            return Err(unsupported(
-                &function.name,
-                "non-scalar external task ABI (phase 7 follow-up)",
-            ));
         }
         for (_, stmt) in function.stmts.iter() {
             if let Stmt::Let { value, .. } = stmt {
@@ -1525,18 +1513,14 @@ fn freeze_statement_result(
     }
 }
 
-fn task_kind(
-    layouts: &TypeLayouts<'_>,
-    ty: TypeId,
-    function: &str,
-) -> Result<&'static str, Vec<Error>> {
-    match layouts.types[ty] {
-        Type::Int | Type::Bool => Ok("INT"),
-        Type::Int64 => Ok("INT64"),
-        Type::Float => Ok("FLOAT"),
-        Type::Unit | Type::Never => Ok("UNIT"),
-        _ => Err(unsupported(function, "non-scalar external task result")),
-    }
+fn task_kind(layouts: &TypeLayouts<'_>, ty: TypeId, _function: &str) -> Result<String, Vec<Error>> {
+    Ok(match layouts.types[ty] {
+        Type::Int | Type::Bool => "INT".into(),
+        Type::Int64 => "INT64".into(),
+        Type::Float => "FLOAT".into(),
+        Type::Unit | Type::Never => "UNIT".into(),
+        _ => format!("VALUE_{}", ty.index()),
+    })
 }
 
 fn prepare_result(
