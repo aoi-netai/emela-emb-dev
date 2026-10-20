@@ -2222,6 +2222,26 @@ fn validate_isr_function(
         ));
     }
 
+    let reachable_statements = runtime_statements(function);
+    if function.stmts.iter().any(|(id, statement)| {
+        reachable_statements.contains(&id)
+            && matches!(
+                statement,
+                Stmt::Let {
+                    value: Value::Runtime {
+                        op: RuntimeOp::Hold | RuntimeOp::Unhold,
+                        ..
+                    },
+                    ..
+                }
+            )
+    }) {
+        return Err(unsupported(
+            &function.name,
+            &format!("fiber interrupt control reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+
     active.insert(id);
     for (_, statement) in function.stmts.iter() {
         let Stmt::Let {

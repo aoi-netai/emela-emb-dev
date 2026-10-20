@@ -265,3 +265,53 @@ fn rejects_recur_crossing_protect_and_return_leaving_cleanup() {
     module.add(builder.finish());
     rejects_flow(&module, "return leaves a cleanup");
 }
+
+#[test]
+fn isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls() {
+    for op in [RuntimeOp::Hold, RuntimeOp::Unhold] {
+        for via_callee in [false, true] {
+            for with_unwind in [false, true] {
+                let mut module = Module::new(emela_core::Module::new());
+                let mut action = FnBuilder::new(&module.core, "action");
+                action.set_exported();
+                action.let_(None, Value::Runtime { op, args: vec![] });
+                action.term(Term::Return(None));
+                let action = module.add(action.finish());
+                if via_callee {
+                    let mut entry = FnBuilder::new(&module.core, "entry");
+                    entry.set_exported();
+                    entry.let_(
+                        None,
+                        Value::Call {
+                            callee: Callee::Direct(action),
+                            args: vec![],
+                            suspends: false,
+                            on_fail: None,
+                        },
+                    );
+                    entry.term(Term::Return(None));
+                    module.add(entry.finish());
+                }
+                if with_unwind {
+                    let mut other = FnBuilder::new(&module.core, "other");
+                    other.set_exported().set_suspends();
+                    other.protect(None, |_| {}, |_| {});
+                    other.term(Term::Return(None));
+                    module.add(other.finish());
+                }
+                verify_flow(&module).unwrap();
+                compile_flow(&module, &Options::default())
+                    .expect("normal context accepts interrupt controls");
+                let entry = if via_callee { "entry" } else { "action" };
+                let errors = compile_flow(&module, &Options::default().with_isr_entry(entry))
+                    .expect_err("an ISR cannot change a main fiber's interrupt state");
+                assert!(
+                    errors.iter().any(|e| e.kind == ErrorKind::Unsupported
+                        && e.message.contains("fiber interrupt control")
+                        && e.message.contains("ISR entry")),
+                    "{errors:?}"
+                );
+            }
+        }
+    }
+}
