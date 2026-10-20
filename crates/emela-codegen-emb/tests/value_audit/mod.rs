@@ -239,3 +239,7 @@ fn discarded_top_level_function_reference_is_heapless() {
 fn discarded_error_test_accepts_a_caught_error_descriptor() {
     run_discarded("is_error", 0);
 }
+#[test]
+fn discarded_error_projection_accepts_a_caught_error_descriptor() {
+    run_discarded("as_error", 0);
+}

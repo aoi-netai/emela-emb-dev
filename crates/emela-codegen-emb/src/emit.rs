@@ -5103,10 +5103,7 @@ fn emit_statement_inner(
                         ));
                     }
                     let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "AsError has no error enum destination",
-                        ));
+                        return Ok(());
                     };
                     if layouts.error_enum(function.vars[*dst].ty) != Some(*enum_id) {
                         return Err(invalid_flow_ir(
