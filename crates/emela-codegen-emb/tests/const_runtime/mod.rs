@@ -956,3 +956,113 @@ fn canonical_const_roots_include_dependency_specializations_until_they_reach_a_f
     assert!(names.contains(&"BASE"));
     assert!(names.contains(&"PAIR"));
 }
+
+#[test]
+fn polymorphic_const_defects_have_one_source_context_and_self_reference_retries() {
+    for recursive in [false, true] {
+        let expression = if recursive {
+            "BROKEN"
+        } else {
+            "panic(\"broken\")"
+        };
+        let source = format!(
+            r#"
+@external(c,"trigger")
+fn trigger() -> Int use {{}}
+const BROKEN = {{ dbg("once")
+ if trigger() == 1 {{ {expression} }} else {{ [] }}
+}}
+fn ints(xs:List[Int])->Int{{if List.is_empty(xs){{42}}else{{0}}}}
+fn texts(xs:List[String])->Int{{if List.is_empty(xs){{42}}else{{0}}}}
+pub fn integer()->Int{{ints(BROKEN)}}
+pub fn text()->Int{{texts(BROKEN)}}
+"#
+        );
+        let mut output = emit_source(&source, 1024);
+        let integer = export(&output, "integer");
+        let text = export(&output, "text");
+        output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str("int test_heap_empty(void){if(!emela_heap_initialized)return 1;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;if(!b->is_free)return 0;p+=b->size;}return 1;}\n");
+        let expected = if recursive {
+            "const BROKEN refers to itself while being evaluated"
+        } else {
+            "while evaluating const BROKEN: broken"
+        };
+        let count = if recursive { 2000 } else { 1 };
+        compile_and_run(
+            output,
+            &format!(
+                r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <setjmp.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);static jmp_buf escape;static unsigned calls,debugs;
+int32_t trigger(void){{++calls;return 1;}}
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++debugs;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;assert(n==sizeof("{expected}")-1);assert(!memcmp(s,"{expected}",n));longjmp(escape,1);}}
+int main(void){{for(unsigned i=0;i<1000;i++){{if(setjmp(escape)==0){{{integer}();abort();}}if(setjmp(escape)==0){{{text}();abort();}}assert(test_heap_empty());}}assert(calls=={count}&&debugs=={count});return 0;}}
+"#
+            ),
+        );
+    }
+}
+
+#[test]
+fn polymorphic_const_bridge_capacity_defects_use_the_source_name_once_and_are_cached() {
+    let source = r#"
+const ITEMS={dbg("once")
+ [[]]
+}
+fn ints(xs:List[List[Int]])->Int{42}
+fn texts(xs:List[List[String]])->Int{42}
+pub fn integer()->Int{ints(ITEMS)}
+pub fn text()->Int{texts(ITEMS)}
+"#;
+    let output = emit_source(source, 128);
+    let integer = export(&output, "integer");
+    let text = export(&output, "text");
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <setjmp.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static jmp_buf escape;static unsigned debugs;
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++debugs;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{const char expected[]="while evaluating const ITEMS: fixed heap exhausted";assert(k==EMELA_DEFECT_HEAP_EXHAUSTED);assert(n==sizeof expected-1&&!memcmp(s,expected,n));longjmp(escape,1);}}
+int main(void){{for(unsigned i=0;i<1000;i++){{if(setjmp(escape)==0){{{integer}();abort();}}if(setjmp(escape)==0){{{text}();abort();}}}}assert(debugs==1);return 0;}}
+"#
+        ),
+    );
+}
+
+#[test]
+fn canonical_dependency_consts_initialize_once_across_nested_specializations() {
+    let output = emit_source(
+        include_str!("../../examples/support/const_polymorphic_dependency.emel"),
+        8192,
+    );
+    let integer = export(&output, "integer");
+    let text = export(&output, "text");
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static unsigned initializations;
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
+int main(void){{for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({text}()==42);}}assert(initializations==2);return 0;}}
+"#
+        ),
+    );
+}

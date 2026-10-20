@@ -517,7 +517,7 @@ impl Bridges {
         Ok(())
     }
 
-    pub(super) fn emit_initializer(
+    pub(super) fn emit_getter(
         &self,
         id: FnId,
         flow: &emela_lir::Module,
@@ -528,6 +528,22 @@ impl Bridges {
         let canonical = self.getters[&id];
         let source = flow.functions[canonical].ret;
         let destination = flow.functions[id].ret;
+        let index = u32::from(id.into_raw());
+        let state = format!("emela_const_state_{index}");
+        let cache = format!("emela_const_value_{index}");
+        let is_void = layouts.type_repr(destination) == Repr::Void;
+        writer.line(&format!("static EmelaConstState {state};"));
+        if !is_void {
+            writer.line(&format!("static {} {cache};", layouts.c_type(destination)));
+        }
+        writer.begin_block(&signature(
+            layouts,
+            &flow.functions[id],
+            &names[&id],
+            !flow.functions[id].exported,
+            false,
+            false,
+        ));
         for (&target, name) in names {
             writer.line(&format!(
                 "(void)&{}{};",
@@ -539,7 +555,24 @@ impl Bridges {
                 }
             ));
         }
-
+        writer.begin_block(&format!("if({state}.status==3)"));
+        writer.line(&format!(
+            "emela_embedded_report_defect({state}.kind,{state}.message,{state}.length);"
+        ));
+        writer.end_block();
+        writer.begin_block(&format!("if({state}.status==1)"));
+        let message = format!(
+            "const {} refers to itself while being evaluated",
+            flow.functions[canonical].name
+        );
+        writer.line(&format!(
+            "emela_const_self_reference(EMELA_DEFECT_PANIC,{},UINT16_C({}));",
+            c_string_literal(message.as_bytes()),
+            message.len()
+        ));
+        writer.end_block();
+        writer.begin_block(&format!("if({state}.status==0)"));
+        // A typed facade must not create a second source const context around canonical evaluation.
         if layouts.type_repr(source) == Repr::Void {
             writer.line(&format!("{}();", names[&canonical]));
         } else {
@@ -549,21 +582,36 @@ impl Bridges {
                 Some(&format!("{}()", names[&canonical])),
             );
         }
-        if layouts.type_repr(destination) == Repr::Void {
-            writer.line(&format!(
-                "{};",
-                self.call(source, destination, "canonical", layouts)
-            ));
+        let prefix = format!(
+            "while evaluating const {}: ",
+            flow.functions[canonical].name
+        );
+        writer.line(&format!(
+            "EmelaConstContext context={{emela_const_current,&{state},{},UINT16_C({})}};",
+            c_string_literal(prefix.as_bytes()),
+            prefix.len()
+        ));
+        writer.assign(&format!("{state}.status"), "1");
+        writer.assign("emela_const_current", "&context");
+        let call = self.call(source, destination, "canonical", layouts);
+        if is_void {
+            writer.line(&format!("{call};"));
         } else {
-            writer.decl(
-                &layouts.c_type(destination),
-                "converted",
-                Some(&self.call(source, destination, "canonical", layouts)),
-            );
+            writer.assign(&cache, &call);
         }
         if layouts.type_repr(source) != Repr::Void && layouts.is_managed_value(source) {
             layouts.emit_release_value_expression(source, "canonical", writer);
         }
-        writer.ret((layouts.type_repr(destination) != Repr::Void).then_some("converted"));
+        writer.assign("emela_const_current", "context.previous");
+        writer.assign(&format!("{state}.status"), "2");
+        writer.end_block();
+        if is_void {
+            writer.ret(None);
+        } else {
+            layouts.emit_retain_value_expression(destination, &cache, writer);
+            writer.ret(Some(&cache));
+        }
+        writer.end_block();
+        writer.blank();
     }
 }

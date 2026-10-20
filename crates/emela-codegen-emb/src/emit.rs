@@ -851,6 +851,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             return Err(unsupported(&function.name, "function without a body"));
         };
         let sequence = &function.seqs[body];
+        if const_bridges.getters.contains_key(&id) {
+            const_bridges.emit_getter(id, flow, &layouts, &names, &mut source);
+            continue;
+        }
         let initializer_name = format!("{}_const_init", names[&id]);
         let is_runtime_const = runtime_consts.contains(&id);
         let name = if is_runtime_const {
@@ -873,20 +877,6 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             )
         };
         source.begin_block(&function_signature);
-        if const_bridges.getters.contains_key(&id) {
-            const_bridges.emit_initializer(id, flow, &layouts, &names, &mut source);
-            source.end_block();
-            source.blank();
-            emit_const_getter(
-                &layouts,
-                id,
-                function,
-                &names[&id],
-                &initializer_name,
-                &mut source,
-            );
-            continue;
-        }
         if function.constant {
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
