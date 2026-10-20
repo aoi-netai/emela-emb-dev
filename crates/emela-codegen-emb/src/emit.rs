@@ -5078,10 +5078,7 @@ fn emit_statement_inner(
                         ));
                     }
                     let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "IsError has no Bool destination",
-                        ));
+                        return Ok(());
                     };
                     if !layouts.core.enums[*enum_id].error {
                         return Err(invalid_flow_ir(

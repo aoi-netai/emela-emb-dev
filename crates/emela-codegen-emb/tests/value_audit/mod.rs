@@ -23,10 +23,27 @@ fn discarded_value_flow(kind: &str) -> Module {
         error: true,
         external: false,
     });
+    let error_ty = core.enum_type(error_id, vec![]);
     let mut flow = Module::new(core);
     let mut target = FnBuilder::new(&flow.core, "target");
     target.set_ret(TypeId::INT);
-    target.term(Term::Return(Some(Const::Int(42).into())));
+    if kind == "is_error" || kind == "as_error" {
+        target.set_fails();
+        let error = target.assign(
+            "raised",
+            error_ty,
+            Value::Make {
+                ctor: CtorRef {
+                    enum_id: error_id,
+                    variant: 0,
+                },
+                args: vec![Const::Int(42).into()],
+            },
+        );
+        target.term(Term::Fail(error.into()));
+    } else {
+        target.term(Term::Return(Some(Const::Int(42).into())));
+    }
     let target = flow.add(target.finish());
     let mut b = FnBuilder::new(&flow.core, "run");
     b.set_exported().set_ret(TypeId::INT);
@@ -111,7 +128,19 @@ fn discarded_value_flow(kind: &str) -> Module {
         }
         "fn_ref" => b.let_(None, Value::FnRef(target)),
         "is_error" | "as_error" => {
-            let error = b.param("error", TypeId::ANY);
+            let error = b.var("caught", TypeId::ANY);
+            b.block(Some(error), "catch", |b, label| {
+                b.let_(
+                    None,
+                    Value::Call {
+                        callee: Callee::Direct(target),
+                        args: vec![],
+                        suspends: false,
+                        on_fail: Some(OnFail::Break(label)),
+                    },
+                );
+                b.term(Term::Unreachable);
+            });
             b.let_(
                 None,
                 if kind == "is_error" {
@@ -166,11 +195,6 @@ int test_heap_empty(void) {
             );
         extra.push_str("assert(test_heap_empty());");
     }
-    let arg = if kind == "is_error" || kind == "as_error" {
-        "(EmelaAny){.tag=UINT32_C(2)}"
-    } else {
-        ""
-    };
     compile_and_run(
         output,
         &format!(
@@ -181,7 +205,7 @@ int test_heap_empty(void) {
 #include "emela_board.h"
 int test_heap_empty(void);
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char *s,uint16_t n) {{ (void)k; (void)s; (void)n; abort(); }}
-int main(void) {{ for(unsigned i=0;i<1000;i++) {{ assert(emela_export_run_1({arg})==42); {extra} }} return 0; }}
+int main(void) {{ for(unsigned i=0;i<1000;i++) {{ assert(emela_export_run_1()==42); {extra} }} return 0; }}
 "#
         ),
     );
@@ -210,4 +234,8 @@ fn discarded_list_tail_preserves_the_source_owner() {
 #[test]
 fn discarded_top_level_function_reference_is_heapless() {
     run_discarded("fn_ref", 0);
+}
+#[test]
+fn discarded_error_test_accepts_a_caught_error_descriptor() {
+    run_discarded("is_error", 0);
 }
