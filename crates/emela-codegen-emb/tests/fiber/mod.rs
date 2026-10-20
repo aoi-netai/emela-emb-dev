@@ -1,6 +1,7 @@
 use super::*;
 
 mod aggregate;
+mod aggregate_abi;
 mod attempt;
 mod await_;
 mod cause;

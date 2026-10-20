@@ -5,6 +5,7 @@ use emela_lir::{Callee, Function, Module, Operand, Seq, Stmt, Term, Value, VarDa
 
 pub(crate) fn lower(module: &mut Module, closure_functions: &HashSet<emela_lir::FnId>) {
     normalize_suspend_handlers(module);
+    normalize_call_arguments(module);
     let reachable = crate::emit::runtime_reachable(module);
     let mut adapters = HashMap::new();
     let mut pending = Vec::new();
@@ -78,6 +79,95 @@ pub(crate) fn lower(module: &mut Module, closure_functions: &HashSet<emela_lir::
         };
         if let Stmt::Let { value, .. } = &mut module.functions[caller].stmts[statement] {
             *value = Value::FnRef(adapter);
+        }
+    }
+}
+
+fn normalize_call_arguments(module: &mut Module) {
+    for id in crate::emit::runtime_reachable(module) {
+        let mut inserted = HashMap::new();
+        for (statement, stmt) in module.functions[id].stmts.clone().iter() {
+            let Stmt::Let {
+                value: Value::Call { callee, args, .. },
+                ..
+            } = stmt
+            else {
+                continue;
+            };
+            let expected = match callee {
+                Callee::Direct(target) => module.functions[*target]
+                    .params
+                    .iter()
+                    .map(|&p| module.functions[*target].vars[p].ty)
+                    .collect::<Vec<_>>(),
+                Callee::Indirect(target) => {
+                    let Type::Fn(ft) = &module.core.types[module.functions[id].vars[*target].ty]
+                    else {
+                        continue;
+                    };
+                    ft.params
+                        .iter()
+                        .copied()
+                        .chain(ft.ev.then_some(emela_core::TypeId::EVIDENCE))
+                        .filter(|&ty| emela_lir::repr_of(&module.core, ty) != emela_lir::Repr::Void)
+                        .collect()
+                }
+                _ => continue,
+            };
+            let f = &mut module.functions[id];
+            let mut adapted = args.clone();
+            for (index, (arg, expected)) in args.iter().zip(expected).enumerate() {
+                let Operand::Var(source) = arg else {
+                    continue;
+                };
+                let actual = f.vars[*source].ty;
+                if actual == expected {
+                    continue;
+                }
+                let (Type::Fn(from), Type::Fn(to)) =
+                    (&module.core.types[actual], &module.core.types[expected])
+                else {
+                    continue;
+                };
+                // Flow permits function subtyping at a call boundary without a Coerce node.
+                // Our distinct C records need the same adapter used by explicit coercions.
+                if from.params != to.params || from.ret != to.ret {
+                    continue;
+                }
+                let dst = f.vars.alloc(VarData {
+                    hint: "call_argument".into(),
+                    repr: emela_lir::Repr::Ref,
+                    ty: expected,
+                });
+                let coercion = f.stmts.alloc(Stmt::Let {
+                    dst: Some(dst),
+                    value: Value::Coerce(*source),
+                    on_defect: None,
+                    on_suspend: None,
+                });
+                inserted
+                    .entry(statement)
+                    .or_insert_with(Vec::new)
+                    .push(coercion);
+                adapted[index] = dst.into();
+            }
+            if let Stmt::Let {
+                value: Value::Call { args, .. },
+                ..
+            } = &mut f.stmts[statement]
+            {
+                *args = adapted;
+            }
+        }
+        for (_, seq) in module.functions[id].seqs.iter_mut() {
+            let mut statements = Vec::new();
+            for statement in &seq.stmts {
+                if let Some(before) = inserted.get(statement) {
+                    statements.extend(before);
+                }
+                statements.push(*statement);
+            }
+            seq.stmts = statements;
         }
     }
 }

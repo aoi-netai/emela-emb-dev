@@ -10050,6 +10050,7 @@ impl<'a> TypeLayouts<'a> {
         writer.begin_block(
             "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
         );
+        writer.line("(void)value; (void)pending; (void)tail;");
         writer.begin_block("switch (kind)");
         for &list_ty in &self.list_types {
             let Type::List(element) = self.types[list_ty] else {
