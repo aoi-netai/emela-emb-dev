@@ -204,8 +204,16 @@ pub(super) fn start_signature(
     )
 }
 
-fn push_signature(layouts: &TypeLayouts<'_>, function: &Function, name: &str) -> String {
+fn push_signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    environment: Option<usize>,
+) -> String {
     let mut params = vec!["emela_fiber *fiber".to_owned()];
+    if environment.is_some() {
+        params.push("void *emela_env".to_owned());
+    }
     params.extend(parameters(layouts, function));
     format!("static void {name}_push({})", params.join(", "))
 }
@@ -214,11 +222,13 @@ pub(super) fn emit_declarations(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     name: &str,
+    environment: Option<usize>,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
-    if function.external.is_none() {
-        writer.line(&format!("{};", push_signature(layouts, function, name)));
-    }
+    writer.line(&format!(
+        "{};",
+        push_signature(layouts, function, name, environment)
+    ));
     Ok(())
 }
 
@@ -372,10 +382,25 @@ pub(super) fn emit_function(
     name: &str,
     names: &HashMap<FnId, String>,
     output_calls: &HashSet<FnId>,
+    environment: Option<usize>,
     options: &Options,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     if function.external.is_some() {
+        writer.begin_block(&push_signature(layouts, function, name, None));
+        let kind = task_kind(layouts, function.ret, &function.name)?;
+        let result = if layouts.type_repr(function.ret) == Repr::Void {
+            "NULL"
+        } else {
+            "result"
+        };
+        writer.line(&format!(
+            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind});"
+        ));
+        let mut args = vec!["task".to_owned()];
+        args.extend(function.params.iter().copied().map(variable_name));
+        writer.line(&format!("{name}({});", args.join(", ")));
+        writer.end_block();
         return Ok(());
     }
     let mut graph = Graph {
@@ -470,6 +495,42 @@ pub(super) fn emit_function(
                     dst,
                     value:
                         Value::Call {
+                            callee: Callee::Indirect(callee),
+                            args,
+                            on_fail: None,
+                            ..
+                        },
+                    ..
+                } = statement
+                    && matches!(&layouts.types[function.vars[*callee].ty], Type::Fn(ft) if ft.suspends)
+                {
+                    let Type::Fn(ft) = &layouts.types[function.vars[*callee].ty] else {
+                        unreachable!()
+                    };
+                    prepare_result(layouts, function, *dst, writer);
+                    let callee = variable_name(*callee);
+                    writer.line(&format!(
+                        "if ({callee}.call == NULL) emela_scheduler_invalid();"
+                    ));
+                    let mut arguments = vec!["fiber".to_owned(), format!("{callee}.env")];
+                    arguments.extend(
+                        args.iter()
+                            .map(operand_expression)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|why| unsupported(&function.name, why))?,
+                    );
+                    if layouts.type_repr(ft.ret) != Repr::Void {
+                        arguments.push(
+                            dst.map(|dst| format!("&{}", variable_name(dst)))
+                                .unwrap_or_else(|| "NULL".to_owned()),
+                        );
+                    }
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    writer.line(&format!("{callee}.call({}); return;", arguments.join(", ")));
+                } else if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Call {
                             callee: Callee::Direct(target),
                             args,
                             suspends: true,
@@ -491,35 +552,7 @@ pub(super) fn emit_function(
                             writer.assign(&owned_variable_name(*dst), "INT32_C(1)");
                         }
                     }
-                    if target_fn.external.is_some() && target_fn.suspends {
-                        let kind = match layouts.types[target_fn.ret] {
-                            Type::Int | Type::Bool => "INT",
-                            Type::Int64 => "INT64",
-                            Type::Float => "FLOAT",
-                            Type::Unit | Type::Never => "UNIT",
-                            _ => {
-                                return Err(unsupported(
-                                    &function.name,
-                                    "non-scalar external task result",
-                                ));
-                            }
-                        };
-                        let result = dst
-                            .map(|dst| format!("&{}", variable_name(dst)))
-                            .unwrap_or_else(|| "NULL".to_owned());
-                        writer.line(&format!("frame->base.pc = {next};"));
-                        writer.line(&format!(
-                            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind});"
-                        ));
-                        let mut arguments = vec!["task".to_owned()];
-                        arguments.extend(
-                            args.iter()
-                                .map(operand_expression)
-                                .collect::<Result<Vec<_>, _>>()
-                                .map_err(|why| unsupported(&function.name, why))?,
-                        );
-                        writer.line(&format!("{}({});", names[target], arguments.join(", ")));
-                    } else if target_fn.suspends {
+                    if target_fn.suspends {
                         let mut arguments = vec!["fiber".to_owned()];
                         arguments.extend(
                             args.iter()
@@ -688,7 +721,7 @@ pub(super) fn emit_function(
     for (name, _) in &strings.declarations {
         writer.line(&format!("#undef {name}"));
     }
-    writer.begin_block(&push_signature(layouts, function, name));
+    writer.begin_block(&push_signature(layouts, function, name, environment));
     writer.line(&format!(
         "emela_frame *base = emela_frame_push(fiber, sizeof({name}_frame), {name}_step);"
     ));
@@ -712,6 +745,26 @@ pub(super) fn emit_function(
                 "frame->owned_{} = INT32_C(1);",
                 u32::from(id.into_raw())
             ));
+        }
+    }
+    if let Some(environment) = environment {
+        writer.line("if (emela_env == NULL) emela_scheduler_invalid();");
+        for (index, capture) in layouts.closure_environments[environment]
+            .captures
+            .iter()
+            .enumerate()
+        {
+            if layouts.type_repr(capture.ty) == Repr::Void {
+                continue;
+            }
+            let id = u32::from(capture.local.into_raw());
+            writer.line(&format!(
+                "frame->local_{id} = ((emela_closure_env_{environment} *)emela_env)->c{index};"
+            ));
+            retain_frame_value(layouts, capture.ty, &format!("frame->local_{id}"), writer);
+            if layouts.is_managed_value(capture.ty) {
+                writer.line(&format!("frame->owned_{id} = INT32_C(1);"));
+            }
         }
     }
     writer.end_block();
@@ -753,5 +806,37 @@ fn freeze_statement_result(
         writer.begin_block(&format!("if ({value}.owner == NULL)"));
         writer.assign(&value, &format!("emela_heap_copy_string({value})"));
         writer.end_block();
+    }
+}
+
+fn task_kind(
+    layouts: &TypeLayouts<'_>,
+    ty: TypeId,
+    function: &str,
+) -> Result<&'static str, Vec<Error>> {
+    match layouts.types[ty] {
+        Type::Int | Type::Bool => Ok("INT"),
+        Type::Int64 => Ok("INT64"),
+        Type::Float => Ok("FLOAT"),
+        Type::Unit | Type::Never => Ok("UNIT"),
+        _ => Err(unsupported(function, "non-scalar external task result")),
+    }
+}
+
+fn prepare_result(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    writer: &mut Writer,
+) {
+    if let Some(dst) = dst {
+        emit_release_if_owned(layouts, function, dst, writer);
+        if layouts.is_managed_value(function.vars[dst].ty) {
+            writer.assign(
+                &variable_name(dst),
+                &format!("({}){{0}}", layouts.c_type(function.vars[dst].ty)),
+            );
+            writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+        }
     }
 }

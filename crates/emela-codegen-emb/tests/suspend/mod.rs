@@ -3,6 +3,205 @@ use super::*;
 mod suspend_flow;
 
 #[test]
+fn suspend_closure_keeps_captures_after_the_original_function_value_is_released() {
+    let mut flow = suspend_flow::task_flow();
+    let wait = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name == "wait")
+        .unwrap()
+        .0;
+    let closure_ty = flow.core.types.intern(Type::Fn(FnType {
+        suspends: true,
+        ..FnType::pure(vec![TypeId::INT], TypeId::INT)
+    }));
+    let list_ty = flow.core.types.intern(Type::List(TypeId::INT));
+    let mut b = FnBuilder::new(&flow.core, "make");
+    b.set_exported().set_ret(closure_ty);
+    let text = b.param("text", TypeId::STRING);
+    let list = b.assign(
+        "list",
+        list_ty,
+        Value::List {
+            elems: vec![Const::Int(30).into()],
+            tail: None,
+        },
+    );
+    let closure = b.var("closure", closure_ty);
+    let n = b.var("n", TypeId::INT);
+    b.closure(closure, vec![n], vec![text, list], true, |b| {
+        let waited = b.assign(
+            "waited",
+            TypeId::INT,
+            Value::Call {
+                callee: Callee::Direct(wait),
+                args: vec![n.into()],
+                suspends: true,
+                on_fail: None,
+            },
+        );
+        let length = b.assign(
+            "length",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![text.into()],
+            },
+        );
+        let head = b.assign("head", TypeId::INT, Value::ListHead(list));
+        let sum = b.assign(
+            "sum",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: PrimTy::I32,
+                args: vec![waited.into(), length.into()],
+            },
+        );
+        let result = b.assign(
+            "result",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: PrimTy::I32,
+                args: vec![sum.into(), head.into()],
+            },
+        );
+        b.term(Term::Return(Some(result.into())));
+    });
+    b.term(Term::Return(Some(closure.into())));
+    flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "apply");
+    b.set_exported().set_suspends().set_ret(TypeId::INT);
+    let closure = b.param("closure", closure_ty);
+    let n = b.param("n", TypeId::INT);
+    let result = b.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Indirect(closure),
+            args: vec![n.into()],
+            suspends: true,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(Some(result.into())));
+    flow.add(b.finish());
+    let output = compile_flow(
+        &flow,
+        &task_options()
+            .with_heap_bytes(4096)
+            .with_frame_capacity(8)
+            .with_frame_bytes(512),
+    )
+    .unwrap();
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask pending;
+static int32_t input;
+uint32_t emela_board_event_lock(void) {{ return 0; }}
+void emela_board_event_unlock(uint32_t p) {{ (void)p; }}
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{
+  (void)k; (void)m; (void)n; abort();
+}}
+void board_wait_start(EmelaTask task, int32_t n) {{ pending = task; input = n; }}
+int main(void) {{
+  for (int i = 0; i < 1000; i++) {{
+    char text[] = "hello";
+    emela_function_type_{ty} closure = emela_export_make_2((EmelaString){{text, 5, NULL}});
+    memset(text, 'x', 5);
+    int32_t result = -1;
+    EmelaFiber f = emela_export_apply_3_start(closure, 40, &result);
+    emela_embedded_release_function_{ty}(&closure);
+    while (emela_scheduler_run(1)) {{ assert(result == -1); }}
+    assert(emela_task_complete_int(pending, input));
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    assert(result == 75);
+    emela_fiber_release(f);
+  }}
+  return 0;
+}}
+"#,
+            ty = closure_ty.index()
+        ),
+    );
+}
+
+#[test]
+fn suspend_fnrefs_dispatch_to_external_tasks_and_internal_frames() {
+    let mut flow = suspend_flow::task_flow();
+    let wait = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name == "wait")
+        .unwrap()
+        .0;
+    let work = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name == "work")
+        .unwrap()
+        .0;
+    let ty = flow.core.types.intern(Type::Fn(FnType {
+        suspends: true,
+        ..FnType::pure(vec![TypeId::INT], TypeId::INT)
+    }));
+    let mut b = FnBuilder::new(&flow.core, "dispatch");
+    b.set_exported().set_suspends().set_ret(TypeId::INT);
+    let n = b.param("n", TypeId::INT);
+    let external = b.assign("external", ty, Value::FnRef(wait));
+    let first = b.assign(
+        "first",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Indirect(external),
+            args: vec![n.into()],
+            suspends: true,
+            on_fail: None,
+        },
+    );
+    let internal = b.assign("internal", ty, Value::FnRef(work));
+    let result = b.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Indirect(internal),
+            args: vec![first.into()],
+            suspends: true,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(Some(result.into())));
+    flow.add(b.finish());
+    compile_and_run(
+        compile_flow(&flow, &task_options().with_frame_capacity(4)).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { (void)k; (void)m; (void)n; abort(); }
+void board_wait_start(EmelaTask t, int32_t n) { assert(emela_task_complete_int(t, n)); }
+int main(void) {
+  int32_t result = 0;
+  EmelaFiber f = emela_export_dispatch_2_start(20, &result);
+  while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+  assert(result == 41); emela_fiber_release(f); return 0;
+}
+"#,
+    );
+}
+
+#[test]
 fn suspend_frames_own_string_inputs_and_return_owned_results_after_reuse() {
     let mut flow = Module::new(emela_core::Module::new());
     let mut b = FnBuilder::new(&flow.core, "echo");
@@ -410,7 +609,7 @@ int main(void) {
 }
 
 #[test]
-fn suspend_handler_source_is_diagnosed_until_closure_resume_is_implemented() {
+fn suspend_handler_source_is_diagnosed_until_resume_is_implemented() {
     let core = support::try_lower(
         &[(
             "main.emel",
@@ -432,7 +631,7 @@ pub fn work(n: Int) -> Int { with Waiting { (use Wait).get(n) + 1 } }
         errors
             .iter()
             .any(|error| error.kind == ErrorKind::Unsupported
-                && error.message.contains("suspending closure"))
+                && error.message.contains("suspending calls"))
     );
 }
 

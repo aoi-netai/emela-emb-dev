@@ -193,6 +193,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     header.line("#include <stdint.h>");
     header.blank();
     layouts.emit_string_declaration(&mut header);
+    if has_scheduler {
+        header.line("typedef struct emela_fiber emela_fiber;");
+    }
     if layouts.has_error_abi || layouts.any_abi {
         header.line("typedef struct EmelaError EmelaError;");
         if layouts.any_abi {
@@ -566,7 +569,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let name = &names[&id];
         let takes_string_output = string_output_functions.contains(&id);
         if function.suspends {
-            suspend::emit_declarations(&layouts, function, name, &mut source)?;
+            suspend::emit_declarations(
+                &layouts,
+                function,
+                name,
+                closures.functions.get(&id).copied(),
+                &mut source,
+            )?;
         } else if function.external.is_some() {
             source.line(&format!(
                 "extern {};",
@@ -626,6 +635,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 &names[&id],
                 &names,
                 &string_output_functions,
+                closures.functions.get(&id).copied(),
                 options,
                 &mut source,
             )?;
@@ -1713,13 +1723,9 @@ fn closure_capture_contains_string(
                 closure_capture_contains_string(layouts, types, field, seen)
             })
         }),
-        Type::Fn(function) => {
-            function
-                .params
-                .into_iter()
-                .any(|parameter| closure_capture_contains_string(layouts, types, parameter, seen))
-                || closure_capture_contains_string(layouts, types, function.ret, seen)
-        }
+        // Function signatures do not store their parameter/result values. Their environments
+        // already own captures, so retaining the function value preserves String backings.
+        Type::Fn(_) => false,
         _ => false,
     }
 }
@@ -1993,7 +1999,7 @@ fn validate_function_value_types(
         let Type::Fn(function_type) = layouts.types[ty].clone() else {
             unreachable!("function type registry contains a non-function")
         };
-        if function_type.suspends
+        if (function_type.suspends && function_type.fails)
             || function_type.sets.is_some()
             || !function_value_abi_type_supported(layouts, function_type.ret, &mut HashSet::new())
             || function_type.params.iter().any(|&parameter| {
@@ -2041,7 +2047,7 @@ fn function_value_abi_type_supported(
             if !seen.insert(ty) {
                 return false;
             }
-            let supported = !function_type.suspends
+            let supported = !(function_type.suspends && function_type.fails)
                 && function_type.sets.is_none()
                 && function_type
                     .params
@@ -2643,17 +2649,19 @@ fn function_needs_heap(
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
-    caller.stmts.iter().any(|(_, statement)| {
-        matches!(
-            statement,
-            Stmt::Let {
-                value: Value::Call {
-                    callee: Callee::Direct(id),
+    let (positions, _) = function_positions(caller);
+    caller.stmts.iter().any(|(id, statement)| {
+        positions.contains_key(&id)
+            && matches!(
+                statement,
+                Stmt::Let {
+                    value: Value::Call {
+                        callee: Callee::Direct(id),
+                        ..
+                    },
                     ..
-                },
-                ..
-            } if *id == target
-        )
+                } if *id == target
+            )
     })
 }
 
@@ -4973,7 +4981,15 @@ fn emit_statement_inner(
                                 "closure function type differs from its closure value type",
                             ));
                         }
-                        writer.assign(&format!("{destination}.call"), name);
+                        let Type::Fn(function_type) = &layouts.types[function.vars[*dst].ty] else {
+                            unreachable!()
+                        };
+                        let target_name = if function_type.suspends {
+                            format!("{name}_push")
+                        } else {
+                            name.clone()
+                        };
+                        writer.assign(&format!("{destination}.call"), &target_name);
                         let kind = layouts.closure_environment_kind(environment);
                         writer.assign(
                             &format!("{destination}.env"),
@@ -7829,6 +7845,9 @@ fn function_ref_adapter_signature(
         unreachable!("function reference adapter has a non-function type")
     };
     let mut params = vec!["void *emela_env".to_owned()];
+    if function_type.suspends {
+        params.insert(0, "emela_fiber *fiber".to_owned());
+    }
     for (index, &parameter) in function_type.params.iter().enumerate() {
         if layouts.type_repr(parameter) != Repr::Void {
             params.push(format!("{} emela_arg_{index}", layouts.c_type(parameter)));
@@ -7840,9 +7859,16 @@ fn function_ref_adapter_signature(
     if function_type.fails {
         params.push("EmelaError *emela_error_out".to_owned());
     }
+    if function_type.suspends && layouts.type_repr(function_type.ret) != Repr::Void {
+        params.push(format!("{} *result", layouts.c_type(function_type.ret)));
+    }
     format!(
         "static {} {name}({})",
-        layouts.c_type(function_type.ret),
+        if function_type.suspends {
+            "void".to_owned()
+        } else {
+            layouts.c_type(function_type.ret)
+        },
         params.join(", ")
     )
 }
@@ -7864,6 +7890,9 @@ fn emit_function_ref_adapter(
     ));
     writer.line("(void)emela_env;");
     let mut args = Vec::new();
+    if function_type_data.suspends {
+        args.push("fiber".to_owned());
+    }
     for (index, &parameter) in function_type_data.params.iter().enumerate() {
         if layouts.type_repr(parameter) != Repr::Void {
             args.push(format!("emela_arg_{index}"));
@@ -7874,6 +7903,14 @@ fn emit_function_ref_adapter(
     }
     if function_type_data.fails {
         args.push("emela_error_out".to_owned());
+    }
+    if function_type_data.suspends {
+        if layouts.type_repr(function_type_data.ret) != Repr::Void {
+            args.push("result".to_owned());
+        }
+        writer.line(&format!("{target_name}_push({});", args.join(", ")));
+        writer.end_block();
+        return;
     }
     let call = format!("{target_name}({})", args.join(", "));
     if layouts.type_repr(function_type_data.ret) == Repr::Void {
@@ -9267,6 +9304,9 @@ impl<'a> TypeLayouts<'a> {
                 unreachable!("function type registry contains a non-function")
             };
             let mut parameters = vec!["void *emela_env".to_owned()];
+            if function_type.suspends {
+                parameters.insert(0, "emela_fiber *fiber".to_owned());
+            }
             parameters.extend(
                 function_type
                     .params
@@ -9280,10 +9320,17 @@ impl<'a> TypeLayouts<'a> {
             if function_type.fails {
                 parameters.push("EmelaError *emela_error_out".to_owned());
             }
+            if function_type.suspends && self.type_repr(function_type.ret) != Repr::Void {
+                parameters.push(format!("{} *result", self.c_type(function_type.ret)));
+            }
             writer.line("typedef struct {");
             writer.line(&format!(
                 "  {} (*call)({});",
-                self.c_type(function_type.ret),
+                if function_type.suspends {
+                    "void".to_owned()
+                } else {
+                    self.c_type(function_type.ret)
+                },
                 parameters.join(", ")
             ));
             writer.line("  void *env;");

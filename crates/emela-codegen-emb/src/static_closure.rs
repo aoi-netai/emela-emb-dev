@@ -82,9 +82,6 @@ pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
                 "Closure destination is not a function value",
             ));
         };
-        if function_type.suspends || closure.suspends {
-            return Err(unsupported(&parent_function.name, "suspending closure"));
-        }
         if parent_function.constant {
             return Err(unsupported(
                 &parent_function.name,
