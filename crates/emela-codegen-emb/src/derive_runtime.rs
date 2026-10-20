@@ -433,6 +433,7 @@ pub(super) fn emit_adapter(
             variable_name(f.params[1])
         )));
     } else {
+        writer.line("if (emela_string_output == NULL && emela_string_capacity != 0) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));");
         writer
             .line("emela_derived_writer output = {emela_string_output, emela_string_capacity, 0};");
         writer.line(&format!(

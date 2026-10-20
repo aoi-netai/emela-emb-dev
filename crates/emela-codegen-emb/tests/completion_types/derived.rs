@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn growing_show_checks_capacity_and_null_caller_storage_before_writing() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            include_str!("../../examples/support/growing_derive.emel"),
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let output = compile(
+        &core,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_string_capacity(64),
+    )
+    .unwrap();
+    let show = export_name(&output, "show");
+    for capacity in [5, 6, 8, 17, 64] {
+        let pointer = if capacity == 64 {
+            "NULL"
+        } else {
+            "(char *)guarded"
+        };
+        compile_and_run(
+            output.clone(),
+            &format!(
+                r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static unsigned char guarded[64];
+_Noreturn void emela_board_defect(EmelaDefectKind kind,const char *s,uint16_t n) {{(void)s;(void)n;assert(kind==EMELA_DEFECT_STRING_CAPACITY);for(unsigned i={capacity};i<sizeof guarded;i++) assert(guarded[i]==0xa5);exit(0);}}
+int main(void) {{memset(guarded,0xa5,sizeof guarded);(void){show}(1,{pointer},{capacity});return 1;}}
+"#
+            ),
+        );
+    }
+}
+
+#[test]
 fn growing_derivation_preserves_unit_named_fields_numeric_bits_and_escaped_strings() {
     let core = support::try_lower(
         &[(

@@ -1,0 +1,10 @@
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub fn show(n: Int) -> String {
+  value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42, 7])) }
+  "#{value}"
+}
+pub fn equal(n: Int) -> Bool {
+  a: Grow[Int] = Next(End([42, 7]))
+  b: Grow[Int] = if n == 0 { Next(End([42, 7])) } else { Next(End([42, 8])) }
+  a == b
+}
