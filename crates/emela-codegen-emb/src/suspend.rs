@@ -584,6 +584,7 @@ impl Graph {
 pub(super) fn emit_function(
     flow: &emela_lir::Module,
     layouts: &TypeLayouts<'_>,
+    function_id: FnId,
     function: &Function,
     name: &str,
     names: &HashMap<FnId, String>,
@@ -700,6 +701,7 @@ pub(super) fn emit_function(
     }
     let strings = StringBufferPlan::new(
         layouts,
+        function_id,
         function,
         options.string_capacity(),
         output_calls,
@@ -1506,9 +1508,14 @@ fn freeze_statement_result(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
+    strings: &StringBufferPlan,
     writer: &mut Writer,
 ) {
     if let Some(dst) = statement.dst() {
+        if strings.discarded_results.contains(&dst) {
+            // The synchronous emitter has already released the discarded result.
+            return;
+        }
         layouts.emit_freeze_value_in_place(function.vars[dst].ty, &variable_name(dst), writer);
     }
 }
@@ -1896,7 +1903,7 @@ fn emit_sync_statement(
         next_temp,
         &mut 0,
     )?;
-    freeze_statement_result(layouts, function, &statement, writer);
+    freeze_statement_result(layouts, function, &statement, strings, writer);
     writer.line(&format!("frame->base.pc = {next}; continue;"));
     if failing {
         writer.line(&format!(

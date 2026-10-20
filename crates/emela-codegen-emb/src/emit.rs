@@ -61,12 +61,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     crate::static_handler::lower(&mut lowered_flow);
+    let discarded_results = crate::discarded::normalize(&mut lowered_flow);
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
     let task_value_types = task_values::result_types(flow, &emitted_functions);
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
+    layouts.discarded_results = discarded_results;
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
@@ -82,9 +84,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 && !matches!(layouts.types[f.ret], Type::String)
                 && layouts.has_inline_string(f.ret)
         })
-        .filter(|(_, f)| {
+        .filter(|(id, f)| {
             !StringBufferPlan::new(
                 &layouts,
+                *id,
                 f,
                 options.string_capacity(),
                 &string_output_functions,
@@ -721,6 +724,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             suspend::emit_function(
                 flow,
                 &layouts,
+                id,
                 function,
                 &names[&id],
                 &names,
@@ -828,6 +832,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }
         let string_buffers = StringBufferPlan::new(
             &layouts,
+            id,
             function,
             options.string_capacity(),
             &string_output_functions,
@@ -884,6 +889,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let adapter_capacity = if takes_output {
             let plan = StringBufferPlan::new(
                 &layouts,
+                target,
                 target_function,
                 options.string_capacity(),
                 &string_output_functions,
@@ -1156,6 +1162,7 @@ fn emit_owned_cleanup(
 }
 
 struct StringBufferPlan {
+    discarded_results: HashSet<VarId>,
     buffers: HashMap<VarId, (Option<usize>, u16)>,
     declarations: Vec<(String, usize)>,
     output_calls: HashSet<FnId>,
@@ -1166,6 +1173,7 @@ struct StringBufferPlan {
 impl StringBufferPlan {
     fn new(
         layouts: &TypeLayouts<'_>,
+        function_id: FnId,
         function: &Function,
         capacity: u16,
         output_calls: &HashSet<FnId>,
@@ -1656,6 +1664,11 @@ impl StringBufferPlan {
             })
             .collect();
         Self {
+            discarded_results: layouts
+                .discarded_results
+                .get(&function_id)
+                .cloned()
+                .unwrap_or_default(),
             buffers,
             declarations,
             output_calls: output_calls.clone(),
@@ -4580,6 +4593,9 @@ fn emit_statement(
             );
         }
         writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+        if string_buffers.discarded_results.contains(&dst) {
+            emit_release_if_owned(layouts, function, dst, writer);
+        }
     }
     if layouts.has_cause_raise
         && layouts.has_unwind
@@ -8260,6 +8276,7 @@ enum AggregateKind {
 }
 
 struct TypeLayouts<'a> {
+    discarded_results: crate::discarded::Results,
     core: &'a emela_core::Module,
     types: TypeTable,
     aggregates: Vec<AggregateLayout>,
@@ -8327,6 +8344,7 @@ impl<'a> TypeLayouts<'a> {
         deferred_pool: bool,
     ) -> Result<Self, Vec<Error>> {
         let mut layouts = TypeLayouts {
+            discarded_results: HashMap::new(),
             core: &flow.core,
             types: flow.core.types.clone(),
             aggregates: Vec::new(),

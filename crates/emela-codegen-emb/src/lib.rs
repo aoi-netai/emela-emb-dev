@@ -4,6 +4,7 @@
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
 mod const_eval;
+mod discarded;
 mod emit;
 mod fiber;
 mod float_parse;

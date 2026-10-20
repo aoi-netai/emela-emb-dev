@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod support;
 
 mod any_data;
+mod builtin_audit;
 mod cell;
 mod deferred;
 mod external_scalar;
