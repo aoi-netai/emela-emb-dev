@@ -46,6 +46,52 @@ fn unreachable_discarded_results_do_not_introduce_heap_requirements() {
 }
 
 #[test]
+fn discarded_string_producers_share_scratch_and_preserve_numeric_bounds() {
+    let mut flow = Module::new(emela_core::Module::new());
+    for (name, input, op) in [
+        ("integers", TypeId::INT, Builtin::IntToString),
+        ("strings", TypeId::STRING, Builtin::StringAppend),
+    ] {
+        let mut b = FnBuilder::new(&flow.core, name);
+        b.set_exported();
+        let input = b.param("input", input);
+        for _ in 0..13 {
+            let mut args = vec![input.into()];
+            if op == Builtin::StringAppend {
+                args.push(Const::String("!".into()).into());
+            }
+            b.let_(None, Value::Builtin { op, args });
+        }
+        b.term(Term::Return(None));
+        flow.add(b.finish());
+    }
+    let output = compile_flow(&flow, &Options::default()).unwrap();
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .unwrap()
+        .contents;
+    assert_eq!(source.matches("char emela_string_buffer_").count(), 2);
+    assert!(source.contains("char emela_string_buffer_0[11];"));
+    assert!(source.contains("char emela_string_buffer_0[256];"));
+    assert!(!source.contains("emela_heap_storage"));
+    compile_and_run(
+        output,
+        r#"
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*m,uint16_t n) { (void)k;(void)m;(void)n;abort(); }
+int main(void) { for (int i=0;i<1000;i++) {
+  emela_export_integers_0(INT32_MIN);
+  emela_export_strings_1((EmelaString){.data="abc",.length=3});
+} }
+"#,
+    );
+}
+
+#[test]
 fn discarded_float_rounding_preserves_the_out_of_range_defect() {
     let output = compile_flow(
         &discarded_builtin(Builtin::FloatFloor, TypeId::FLOAT),
