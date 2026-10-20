@@ -294,3 +294,53 @@ int main(void) {{ {call} return 1; }}
         }
     }
 }
+
+#[test]
+fn changing_recursive_type_arguments_are_rejected_even_for_a_finite_type_graph() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+pub enum Nest[A] { End(A), Next(Nest[Bool]) }
+pub fn make() -> Nest[Int] { End(42) }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .expect("finite recursive type arguments are legal source types");
+    let flow = emela_codegen_emb::flow_from_core(&core)
+        .expect("lower the finite type graph to verified Flow IR");
+    emela_lir::verify(&flow).unwrap();
+    let errors = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect_err("record the current finite-layout implementation gap");
+    assert!(
+        errors.iter().any(|e| e.kind == ErrorKind::Unsupported
+            && e.message.contains("changes its type arguments"))
+    );
+}
+
+#[test]
+fn any_unboxing_preserves_its_runtime_type_check() {
+    let core = emela_core::Module::new();
+    let mut b = FnBuilder::new(&core, "run");
+    b.set_exported().set_ret(TypeId::STRING);
+    let number = b.assign("number", TypeId::INT, Value::Const(Const::Int(42)));
+    let boxed = b.assign("boxed", TypeId::ANY, Value::Coerce(number));
+    let text = b.assign("text", TypeId::STRING, Value::Coerce(boxed));
+    b.term(Term::Return(Some(text.into())));
+    let function = b.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    emela_lir::verify(&flow).unwrap();
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048)).unwrap();
+    compile_and_run(
+        output,
+        r#"
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *s,uint16_t n) { (void)s; (void)n; exit(k==EMELA_DEFECT_PANIC && n==17?0:2); }
+int main(void) { (void)emela_export_run_0(); return 1; }
+"#,
+    );
+}
