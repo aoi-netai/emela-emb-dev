@@ -39,6 +39,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
     let mut prepared_flow = flow.clone();
+    crate::scope_abi::normalize(&mut prepared_flow)?;
     crate::fiber::normalize_scope_results(&mut prepared_flow);
     let mut closures = crate::static_closure::lower(&prepared_flow)?;
     let mut lowered_flow = closures

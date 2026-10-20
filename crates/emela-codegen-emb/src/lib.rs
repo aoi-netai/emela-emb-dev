@@ -10,6 +10,7 @@ mod float_parse;
 mod float_to_string;
 mod function_coerce;
 mod heap;
+mod scope_abi;
 mod static_closure;
 mod static_handler;
 mod unicode_grapheme;

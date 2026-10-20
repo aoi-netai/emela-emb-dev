@@ -220,15 +220,14 @@ fn protected(c: Cause[{}]) -> Int use Wait { with Res {
 fn late(n: Int) -> Int fails Boom use Wait { (use Wait).get(n)
  fail Boom(n: n)
 }
-pub fn make(failing: Bool) -> Cause[{}] use Async { with Waiting { Fiber.scope(fn() {
- if failing { fail Boom(n: 0) }
+pub fn make() -> Cause[{}] use Async { with Waiting { Fiber.scope(fn() {
  child=Fiber.fork(fn() { (use Wait).get(4) })
  (use Wait).get(5)
  Fiber.interrupt(child)
  Fiber.await(child) match { Success(_) -> panic("unexpected")
   Failure(c) -> c
  }
-}) escape { Boom(_) -> panic("unexpected") } } }
+}) } }
 pub fn work(c: Cause[{}]) -> Cause[Boom] use Async { with Waiting {
  Fiber.attempt(fn() { Fiber.scope(fn() {
   child=Fiber.fork(fn() { Fiber.scope(fn() {
@@ -293,7 +292,7 @@ void mark(int32_t n) { assert(n==++order); }
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }
 int main(void) {
  for(int i=0;i<1000;i++) {
-  count=order=0;void *interrupt=NULL;EmelaFiber f=emela_export_make_0_start(0,&interrupt);
+  count=order=0;void *interrupt=NULL;EmelaFiber f=emela_export_make_0_start(&interrupt);
   while(emela_scheduler_run(1)) {} assert(count==2);
   assert(emela_task_complete_int(tasks[4],0));while(!emela_fiber_done(f)) { assert(emela_scheduler_run(1)); }
   emela_fiber_release(f);count=0;void *cause=NULL;

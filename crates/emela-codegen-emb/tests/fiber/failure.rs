@@ -682,3 +682,36 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn failing_and_infallible_scopes_share_the_fork_operation_abi() {
+    let source = include_str!("../../examples/support/scope_failure_abi.emel");
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    let mut output = compile(
+        &core,
+        &options().with_heap_bytes(4096).with_frame_capacity(32),
+    )
+    .unwrap();
+    super::notes::add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m);abort(); }
+int main(void) {
+ for(int i=0;i<1000;i++) {
+  for(int which=0;which<3;which++) {
+   int32_t result=-1;EmelaFiber f=which==2 ? emela_export_nested_2_start(i,&result):(which ? emela_export_bad_1_start(i,&result):emela_export_good_0_start(i,&result));
+   while(!emela_fiber_done(f)) { assert(emela_scheduler_run(1)); }
+   assert(result==(which==2 ? 2*i+1:i+!which));emela_fiber_release(f);assert(test_heap_empty());
+  }
+ }
+}
+"#,
+    );
+}
