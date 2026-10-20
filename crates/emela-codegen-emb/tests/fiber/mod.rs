@@ -8,6 +8,7 @@ mod cause;
 mod child_reclaim;
 mod failure;
 mod function_aggregate;
+mod integration;
 mod interrupt;
 mod join;
 mod notes;

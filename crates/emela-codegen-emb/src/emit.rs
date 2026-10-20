@@ -9643,7 +9643,11 @@ impl<'a> TypeLayouts<'a> {
             writer.line("break; }");
             writer.line(&format!("case UINT32_C({}): {{", self.child_kind()));
             writer.line("emela_child *child = (emela_child *)value;");
-            writer.line("emela_child_unlink(child);");
+            if self.has_cell_cycles() {
+                writer.line("if (emela_heap_trace_mode == 0 || emela_heap_trace_mode == 3) emela_child_unlink(child);");
+            } else {
+                writer.line("emela_child_unlink(child);");
+            }
             writer.line("emela_heap_enqueue(child->scope, pending, tail);");
             if self.has_error_ownership() {
                 writer.line("emela_error_enqueue(child->error, pending, tail);");
