@@ -1,4 +1,5 @@
 use super::*;
+mod external;
 
 fn emit_source(source: &str, heap: u32) -> Output {
     let core =
