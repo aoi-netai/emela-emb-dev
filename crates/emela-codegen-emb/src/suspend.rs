@@ -710,14 +710,6 @@ pub(super) fn emit_function(
             }
         }
     }
-    // Cell cleanup is shared with the synchronous emitter and still uses all Cell locals.
-    active.extend(
-        function
-            .vars
-            .iter()
-            .filter(|(_, v)| matches!(layouts.types[v.ty], Type::Cell(_)))
-            .map(|(id, _)| id),
-    );
     let strings = StringBufferPlan::new(
         layouts,
         function,
@@ -759,19 +751,6 @@ pub(super) fn emit_function(
         ));
         if layouts.is_managed_value(var.ty) {
             writer.line(&format!("  int owned_{};", u32::from(id.into_raw())));
-        }
-        if let Type::Cell(content) = layouts.types[var.ty].clone()
-            && !layouts.is_closure_cell_capture(function, id)
-        {
-            let storage_type = if layouts.type_repr(content) == Repr::Void {
-                "uint8_t".to_owned()
-            } else {
-                layouts.c_type(content)
-            };
-            writer.line(&format!("  {storage_type} {};", cell_storage_name(id)));
-            if layouts.is_managed_value(content) {
-                writer.line(&format!("  int32_t {};", cell_initialized_name(id)));
-            }
         }
     }
     for (name, capacity) in &strings.declarations {
@@ -837,13 +816,6 @@ pub(super) fn emit_function(
                 owned_variable_name(id),
                 u32::from(id.into_raw())
             ));
-        }
-        if matches!(layouts.types[ty], Type::Cell(_))
-            && !layouts.is_closure_cell_capture(function, id)
-        {
-            for field in [cell_storage_name(id), cell_initialized_name(id)] {
-                writer.line(&format!("#define {field} (frame->{field})"));
-            }
         }
     }
     for (name, _) in &strings.declarations {
@@ -1373,13 +1345,10 @@ pub(super) fn emit_function(
     for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         emit_release_if_owned(layouts, function, id, writer);
     }
-    emit_cell_cleanup(layouts, function, writer);
     writer.end_block();
     for (id, _) in function.vars.iter().filter(|(id, _)| active.contains(id)) {
         writer.line(&format!("#undef {}", variable_name(id)));
         writer.line(&format!("#undef {}", owned_variable_name(id)));
-        writer.line(&format!("#undef {}", cell_storage_name(id)));
-        writer.line(&format!("#undef {}", cell_initialized_name(id)));
     }
     for (name, _) in &strings.declarations {
         writer.line(&format!("#undef {name}"));
@@ -1594,6 +1563,11 @@ pub(super) fn emit_resume_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer
         layouts.resume_kind()
     ));
     writer.line(include_str!("runtime/resume.c"));
+    if layouts.has_error_ownership() {
+        writer.begin_block("static void emela_resume_enqueue_error(void *value, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.line("emela_error_enqueue(((emela_resume *)value)->error, pending, tail);");
+        writer.end_block();
+    }
     for &ty in &layouts.resume_types {
         let Type::Fn(ft) = &layouts.types[ty] else {
             unreachable!()

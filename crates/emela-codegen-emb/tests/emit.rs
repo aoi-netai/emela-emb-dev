@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
 
+mod cell;
 mod deferred;
 mod external_scalar;
 mod fiber;
@@ -78,7 +79,7 @@ fn passes_dynamic_effect_evidence_to_a_captured_closure() {
 }
 
 #[test]
-fn state_run_specializes_cell_storage_in_the_local_frame() {
+fn state_run_shares_owned_cell_storage_with_its_handler() {
     let core = support::try_lower(
         &[(
             "main.emel",
@@ -96,7 +97,7 @@ fn state_run_specializes_cell_storage_in_the_local_frame() {
     )
     .expect("lower a local State.run program");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
-        .expect("specialize State.run Cell operations into local storage");
+        .expect("emit State.run operations with shared Cell ownership");
     compile_and_run(
         output,
         "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }\nint main(void) { return emela_export_main_0() == INT32_C(82) ? 0 : 1; }\n",

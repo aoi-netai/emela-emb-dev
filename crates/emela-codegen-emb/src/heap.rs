@@ -4,11 +4,7 @@ const HEAP_EXHAUSTED_MESSAGE: &str = "fixed heap exhausted";
 const REFERENCE_OVERFLOW_MESSAGE: &str = "heap reference count overflow";
 const INVALID_REFERENCE_MESSAGE: &str = "invalid fixed heap reference";
 
-pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
-    emit_runtime_with_cycles(writer, capacity, false);
-}
-
-pub(crate) fn emit_runtime_with_cycles(writer: &mut Writer, capacity: u32, cycles: bool) {
+pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32, cycles: bool) {
     writer.line("typedef struct emela_heap_block emela_heap_block;");
     writer.line("struct emela_heap_block {");
     writer.line("  size_t size;");
@@ -393,7 +389,7 @@ mod tests {
         );
         writer.line("enum { EMELA_DEFECT_HEAP_EXHAUSTED, EMELA_DEFECT_PANIC };");
         writer.line("_Noreturn void emela_board_defect(int kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }");
-        emit_runtime_with_cycles(&mut writer, 1024, true);
+        emit_runtime(&mut writer, 1024, true);
         writer.line("typedef struct node { struct node *edge; int value; } node;");
         writer.line("static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail) { (void)kind; emela_heap_enqueue(((node *)value)->edge, pending, tail); }");
         writer.line(

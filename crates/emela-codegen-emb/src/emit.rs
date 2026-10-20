@@ -64,36 +64,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
-    for (environment_index, environment) in closures.environments.iter().enumerate() {
-        let parent = &flow.functions[environment.parent];
-        for capture in &environment.captures {
-            if type_contains_cell(&layouts, capture.ty, &mut HashSet::new())
-                && matches!(&layouts.types[environment.function_type], Type::Fn(ft) if ft.suspends)
-            {
-                return Err(unsupported(
-                    &parent.name,
-                    "suspend closure capturing a frame-local Cell",
-                ));
-            }
-            if type_contains_cell(&layouts, capture.ty, &mut HashSet::new())
-                && (!matches!(layouts.types[capture.ty], Type::Cell(_))
-                    || !cell_capture_is_bounded(
-                        flow,
-                        &layouts,
-                        environment_index,
-                        &closures.functions,
-                    ))
-            {
-                return Err(unsupported(
-                    &parent.name,
-                    "closure capturing a Cell outside a State.run handler lifetime",
-                ));
-            }
-        }
-    }
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
-    validate_local_cells(flow, &emitted_functions, &layouts)?;
     let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
     layouts.owned_aggregate_returns = flow
         .functions
@@ -140,7 +112,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
-            "heap-backed List, recursive value, closure environment, handler, or evidence table with heap_bytes = 0; configure Options::with_heap_bytes",
+            "heap-backed List, recursive value, shared Cell, closure environment, handler, or evidence table with heap_bytes = 0; configure Options::with_heap_bytes",
         ));
     }
     let mut const_outcomes = HashMap::new();
@@ -455,7 +427,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     layouts.emit_runtime_value_declarations(&mut source);
     if heap_required {
         layouts.emit_list_node_declarations(&mut source);
-        crate::heap::emit_runtime(&mut source, options.heap_bytes());
+        crate::heap::emit_runtime(&mut source, options.heap_bytes(), layouts.has_cell_cycles());
         emit_closure_string_copy_helper(&layouts, &mut source);
         error_runtime::emit_ownership_declarations(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
@@ -1017,27 +989,6 @@ fn emit_local_declarations(
             }
         }
     }
-    for (id, variable) in function.vars.iter() {
-        if let Type::Cell(content) = layouts.types[variable.ty].clone()
-            && !layouts.is_closure_cell_capture(function, id)
-        {
-            let storage_type = if layouts.type_repr(content) == Repr::Void {
-                "uint8_t".to_owned()
-            } else {
-                layouts.c_type(content)
-            };
-            let initial = match layouts.types[content] {
-                Type::String | Type::Tuple(_) => "{0}",
-                Type::Enum(enum_id, _) if layouts.enum_layout_required(enum_id) => "{0}",
-                Type::List(_) => "NULL",
-                _ => "0",
-            };
-            writer.decl(&storage_type, &cell_storage_name(id), Some(initial));
-            if layouts.is_managed_value(content) {
-                writer.decl("int32_t", &cell_initialized_name(id), Some("INT32_C(0)"));
-            }
-        }
-    }
     for (name, capacity) in &string_buffers.declarations {
         writer.line(&format!("char {name}[{capacity}];"));
     }
@@ -1173,28 +1124,10 @@ fn emit_owned_cleanup(
         }
         emit_release_if_owned(layouts, function, variable, writer);
     }
-    emit_cell_cleanup(layouts, function, writer);
     if layouts.has_cause_raise && layouts.has_unwind && !function.suspends && !function.constant {
         writer.line(
             "if (emela_current_fiber != NULL) emela_current_fiber->holds = emela_entry_holds;",
         );
-    }
-}
-
-fn emit_cell_cleanup(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
-    for (variable, data) in function.vars.iter() {
-        let Type::Cell(content) = layouts.types[data.ty].clone() else {
-            continue;
-        };
-        if layouts.is_closure_cell_capture(function, variable) || !layouts.is_managed_value(content)
-        {
-            continue;
-        }
-        let initialized = cell_initialized_name(variable);
-        writer.begin_block(&format!("if ({initialized} != INT32_C(0))"));
-        layouts.emit_release_value_expression(content, &cell_storage_name(variable), writer);
-        writer.assign(&initialized, "INT32_C(0)");
-        writer.end_block();
     }
 }
 
@@ -1883,254 +1816,16 @@ fn string_buffer_name(slot: usize) -> String {
     format!("emela_string_buffer_{slot}")
 }
 
-fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-    let mut types = layouts.types.clone();
-    type_contains_string_with_types(layouts, &mut types, ty, seen)
-}
-
-fn validate_local_cells(
-    flow: &emela_lir::Module,
-    emitted: &HashSet<FnId>,
-    layouts: &TypeLayouts<'_>,
-) -> Result<(), Vec<Error>> {
-    for (function_id, function) in flow.functions.iter() {
-        if !emitted.contains(&function_id) {
-            continue;
-        }
-
-        let cells: HashSet<VarId> = function
-            .vars
-            .iter()
-            .filter_map(|(variable, data)| {
-                matches!(layouts.types[data.ty], Type::Cell(_)).then_some(variable)
-            })
-            .collect();
-        let captured_cells = layouts
-            .closure_cell_captures
-            .get(&function.name)
-            .cloned()
-            .unwrap_or_default();
-        if type_contains_cell(layouts, function.ret, &mut HashSet::new()) {
-            return Err(unsupported(
-                &function.name,
-                "Cell in a function return type",
-            ));
-        }
-        for &parameter in &function.params {
-            if type_contains_cell(layouts, function.vars[parameter].ty, &mut HashSet::new()) {
-                return Err(unsupported(&function.name, "Cell in a function parameter"));
-            }
-        }
-
-        for (variable, data) in function.vars.iter() {
-            if cells.contains(&variable) {
-                let Type::Cell(content) = layouts.types[data.ty].clone() else {
-                    unreachable!("cell variable has a non-Cell type")
-                };
-                if function.params.contains(&variable) {
-                    return Err(unsupported(
-                        &function.name,
-                        "Cell parameters without a function-local storage lifetime",
-                    ));
-                }
-                if type_contains_cell(layouts, content, &mut HashSet::new()) {
-                    return Err(unsupported(&function.name, "nested Cell values"));
-                }
-                if type_contains_string(layouts, content, &mut HashSet::new()) {
-                    return Err(unsupported(
-                        &function.name,
-                        "Cell content containing String before backing-buffer lifetime integration",
-                    ));
-                }
-                if !matches!(
-                    layouts.types[content],
-                    Type::Int
-                        | Type::Int64
-                        | Type::Float
-                        | Type::Bool
-                        | Type::String
-                        | Type::Unit
-                        | Type::Tuple(_)
-                        | Type::List(_)
-                        | Type::Enum(_, _)
-                ) {
-                    return Err(unsupported(
-                        &function.name,
-                        &format!("Cell content type {}", type_name(content)),
-                    ));
-                }
-            } else if type_contains_cell(layouts, data.ty, &mut HashSet::new()) {
-                return Err(unsupported(
-                    &function.name,
-                    "Cell nested in an aggregate or function value",
-                ));
-            }
-        }
-
-        let mut created = HashSet::new();
-        for (_, statement) in function.stmts.iter() {
-            match statement {
-                Stmt::Let {
-                    dst,
-                    value: Value::Builtin { op, args },
-                    ..
-                } if matches!(op, Builtin::CellNew | Builtin::CellGet | Builtin::CellSet) => {
-                    match op {
-                        Builtin::CellNew => {
-                            let Some(variable) = dst else {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    "CellNew has no result destination",
-                                ));
-                            };
-                            if !cells.contains(variable) {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    "CellNew destination is not a Cell value",
-                                ));
-                            }
-                            if captured_cells.contains(variable) {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    "CellNew cannot initialize a captured Cell",
-                                ));
-                            }
-                            let Type::Cell(content) =
-                                layouts.types[function.vars[*variable].ty].clone()
-                            else {
-                                unreachable!("validated Cell destination has non-Cell type")
-                            };
-                            if args.len() != 1 || operand_type(function, &args[0]) != Some(content)
-                            {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    "CellNew initial value has the wrong type",
-                                ));
-                            }
-                            created.insert(*variable);
-                        }
-                        Builtin::CellGet | Builtin::CellSet => {
-                            let expected = if *op == Builtin::CellGet { 1 } else { 2 };
-                            if args.len() != expected {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    &format!(
-                                        "builtin {op:?} has {} arguments, expected {expected}",
-                                        args.len()
-                                    ),
-                                ));
-                            }
-                            let Operand::Var(variable) = args[0] else {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    &format!("{op:?} cell argument is not a variable"),
-                                ));
-                            };
-                            if !cells.contains(&variable) {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    &format!("{op:?} first argument is not a Cell value"),
-                                ));
-                            }
-                            let Type::Cell(content) =
-                                layouts.types[function.vars[variable].ty].clone()
-                            else {
-                                unreachable!("validated cell variable has non-Cell type")
-                            };
-                            if *op == Builtin::CellSet
-                                && operand_type(function, &args[1]) != Some(content)
-                            {
-                                return Err(invalid_flow_ir(
-                                    &function.name,
-                                    "CellSet value has the wrong type",
-                                ));
-                            }
-                            if args[1..].iter().any(
-                                |operand| matches!(operand, Operand::Var(v) if cells.contains(v)),
-                            ) {
-                                return Err(unsupported(
-                                    &function.name,
-                                    "Cell used as another Cell's content",
-                                ));
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-                Stmt::Let { value, .. } => {
-                    if value_references_any_cell(value, &cells) {
-                        return Err(unsupported(
-                            &function.name,
-                            "Cell escaping local CellGet/CellSet operations",
-                        ));
-                    }
-                }
-                Stmt::If { cond, .. } => {
-                    if operand_references_cell(cond, &cells) {
-                        return Err(unsupported(&function.name, "Cell used as a condition"));
-                    }
-                }
-                Stmt::Switch { on, .. } => {
-                    let variable = match on {
-                        SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
-                    };
-                    if cells.contains(&variable) {
-                        return Err(unsupported(&function.name, "Cell used in a switch"));
-                    }
-                }
-                Stmt::Loop { vars, inits, .. } => {
-                    if vars.iter().any(|variable| cells.contains(variable))
-                        || inits
-                            .iter()
-                            .any(|operand| operand_references_cell(operand, &cells))
-                    {
-                        return Err(unsupported(&function.name, "Cell carried by a loop"));
-                    }
-                }
-                Stmt::Dup(variable) | Stmt::Drop(variable) if cells.contains(variable) => {
-                    return Err(unsupported(
-                        &function.name,
-                        "explicit ownership operation on a Cell",
-                    ));
-                }
-                Stmt::Block { .. } | Stmt::Protect { .. } | Stmt::Dup(_) | Stmt::Drop(_) => {}
-            }
-        }
-
-        for (_, sequence) in function.seqs.iter() {
-            let operands: Vec<&Operand> = match &sequence.term {
-                Term::Yield(value) | Term::Return(value) => value.iter().collect(),
-                Term::Fail(value) | Term::Defect(value) => vec![value],
-                Term::Break { value, .. } => value.iter().collect(),
-                Term::Recur(values) => values.iter().collect(),
-                Term::Unwind | Term::Unreachable => Vec::new(),
-            };
-            if operands
-                .into_iter()
-                .any(|operand| operand_references_cell(operand, &cells))
-            {
-                return Err(unsupported(
-                    &function.name,
-                    "Cell escaping through a function or control-flow result",
-                ));
-            }
-        }
-
-        let local_cells: HashSet<_> = cells.difference(&captured_cells).copied().collect();
-        if local_cells != created {
-            return Err(unsupported(
-                &function.name,
-                "Cell value without a local CellNew definition",
-            ));
-        }
+fn operand_type(function: &Function, operand: &Operand) -> Option<TypeId> {
+    match operand {
+        Operand::Var(variable) => Some(function.vars[*variable].ty),
+        Operand::Const(Const::Int(_)) => Some(TypeId::INT),
+        Operand::Const(Const::Bool(_)) => Some(TypeId::BOOL),
+        Operand::Const(Const::Int64(_)) => Some(TypeId::INT64),
+        Operand::Const(Const::Float(_)) => Some(TypeId::FLOAT),
+        Operand::Const(Const::String(_)) => Some(TypeId::STRING),
+        Operand::Const(Const::Unit) => Some(TypeId::UNIT),
     }
-    Ok(())
-}
-
-fn value_references_any_cell(value: &Value, cells: &HashSet<VarId>) -> bool {
-    let mut found = false;
-    value.for_each_var(|variable| found |= cells.contains(&variable));
-    found
 }
 
 fn validate_function_value_types(
@@ -2181,6 +1876,7 @@ fn function_value_abi_type_supported(
         | Type::String
         | Type::Any
         | Type::List(_)
+        | Type::Cell(_)
         | Type::Handler(_)
         | Type::Evidence
         | Type::FiberScope => true,
@@ -2290,252 +1986,6 @@ fn validate_function_refs(
         }
     }
     Ok(())
-}
-
-fn cell_capture_is_bounded(
-    flow: &emela_lir::Module,
-    layouts: &TypeLayouts<'_>,
-    environment_index: usize,
-    closure_functions: &HashMap<FnId, usize>,
-) -> bool {
-    let Some((&closure_id, _)) = closure_functions
-        .iter()
-        .find(|(_, index)| **index == environment_index)
-    else {
-        return false;
-    };
-    let environment = &layouts.closure_environments[environment_index];
-    if !environment
-        .captures
-        .iter()
-        .any(|capture| matches!(layouts.types[capture.ty], Type::Cell(_)))
-    {
-        return false;
-    }
-    let parent = &flow.functions[environment.parent];
-    let closure_value = parent
-        .stmts
-        .iter()
-        .find_map(|(_, statement)| match statement {
-            Stmt::Let {
-                dst: Some(dst),
-                value: Value::FnRef(target),
-                ..
-            } if *target == closure_id => Some(*dst),
-            _ => None,
-        });
-    let Some(closure_value) = closure_value else {
-        return false;
-    };
-
-    let mut handler_values = Vec::new();
-    for (_, statement) in parent.stmts.iter() {
-        let Stmt::Let {
-            dst: Some(dst),
-            value: Value::Handler { ops, .. },
-            ..
-        } = statement
-        else {
-            continue;
-        };
-        if ops.contains(&closure_value) {
-            handler_values.push(*dst);
-        }
-    }
-    if handler_values.is_empty() {
-        return false;
-    }
-    for (_, statement) in parent.stmts.iter() {
-        let Stmt::Let { value, .. } = statement else {
-            continue;
-        };
-        let mut uses_closure = false;
-        value.for_each_var(|variable| uses_closure |= variable == closure_value);
-        if uses_closure
-            && !matches!(
-                value,
-                Value::Handler { ops, .. } if ops.contains(&closure_value)
-            )
-        {
-            return false;
-        }
-    }
-
-    for handler in handler_values.iter().copied() {
-        let mut extended = false;
-        let mut evidence_values = Vec::new();
-        for (_, statement) in parent.stmts.iter() {
-            let Stmt::Let { value, .. } = statement else {
-                continue;
-            };
-            let mut uses_handler = false;
-            value.for_each_var(|variable| uses_handler |= variable == handler);
-            if !uses_handler {
-                continue;
-            }
-            match value {
-                Value::EvExtend { bindings, .. }
-                    if bindings.iter().any(|(_, value)| *value == handler) =>
-                {
-                    extended = true;
-                    if let Stmt::Let { dst: Some(dst), .. } = statement {
-                        evidence_values.push(*dst);
-                    }
-                }
-                Value::Runtime {
-                    op: RuntimeOp::Retire,
-                    args,
-                } if matches!(args.first(), Some(Operand::Var(value)) if *value == handler) => {
-                    extended = true;
-                }
-                Value::Call {
-                    callee:
-                        Callee::Op {
-                            handler: called_handler,
-                            ..
-                        },
-                    ..
-                } if *called_handler == handler => {}
-                _ => return false,
-            }
-        }
-        if !extended || evidence_values.is_empty() {
-            return false;
-        }
-        for evidence in evidence_values {
-            let mut used = false;
-            for (_, statement) in parent.stmts.iter() {
-                let Stmt::Let { value, .. } = statement else {
-                    continue;
-                };
-                let mut uses_evidence = false;
-                value.for_each_var(|variable| uses_evidence |= variable == evidence);
-                if !uses_evidence {
-                    continue;
-                }
-                match value {
-                    Value::Call { args, .. }
-                        if args.iter().any(
-                            |argument| matches!(argument, Operand::Var(value) if *value == evidence),
-                        ) => used = true,
-                    _ => return false,
-                }
-            }
-            if !used
-                || parent
-                    .seqs
-                    .iter()
-                    .any(|(_, sequence)| term_uses_var(&sequence.term, evidence))
-            {
-                return false;
-            }
-        }
-    }
-
-    !parent.seqs.iter().any(|(_, sequence)| {
-        term_uses_any_var(&sequence.term, &handler_values)
-            || term_uses_var(&sequence.term, closure_value)
-    })
-}
-
-fn term_uses_any_var(term: &Term, variables: &[VarId]) -> bool {
-    variables
-        .iter()
-        .any(|&variable| term_uses_var(term, variable))
-}
-
-fn term_uses_var(term: &Term, variable: VarId) -> bool {
-    let operand_uses =
-        |operand: &Operand| matches!(operand, Operand::Var(value) if *value == variable);
-    match term {
-        Term::Yield(value) | Term::Return(value) => value.as_ref().is_some_and(operand_uses),
-        Term::Fail(value) | Term::Defect(value) => operand_uses(value),
-        Term::Break { value, .. } => value.as_ref().is_some_and(operand_uses),
-        Term::Recur(values) => values.iter().any(operand_uses),
-        Term::Unwind | Term::Unreachable => false,
-    }
-}
-
-fn operand_references_cell(operand: &Operand, cells: &HashSet<VarId>) -> bool {
-    matches!(operand, Operand::Var(variable) if cells.contains(variable))
-}
-
-fn operand_type(function: &Function, operand: &Operand) -> Option<TypeId> {
-    match operand {
-        Operand::Var(variable) => Some(function.vars[*variable].ty),
-        Operand::Const(Const::Int(_)) => Some(TypeId::INT),
-        Operand::Const(Const::Bool(_)) => Some(TypeId::BOOL),
-        Operand::Const(Const::Int64(_)) => Some(TypeId::INT64),
-        Operand::Const(Const::Float(_)) => Some(TypeId::FLOAT),
-        Operand::Const(Const::String(_)) => Some(TypeId::STRING),
-        Operand::Const(Const::Unit) => Some(TypeId::UNIT),
-    }
-}
-
-fn type_contains_cell(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-    if !seen.insert(ty) {
-        return false;
-    }
-    match layouts.types[ty].clone() {
-        Type::Cell(_) => true,
-        Type::Tuple(fields) => fields
-            .into_iter()
-            .any(|field| type_contains_cell(layouts, field, seen)),
-        Type::List(element) => type_contains_cell(layouts, element, seen),
-        Type::Enum(enum_id, args) => {
-            args.iter()
-                .any(|&argument| type_contains_cell(layouts, argument, seen))
-                || layouts.core.enums[enum_id].variants.iter().any(|variant| {
-                    variant
-                        .tys
-                        .iter()
-                        .any(|&field| type_contains_cell(layouts, field, seen))
-                })
-        }
-        Type::Fn(function) => {
-            function
-                .params
-                .iter()
-                .any(|&parameter| type_contains_cell(layouts, parameter, seen))
-                || type_contains_cell(layouts, function.ret, seen)
-                || function.sets.is_some_and(|sets| {
-                    type_contains_cell(layouts, sets.errors, seen)
-                        || type_contains_cell(layouts, sets.effects, seen)
-                })
-        }
-        Type::Set(summary) => summary
-            .params
-            .iter()
-            .any(|&parameter| type_contains_cell(layouts, parameter, seen)),
-        _ => false,
-    }
-}
-
-fn type_contains_string_with_types(
-    layouts: &TypeLayouts<'_>,
-    types: &mut TypeTable,
-    ty: TypeId,
-    seen: &mut HashSet<TypeId>,
-) -> bool {
-    if !seen.insert(ty) {
-        return false;
-    }
-    match types[ty].clone() {
-        Type::String | Type::Any => true,
-        Type::Tuple(fields) => fields
-            .into_iter()
-            .any(|field| type_contains_string_with_types(layouts, types, field, seen)),
-        Type::List(element) | Type::Cell(element) => {
-            type_contains_string_with_types(layouts, types, element, seen)
-        }
-        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
-            variant.tys.iter().any(|&field| {
-                let field = types.subst(field, &args);
-                type_contains_string_with_types(layouts, types, field, seen)
-            })
-        }),
-        _ => false,
-    }
 }
 
 // A literal terminal defect cannot run cleanup under this backend's immediate-stop policy.
@@ -2854,7 +2304,12 @@ fn function_needs_heap(
             ..
         } => true,
         Stmt::Let {
-            value: Value::Fiber { .. },
+            value:
+                Value::Fiber { .. }
+                | Value::Builtin {
+                    op: Builtin::CellNew,
+                    ..
+                },
             ..
         } => true,
         Stmt::Let {
@@ -3682,106 +3137,83 @@ fn emit_cell_builtin(
     args: &[Operand],
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
-    let expected_arity = match op {
-        Builtin::CellNew | Builtin::CellGet => 1,
-        Builtin::CellSet => 2,
-        _ => unreachable!("only cell builtins use this emitter"),
-    };
-    if args.len() != expected_arity {
+    let arity = if op == Builtin::CellSet { 2 } else { 1 };
+    if args.len() != arity {
         return Err(invalid_flow_ir(
             &function.name,
-            &format!(
-                "builtin {op:?} has {} arguments, expected {expected_arity}",
-                args.len()
-            ),
+            "Cell builtin has an invalid argument count",
         ));
     }
-
     if op == Builtin::CellNew {
-        let Some(cell) = dst else {
-            return Err(invalid_flow_ir(
-                &function.name,
-                "CellNew has no result destination",
-            ));
-        };
-        let Type::Cell(content) = layouts.types[function.vars[cell].ty].clone() else {
-            return Err(invalid_flow_ir(
-                &function.name,
-                "CellNew destination is not a Cell value",
-            ));
-        };
-        if operand_type(function, &args[0]) != Some(content) {
-            return Err(invalid_flow_ir(
-                &function.name,
-                "CellNew initial value has the wrong type",
-            ));
-        }
-
-        let storage = cell_storage_name(cell);
-        let initialized = cell_initialized_name(cell);
-        if layouts.is_managed_value(content) {
-            writer.begin_block(&format!("if ({initialized} != INT32_C(0))"));
-            layouts.emit_release_value_expression(content, &storage, writer);
-            writer.end_block();
-            emit_retain_operand(layouts, function, &args[0], writer);
-        }
-        if layouts.type_repr(content) != Repr::Void {
-            let expression = operand_expression(&args[0])
-                .map_err(|variant| unsupported(&function.name, variant))?;
-            writer.assign(&storage, &expression);
-        }
-        if layouts.is_managed_value(content) {
-            writer.assign(&initialized, "INT32_C(1)");
-        }
-        writer.assign(&variable_name(cell), &format!("(void *)&{storage}"));
-        return Ok(());
-    }
-
-    let Operand::Var(cell) = args[0] else {
-        return Err(invalid_flow_ir(
-            &function.name,
-            &format!("{op:?} cell argument is not a variable"),
-        ));
-    };
-    let Type::Cell(content) = layouts.types[function.vars[cell].ty].clone() else {
-        return Err(invalid_flow_ir(
-            &function.name,
-            &format!("{op:?} first argument is not a Cell value"),
-        ));
-    };
-    let cell_expression = variable_name(cell);
-    let storage_type = if layouts.type_repr(content) == Repr::Void {
-        "uint8_t".to_owned()
-    } else {
-        layouts.c_type(content)
-    };
-    let storage = format!("(*(({storage_type} *){cell_expression}))");
-
-    match op {
-        Builtin::CellGet => {
-            if operand_type(function, &args[0]) != Some(function.vars[cell].ty) {
+        let content = operand_type(function, &args[0]).expect("Cell argument has a type");
+        let cell_ty = if let Some(cell) = dst {
+            let ty = function.vars[cell].ty;
+            if !matches!(layouts.types[ty], Type::Cell(field) if field == content) {
                 return Err(invalid_flow_ir(
                     &function.name,
-                    "CellGet cell argument has an inconsistent type",
+                    "CellNew destination or initial value has the wrong type",
                 ));
             }
-            match dst {
-                Some(result) if function.vars[result].ty == content => {
-                    if layouts.is_managed_value(content) {
-                        layouts.emit_retain_value_expression(content, &storage, writer);
-                        writer.assign(&owned_variable_name(result), "INT32_C(1)");
-                    }
-                    writer.assign(&variable_name(result), &storage);
-                }
-                None if layouts.type_repr(content) == Repr::Void => {}
-                _ => {
-                    return Err(invalid_flow_ir(
-                        &function.name,
-                        "CellGet destination does not match the cell content type",
-                    ));
-                }
-            }
+            ty
+        } else {
+            *layouts
+                .cell_types
+                .iter()
+                .find(|&&ty| matches!(layouts.types[ty], Type::Cell(field) if field == content))
+                .expect("CellNew layout was collected")
+        };
+        let target = dst
+            .map(variable_name)
+            .unwrap_or_else(|| "emela_discarded_cell".into());
+        if dst.is_none() {
+            writer.begin_block("");
+            writer.decl("void *", &target, None);
         }
+        let storage_ty = layouts.cell_content_c_type(content);
+        writer.assign(
+            &target,
+            &format!(
+                "emela_heap_allocate(sizeof({storage_ty}), UINT32_C({}))",
+                layouts.cell_kind(cell_ty)
+            ),
+        );
+        if layouts.type_repr(content) != Repr::Void {
+            let source =
+                operand_expression(&args[0]).map_err(|v| unsupported(&function.name, v))?;
+            let storage = format!("(*(({storage_ty} *){target}))");
+            layouts.emit_owned_value_store(content, &source, &storage, writer);
+        }
+        if dst.is_none() {
+            writer.line(&format!("emela_heap_release({target});"));
+            writer.end_block();
+        }
+        return Ok(());
+    }
+    let Some(cell_ty) = operand_type(function, &args[0]) else {
+        unreachable!()
+    };
+    let Type::Cell(content) = layouts.types[cell_ty] else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Cell builtin first argument is not a Cell",
+        ));
+    };
+    let cell = operand_expression(&args[0]).map_err(|v| unsupported(&function.name, v))?;
+    let storage_ty = layouts.cell_content_c_type(content);
+    let storage = format!("(*(({storage_ty} *){cell}))");
+    match op {
+        Builtin::CellGet => match dst {
+            Some(result) if function.vars[result].ty == content => {
+                layouts.emit_owned_value_store(content, &storage, &variable_name(result), writer);
+            }
+            None => {}
+            _ => {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "CellGet destination does not match the cell content type",
+                ));
+            }
+        },
         Builtin::CellSet => {
             if dst.is_some() || operand_type(function, &args[1]) != Some(content) {
                 return Err(invalid_flow_ir(
@@ -3790,24 +3222,21 @@ fn emit_cell_builtin(
                 ));
             }
             if layouts.type_repr(content) != Repr::Void {
+                let source =
+                    operand_expression(&args[1]).map_err(|v| unsupported(&function.name, v))?;
+                writer.begin_block("");
+                writer.decl(&storage_ty, "emela_cell_new_value", Some(&source));
+                layouts.emit_own_value_in_place(content, "emela_cell_new_value", writer);
                 if layouts.is_managed_value(content) {
-                    emit_retain_operand(layouts, function, &args[1], writer);
-                    writer.begin_block(&format!(
-                        "if ({} != INT32_C(0))",
-                        cell_initialized_name(cell)
-                    ));
-                    layouts.emit_release_value_expression(content, &storage, writer);
-                    writer.end_block();
+                    writer.decl(&storage_ty, "emela_cell_old_value", Some(&storage));
                 }
-                let expression = operand_expression(&args[1])
-                    .map_err(|variant| unsupported(&function.name, variant))?;
-                writer.assign(&storage, &expression);
-            }
-            if layouts.is_managed_value(content) {
-                writer.assign(&cell_initialized_name(cell), "INT32_C(1)");
+                // Publish before release: collectors must see the new edge, including self-assignment.
+                writer.assign(&storage, "emela_cell_new_value");
+                layouts.emit_release_value_expression(content, "emela_cell_old_value", writer);
+                writer.end_block();
             }
         }
-        _ => unreachable!("only cell builtins use this emitter"),
+        _ => unreachable!("only Cell builtins use this emitter"),
     }
     Ok(())
 }
@@ -8741,7 +8170,8 @@ struct TypeLayouts<'a> {
     closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
     owned_string_returns: HashSet<String>,
     owned_aggregate_returns: HashSet<String>,
-    closure_cell_captures: HashMap<String, HashSet<VarId>>,
+    cell_types: Vec<TypeId>,
+    cell_ids: HashMap<TypeId, usize>,
     function_adapters: Vec<FunctionAdapterLayout>,
     function_adapter_ids: HashMap<(TypeId, TypeId), usize>,
     handler_layouts: Vec<HandlerLayout>,
@@ -8819,22 +8249,8 @@ impl<'a> TypeLayouts<'a> {
                         .then(|| f.name.clone())
                 })
                 .collect(),
-            closure_cell_captures: closures
-                .functions
-                .iter()
-                .filter_map(|(function_id, environment)| {
-                    let function = &flow.functions[*function_id];
-                    let cells = closures.environments[*environment]
-                        .captures
-                        .iter()
-                        .filter_map(|capture| {
-                            matches!(flow.core.types[capture.ty], Type::Cell(_))
-                                .then_some(capture.local)
-                        })
-                        .collect::<HashSet<_>>();
-                    (!cells.is_empty()).then_some((function.name.clone(), cells))
-                })
-                .collect(),
+            cell_types: Vec::new(),
+            cell_ids: HashMap::new(),
             function_adapters: Vec::new(),
             function_adapter_ids: HashMap::new(),
             handler_layouts: Vec::new(),
@@ -8964,6 +8380,17 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Builtin {
+                        op: Builtin::CellNew,
+                        args,
+                    } => {
+                        if let Some(content) =
+                            args.first().and_then(|arg| operand_type(function, arg))
+                        {
+                            let cell = layouts.types.intern(Type::Cell(content));
+                            layouts.collect(cell, &function.name, &mut states)?;
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Attempt { exit, .. },
                         args,
@@ -9219,6 +8646,7 @@ impl<'a> TypeLayouts<'a> {
         // a tuple containing its enclosing enum does not create an artificial recursive box.
         let mut function_index = 0;
         let mut list_index = 0;
+        let mut cell_index = 0;
         loop {
             if let Some(&ty) = layouts.function_types.get(function_index) {
                 let Type::Fn(ft) = layouts.types[ty].clone() else {
@@ -9234,6 +8662,12 @@ impl<'a> TypeLayouts<'a> {
                 };
                 list_index += 1;
                 layouts.collect(element, "List element", &mut states)?;
+            } else if let Some(&ty) = layouts.cell_types.get(cell_index) {
+                let Type::Cell(content) = layouts.types[ty] else {
+                    unreachable!()
+                };
+                cell_index += 1;
+                layouts.collect(content, "Cell content", &mut states)?;
             } else {
                 break;
             }
@@ -9481,8 +8915,11 @@ impl<'a> TypeLayouts<'a> {
             states.insert(ty, 2);
             return Ok(());
         }
-        if let Type::Cell(content) = self.types[ty].clone() {
-            self.collect(content, function, states)?;
+        if matches!(self.types[ty], Type::Cell(_)) {
+            if !self.cell_ids.contains_key(&ty) {
+                self.cell_ids.insert(ty, self.cell_types.len());
+                self.cell_types.push(ty);
+            }
             return Ok(());
         }
         if matches!(self.types[ty], Type::Fn(_)) {
@@ -9659,6 +9096,55 @@ impl<'a> TypeLayouts<'a> {
         }
     }
 
+    fn has_cell_cycles(&self) -> bool {
+        self.cell_types.iter().any(|&ty| {
+            let Type::Cell(content) = self.types[ty] else {
+                unreachable!()
+            };
+            self.cell_content_can_cycle(content, &mut HashSet::new())
+        })
+    }
+
+    fn cell_content_can_cycle(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        if self.is_runtime_handle(ty) {
+            return true;
+        }
+        match self.types[ty].clone() {
+            Type::Any
+            | Type::Cell(_)
+            | Type::Fn(_)
+            | Type::Handler(_)
+            | Type::Evidence
+            | Type::FiberScope => true,
+            Type::List(element) => self.cell_content_can_cycle(element, seen),
+            _ => self.aggregate_ids.get(&ty).is_some_and(|&index| {
+                let fields = match &self.aggregates[index].kind {
+                    AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+                    AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+                };
+                fields
+                    .into_iter()
+                    .flatten()
+                    .any(|&field| self.cell_content_can_cycle(field, seen))
+            }),
+        }
+    }
+
+    fn cell_content_c_type(&self, content: TypeId) -> String {
+        if self.type_repr(content) == Repr::Void {
+            "uint8_t".into()
+        } else {
+            self.c_type(content)
+        }
+    }
+
+    fn cell_kind(&self, cell: TypeId) -> usize {
+        self.list_types.len() + self.recursive_box_types.len() + self.cell_ids[&cell]
+    }
+
     fn list_node_name(&self, ty: TypeId) -> String {
         format!("emela_list_node_{}", self.list_ids[&ty])
     }
@@ -9675,12 +9161,6 @@ impl<'a> TypeLayouts<'a> {
         self.contains_owned_ref(ty, &mut HashSet::new())
     }
 
-    fn is_closure_cell_capture(&self, function: &Function, variable: VarId) -> bool {
-        self.closure_cell_captures
-            .get(&function.name)
-            .is_some_and(|captures| captures.contains(&variable))
-    }
-
     fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
         if self.is_runtime_handle(ty) {
             return true;
@@ -9692,7 +9172,12 @@ impl<'a> TypeLayouts<'a> {
         }
         if matches!(
             self.types[ty],
-            Type::String | Type::List(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
+            Type::String
+                | Type::List(_)
+                | Type::Cell(_)
+                | Type::Handler(_)
+                | Type::Evidence
+                | Type::FiberScope
         ) {
             return true;
         }
@@ -9733,7 +9218,7 @@ impl<'a> TypeLayouts<'a> {
         }
         if matches!(
             self.types[ty],
-            Type::List(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
+            Type::List(_) | Type::Cell(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
         ) {
             return true;
         }
@@ -9742,9 +9227,6 @@ impl<'a> TypeLayouts<'a> {
         }
         if !seen.insert(ty) {
             return false;
-        }
-        if let Type::Cell(content) = self.types[ty].clone() {
-            return self.contains_heap_ref(content, seen);
         }
         let Some(&aggregate_index) = self.aggregate_ids.get(&ty) else {
             return false;
@@ -9776,8 +9258,10 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn string_owner_kind(&self) -> u32 {
-        u32::try_from(self.list_types.len() + self.recursive_box_types.len())
-            .expect("too many fixed-heap object kinds")
+        u32::try_from(
+            self.list_types.len() + self.recursive_box_types.len() + self.cell_types.len(),
+        )
+        .expect("too many fixed-heap object kinds")
     }
 
     fn any_box_kind(&self) -> u32 {
@@ -9802,7 +9286,7 @@ impl<'a> TypeLayouts<'a> {
             || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
-                Type::Handler(_) | Type::Evidence | Type::FiberScope
+                Type::Cell(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
             )
         {
             writer.line(&format!("emela_heap_retain({expression});"));
@@ -9838,7 +9322,7 @@ impl<'a> TypeLayouts<'a> {
             || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
-                Type::Handler(_) | Type::Evidence | Type::FiberScope
+                Type::Cell(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
             )
         {
             writer.line(&format!(
@@ -9871,7 +9355,7 @@ impl<'a> TypeLayouts<'a> {
             || self.is_runtime_handle(ty)
             || matches!(
                 self.types[ty],
-                Type::Handler(_) | Type::Evidence | Type::FiberScope
+                Type::Cell(_) | Type::Handler(_) | Type::Evidence | Type::FiberScope
             )
         {
             writer.line(&format!("emela_heap_release({expression});"));
@@ -10058,6 +9542,9 @@ impl<'a> TypeLayouts<'a> {
         environments: &[crate::static_closure::ClosureEnvironment],
         writer: &mut Writer,
     ) {
+        if self.has_resumes && self.has_error_ownership() {
+            writer.line("static void emela_resume_enqueue_error(void *value, emela_heap_block **pending, emela_heap_block **tail);");
+        }
         writer.begin_block(
             "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
         );
@@ -10100,13 +9587,37 @@ impl<'a> TypeLayouts<'a> {
             writer.line("break;");
             writer.end_block();
         }
+        for (index, &cell_ty) in self.cell_types.iter().enumerate() {
+            let Type::Cell(content) = self.types[cell_ty] else {
+                unreachable!()
+            };
+            let kind = self.list_types.len() + self.recursive_box_types.len() + index;
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            self.emit_enqueue_value_expression(
+                content,
+                &format!("(*(({} *)value))", self.cell_content_c_type(content)),
+                "pending",
+                "tail",
+                writer,
+            );
+            writer.line("break;");
+            writer.end_block();
+        }
         let string_owner_kind = self.string_owner_kind();
         writer.line(&format!("case UINT32_C({string_owner_kind}):"));
         writer.begin_block("");
         writer.line("break;");
         writer.end_block();
         if self.has_resumes {
-            writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
+            if self.has_error_ownership() {
+                writer.line(&format!(
+                    "case UINT32_C({}): emela_resume_enqueue_error(value, pending, tail); break;",
+                    self.resume_kind()
+                ));
+            } else {
+                writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
+            }
         }
         if self.has_causes {
             writer.line(&format!("case UINT32_C({}): {{", self.cause_kind()));
@@ -10143,7 +9654,11 @@ impl<'a> TypeLayouts<'a> {
             if self.deferred_pool {
                 writer.line("emela_deferred *deferred = (emela_deferred *)value;");
                 writer.begin_block("if (deferred->slot != EMELA_SLOT_NONE)");
-                writer.line("EmelaAny stored = emela_deferred_recycle(deferred);");
+                if !self.has_cell_cycles() {
+                    writer.line("EmelaAny stored = emela_deferred_recycle(deferred);");
+                } else {
+                    writer.line("EmelaAny stored = emela_heap_trace_mode == 1 || emela_heap_trace_mode == 2 ? emela_deferred_slot_get(deferred)->value : emela_deferred_recycle(deferred);");
+                }
                 writer.line("if (stored.tag == 0) emela_heap_enqueue(stored.payload.any_box, pending, tail);");
                 writer.end_block();
             }
@@ -10723,14 +10238,6 @@ fn c_identifier(name: &str) -> String {
 
 fn variable_name(id: VarId) -> String {
     format!("emela_v_{}", u32::from(id.into_raw()))
-}
-
-fn cell_storage_name(id: VarId) -> String {
-    format!("emela_cell_value_{}", u32::from(id.into_raw()))
-}
-
-fn cell_initialized_name(id: VarId) -> String {
-    format!("emela_cell_initialized_{}", u32::from(id.into_raw()))
 }
 
 fn owned_variable_name(id: VarId) -> String {

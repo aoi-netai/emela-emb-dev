@@ -71,7 +71,7 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut
     }
     writer.end_block();
     writer.begin_block("static inline void emela_error_clear(EmelaError *error)");
-    writer.line("emela_error_release(*error); *error = (EmelaError){0};");
+    writer.line("EmelaError old = *error; *error = (EmelaError){0}; emela_error_release(old);");
     writer.end_block();
     if layouts.has_error_notes() {
         writer.line("static inline void emela_error_ensure_notes(EmelaError *error);");
