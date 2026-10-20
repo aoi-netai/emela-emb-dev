@@ -27,6 +27,7 @@ static void emela_runtime_heap_sample(void) {
   if (heap > emela_runtime_heap_peak) emela_runtime_heap_peak = heap;
   if (children > emela_runtime_children_peak) emela_runtime_children_peak = children;
 }
+int emela_runtime_scheduler_active(void) { return emela_scheduler_running; }
 void emela_runtime_cancel(EmelaFiber handle) { emela_fiber_get(handle)->cancelled = 1; }
 void emela_runtime_sample(void) {
   unsigned free_frames = 0, fibers = 0;

@@ -127,6 +127,7 @@ void emela_runtime_sample(void);
 size_t emela_runtime_heap(void);
 unsigned emela_runtime_children(void);
 int emela_runtime_pools_empty(void);
+int emela_runtime_scheduler_active(void);
 #endif
 "#,
         managed = u8::from(managed),

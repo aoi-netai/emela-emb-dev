@@ -28,6 +28,7 @@ volatile uint32_t emela_runtime_heap_after;
 volatile uint32_t emela_runtime_pools_clean;
 volatile uint32_t emela_runtime_sanity_checks;
 volatile uint32_t emela_runtime_fp_context_checks;
+volatile uint32_t emela_runtime_irq_during_scheduler;
 volatile float emela_runtime_fp_main;
 volatile float emela_runtime_fp_irq;
 static unsigned locked;
@@ -41,6 +42,8 @@ static unsigned irq_kind;
 static EmelaTask irq_task;
 static int irq_accepted;
 static int32_t irq_value;
+static int preempt_next_request;
+static void notify(EmelaTask task, unsigned kind, int32_t value, int accepted);
 
 static uint32_t ipsr(void) { uint32_t v; __asm volatile("mrs %0, ipsr" : "=r"(v)); return v; }
 static uint32_t primask(void) { uint32_t v; __asm volatile("mrs %0, primask" : "=r"(v)); return v; }
@@ -79,6 +82,15 @@ void emela_board_event_unlock(uint32_t state) {
 }
 void board_request_start(EmelaTask task, int32_t n) {
   main_callback(); CHECK(n == (int32_t)expected_request--); request_task = task; requests++;
+  if (preempt_next_request) {
+    preempt_next_request = 0;
+#if EMELA_RUNTIME_MANAGED
+    context = (Context){.message = {'4', '2', '!'}};
+    notify(task, 2, 0, 1);
+#else
+    notify(task, 0, 42, 1);
+#endif
+  }
 }
 void board_wait_start(EmelaTask task, int32_t n) {
   main_callback(); CHECK(n >= 1 && n <= 3); cleanup_tasks[n - 1] = task; cleanup_calls++;
@@ -111,6 +123,7 @@ void SysTick_Handler(void) {
   CHECK(ipsr() == 15 && primask() == 0 && locked == 0);
   *(volatile uint32_t *)UINT32_C(0xe000e010) = 0;
   emela_runtime_isr_calls++;
+  if (emela_runtime_scheduler_active()) emela_runtime_irq_during_scheduler++;
   /* Force lazy FP stacking, then record the actual exception MSP. */
   emela_runtime_fp_irq = emela_runtime_fp_main + 0.5f;
   uint32_t irq_pattern = UINT32_C(0x40e00000);
@@ -174,6 +187,12 @@ static void sanity(void) {
 }
 int main(void) {
   board_init(); sanity();
+  int32_t preempt_result = -1;
+  expected_request = 1; preempt_next_request = 1;
+  EmelaFiber preempt_fiber = emela_runtime_work_start(1, &preempt_result);
+  drain(); CHECK(emela_fiber_done(preempt_fiber) && preempt_result == 4);
+  CHECK(emela_runtime_irq_during_scheduler == 1);
+  emela_fiber_release(preempt_fiber); check_empty();
   EmelaTask old = {UINT32_MAX, 0};
   for (unsigned i = 0; i < 1000; i++) {
     unsigned mode = i % 4, count = i == 0 ? 1000 : 3, discarded = i % 5 == 4;
