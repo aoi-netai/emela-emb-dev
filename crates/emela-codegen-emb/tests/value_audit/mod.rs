@@ -298,7 +298,7 @@ int main(void) {{ {call} return 1; }}
 }
 
 #[test]
-fn changing_recursive_type_arguments_are_rejected_even_for_a_finite_type_graph() {
+fn changing_recursive_type_arguments_with_a_finite_type_graph_are_supported() {
     let core = support::try_lower(
         &[(
             "main.emel",
@@ -313,12 +313,8 @@ pub fn make() -> Nest[Int] { End(42) }
     let flow = emela_codegen_emb::flow_from_core(&core)
         .expect("lower the finite type graph to verified Flow IR");
     emela_lir::verify(&flow).unwrap();
-    let errors = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
-        .expect_err("record the current finite-layout implementation gap");
-    assert!(
-        errors.iter().any(|e| e.kind == ErrorKind::Unsupported
-            && e.message.contains("changes its type arguments"))
-    );
+    compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("finite recursive instantiations have a concrete C layout");
 }
 
 #[test]

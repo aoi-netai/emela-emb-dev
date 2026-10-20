@@ -8318,6 +8318,7 @@ struct TypeLayouts<'a> {
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
     recursive_edges: HashSet<(TypeId, usize, usize)>,
+    expanding_enums: HashSet<EnumId>,
     recursive_box_types: Vec<TypeId>,
     recursive_box_ids: HashMap<TypeId, usize>,
     list_types: Vec<TypeId>,
@@ -8386,6 +8387,7 @@ impl<'a> TypeLayouts<'a> {
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
             recursive_edges: HashSet::new(),
+            expanding_enums: crate::type_expansion::expanding_enums(&flow.core),
             recursive_box_types: Vec::new(),
             recursive_box_ids: HashMap::new(),
             list_types: Vec::new(),
@@ -9011,14 +9013,11 @@ impl<'a> TypeLayouts<'a> {
         validated: &mut HashSet<TypeId>,
     ) -> Result<(), Vec<Error>> {
         if let Type::Enum(id, _) = self.types[ty]
-            && active.iter().any(|&other| {
-                other != ty
-                    && matches!(self.types[other], Type::Enum(other_id, _) if other_id == id)
-            })
+            && self.expanding_enums.contains(&id)
         {
             return Err(unsupported(
                 function,
-                "recursive enum type that changes its type arguments",
+                "recursive enum type that changes its type arguments without a finite closure",
             ));
         }
         if validated.contains(&ty) || !active.insert(ty) {
@@ -9050,6 +9049,15 @@ impl<'a> TypeLayouts<'a> {
         function: &str,
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>> {
+        if let Type::Enum(id, _) = self.types[ty]
+            && self.expanding_enums.contains(&id)
+        {
+            return Err(unsupported(
+                function,
+                "recursive enum type that changes its type arguments without a finite closure",
+            ));
+        }
+
         if let Type::Enum(id, args) = self.types[ty].clone()
             && self.core.enums[id].name == "Std.Fiber.Exit"
             && args
@@ -9125,19 +9133,6 @@ impl<'a> TypeLayouts<'a> {
         let Some(kind) = kind else {
             return Ok(());
         };
-
-        if let Type::Enum(enum_id, _) = self.types[ty]
-            && states.iter().any(|(active_ty, state)| {
-                *state == 1
-                    && *active_ty != ty
-                    && matches!(self.types[*active_ty], Type::Enum(active_id, _) if active_id == enum_id)
-            })
-        {
-            return Err(unsupported(
-                function,
-                "recursive enum type that changes its type arguments",
-            ));
-        }
 
         match states.get(&ty) {
             Some(2) => return Ok(()),

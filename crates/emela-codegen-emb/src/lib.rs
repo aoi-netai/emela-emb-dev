@@ -14,6 +14,7 @@ mod heap;
 mod scope_abi;
 mod static_closure;
 mod static_handler;
+mod type_expansion;
 mod unicode_grapheme;
 mod writer;
 

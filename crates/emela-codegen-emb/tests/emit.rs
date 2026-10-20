@@ -9,6 +9,7 @@ mod support;
 mod any_data;
 mod builtin_audit;
 mod cell;
+mod completion_types;
 mod deferred;
 mod external_scalar;
 mod fiber;
