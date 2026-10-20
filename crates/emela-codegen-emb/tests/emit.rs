@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod support;
 
 mod deferred;
+mod external_scalar;
 mod fiber;
 mod owned;
 mod string_append;

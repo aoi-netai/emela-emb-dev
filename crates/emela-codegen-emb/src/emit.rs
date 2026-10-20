@@ -7507,6 +7507,8 @@ fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<St
         matches!(
             flow.core.ty(ty),
             emela_core::Type::Int
+                | emela_core::Type::Int64
+                | emela_core::Type::Float
                 | emela_core::Type::Bool
                 | emela_core::Type::Unit
                 | emela_core::Type::Never
@@ -7520,7 +7522,7 @@ fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<St
     {
         return Err(unsupported(
             &function.name,
-            "external function with a non-Int32 or non-Unit signature",
+            "external function with a non-scalar signature",
         ));
     }
     Ok(symbol)
