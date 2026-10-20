@@ -248,7 +248,7 @@ int main(void) {
 }
 
 // Move an ordinary source call into a Flow IR cleanup while preserving its capture operands.
-fn protect_cleanup_call(flow: &mut Module) {
+pub(super) fn protect_cleanup_call(flow: &mut Module) {
     let cleanup = flow
         .functions
         .iter()

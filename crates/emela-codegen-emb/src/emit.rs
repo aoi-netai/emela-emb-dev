@@ -796,6 +796,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             source.blank();
             continue;
         }
+        if layouts.has_cause_raise && layouts.has_unwind {
+            source.line("unsigned emela_entry_holds = emela_current_fiber == NULL ? 0 : emela_current_fiber->holds;");
+            source.line("(void)emela_entry_holds;");
+        }
         if function.fails {
             source.line("*emela_error_out = (EmelaError){0};");
         }
@@ -1152,6 +1156,11 @@ fn emit_owned_cleanup(
         emit_release_if_owned(layouts, function, variable, writer);
     }
     emit_cell_cleanup(layouts, function, writer);
+    if layouts.has_cause_raise && layouts.has_unwind && !function.suspends && !function.constant {
+        writer.line(
+            "if (emela_current_fiber != NULL) emela_current_fiber->holds = emela_entry_holds;",
+        );
+    }
 }
 
 fn emit_cell_cleanup(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
@@ -2195,6 +2204,7 @@ fn function_value_abi_type_supported(
         | Type::Float
         | Type::Bool
         | Type::Unit
+        | Type::Never
         | Type::String
         | Type::Any
         | Type::List(_)
@@ -4959,6 +4969,34 @@ fn emit_statement(
         }
         writer.assign(&owned_variable_name(dst), "INT32_C(1)");
     }
+    if layouts.has_cause_raise
+        && layouts.has_unwind
+        && !function.suspends
+        && matches!(
+            statement,
+            Stmt::Let {
+                value: Value::Call { .. }
+                    | Value::Fiber {
+                        op: emela_core::FiberOp::Attempt { .. },
+                        ..
+                    },
+                ..
+            }
+        )
+    {
+        emit_sync_interrupt_exit(
+            layouts,
+            function,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        )?;
+    }
     Ok(())
 }
 
@@ -5342,6 +5380,65 @@ fn emit_statement_inner(
                         );
                         writer.assign(&format!("{destination}.env"), "NULL");
                     }
+                }
+                Value::Fiber {
+                    op: emela_core::FiberOp::CauseRaise,
+                    args,
+                    on_fail: Some(edge),
+                } => {
+                    let [cause] = args.as_slice() else {
+                        return Err(invalid_flow_ir(&function.name, "Cause.raise arity"));
+                    };
+                    let cause = operand_expression(cause)
+                        .map_err(|why| unsupported(&function.name, why))?;
+                    writer.begin_block("");
+                    writer.line(&format!(
+                        "emela_cause *raised = emela_cause_checked({cause});"
+                    ));
+                    writer.begin_block("if (raised->kind == 0)");
+                    emit_call_failure_edge(
+                        layouts,
+                        function,
+                        *edge,
+                        "raised->error",
+                        writer,
+                        names,
+                        string_buffers,
+                        loops,
+                        blocks,
+                        protects,
+                        next_temp,
+                        next_label,
+                    )?;
+                    writer.end_block();
+                    writer.begin_block("else if (raised->kind == 2)");
+                    if layouts.has_unwind {
+                        writer.line("if (emela_current_fiber == NULL) emela_board_defect(EMELA_DEFECT_PANIC, \"fiber was interrupted\", UINT16_C(21));");
+                        writer.line("emela_force_interrupt(emela_current_fiber);");
+                        if !function.suspends {
+                            emit_sync_interrupt_exit(
+                                layouts,
+                                function,
+                                writer,
+                                names,
+                                string_buffers,
+                                loops,
+                                blocks,
+                                protects,
+                                next_temp,
+                                next_label,
+                            )?;
+                        }
+                    } else {
+                        writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"fiber was interrupted\", UINT16_C(21));");
+                    }
+                    writer.end_block();
+                    writer.begin_block("else");
+                    writer.line(
+                        "emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));",
+                    );
+                    writer.end_block();
+                    writer.end_block();
                 }
                 Value::Fiber {
                     op,
@@ -8291,6 +8388,22 @@ fn emit_function_coerce_adapter(
     let Type::Fn(destination_type) = layouts.types[adapter.destination].clone() else {
         unreachable!("function adapter destination has non-function type")
     };
+    let traps_failure = source_type.fails && !destination_type.fails;
+    if traps_failure && source_type.suspends {
+        writer.line(&format!(
+            "typedef struct {{ emela_frame base; EmelaError error; }} emela_coerce_check_{index};"
+        ));
+        writer.line(&format!("_Static_assert(sizeof(emela_coerce_check_{index}) <= EMELA_FRAME_BYTES, \"increase frame_bytes for function coercion\");"));
+        writer.begin_block(&format!(
+            "static void emela_coerce_check_step_{index}(emela_fiber *fiber, emela_frame *base)"
+        ));
+        writer.line(&format!(
+            "emela_coerce_check_{index} *frame = (emela_coerce_check_{index} *)base;"
+        ));
+        writer.line("if (frame->error.tag != 0) emela_board_defect(EMELA_DEFECT_ASSERT, \"failure in infallible coercion\", UINT16_C(30));");
+        writer.line("emela_frame_return(fiber);");
+        writer.end_block();
+    }
     writer.begin_block(&function_ref_adapter_signature(
         layouts,
         adapter.destination,
@@ -8319,7 +8432,16 @@ fn emit_function_coerce_adapter(
     } else if destination_type.ev {
         writer.line("(void)emela_evidence;");
     }
-    if source_type.fails {
+    if traps_failure {
+        if source_type.suspends {
+            writer.line(&format!("emela_coerce_check_{index} *check = (emela_coerce_check_{index} *)emela_frame_push(fiber, sizeof(*check), emela_coerce_check_step_{index});"));
+            writer.line("check->error = (EmelaError){0};");
+            args.push("&check->error".into());
+        } else {
+            writer.line("EmelaError checked_error = {0};");
+            args.push("&checked_error".into());
+        }
+    } else if source_type.fails {
         args.push("emela_error_out".to_owned());
     } else if destination_type.fails {
         writer.assign("*emela_error_out", "(EmelaError){0}");
@@ -8328,11 +8450,18 @@ fn emit_function_coerce_adapter(
         args.push("result".to_owned());
     }
     let call = format!("environment->source.call({})", args.join(", "));
+    let trap = "if (checked_error.tag != 0) emela_board_defect(EMELA_DEFECT_ASSERT, \"failure in infallible coercion\", UINT16_C(30));";
     if destination_type.suspends {
         if source_type.suspends || layouts.type_repr(source_type.ret) == Repr::Void {
             writer.line(&format!("{call};"));
+            if traps_failure && !source_type.suspends {
+                writer.line(trap);
+            }
         } else {
             writer.decl(&layouts.c_type(source_type.ret), "returned", Some(&call));
+            if traps_failure {
+                writer.line(trap);
+            }
             writer.begin_block("if (result != NULL)");
             writer.assign("*result", "returned");
             writer.end_block();
@@ -8348,7 +8477,14 @@ fn emit_function_coerce_adapter(
     }
     if layouts.type_repr(source_type.ret) == Repr::Void {
         writer.line(&format!("{call};"));
+        if traps_failure {
+            writer.line(trap);
+        }
         writer.ret(None);
+    } else if traps_failure {
+        writer.decl(&layouts.c_type(source_type.ret), "returned", Some(&call));
+        writer.line(trap);
+        writer.ret(Some("returned"));
     } else {
         writer.ret(Some(&call));
     }
@@ -8446,6 +8582,7 @@ struct TypeLayouts<'a> {
     child_await_types: Vec<TypeId>,
     child_interrupts: bool,
     has_causes: bool,
+    has_cause_raise: bool,
     attempt_types: Vec<(TypeId, TypeId)>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
@@ -8527,7 +8664,26 @@ impl<'a> TypeLayouts<'a> {
                 || crate::fiber::has_scopes(flow, emitted),
             has_unwind: suspend::has_operations(flow, emitted)
                 || crate::fiber::has_scopes(flow, emitted)
-                || suspend::has_protects(flow, emitted),
+                || suspend::has_protects(flow, emitted)
+                || (flow
+                    .functions
+                    .iter()
+                    .any(|(id, f)| emitted.contains(&id) && f.suspends)
+                    && flow.functions.iter().any(|(id, f)| {
+                        emitted.contains(&id)
+                            && f.stmts.iter().any(|(_, s)| {
+                                matches!(
+                                    s,
+                                    Stmt::Let {
+                                        value: Value::Fiber {
+                                            op: emela_core::FiberOp::CauseRaise,
+                                            ..
+                                        },
+                                        ..
+                                    }
+                                )
+                            })
+                    })),
             has_scopes: crate::fiber::has_scopes(flow, emitted),
             deferred_pool,
             deferred_complete_types: Vec::new(),
@@ -8549,6 +8705,21 @@ impl<'a> TypeLayouts<'a> {
                                         | emela_core::FiberOp::CauseKind { .. }
                                         | emela_core::FiberOp::CauseToString
                                         | emela_core::FiberOp::CauseRaise,
+                                    ..
+                                },
+                                ..
+                            }
+                        )
+                    })
+            }),
+            has_cause_raise: flow.functions.iter().any(|(id, f)| {
+                emitted.contains(&id)
+                    && f.stmts.iter().any(|(_, s)| {
+                        matches!(
+                            s,
+                            Stmt::Let {
+                                value: Value::Fiber {
+                                    op: emela_core::FiberOp::CauseRaise,
                                     ..
                                 },
                                 ..
@@ -8997,12 +9168,13 @@ impl<'a> TypeLayouts<'a> {
             && (!source_fn.suspends || destination_fn.suspends)
             && source_fn.sets.is_none()
             && destination_fn.sets.is_none()
-            && (!source_fn.fails || destination_fn.fails)
             && (!source_fn.ev || destination_fn.ev);
         if !compatible {
             return Err(unsupported(
                 function,
-                "function-value coercion with incompatible parameters, result, or effect flags",
+                &format!(
+                    "function-value coercion with incompatible parameters, result, or effect flags ({source_fn:?} -> {destination_fn:?})"
+                ),
             ));
         }
         if self
@@ -10319,4 +10491,30 @@ fn unsupported(function: &str, construct: &str) -> Vec<Error> {
             "embedded C codegen does not support {construct} in function `{function}` yet"
         ),
     }]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_sync_interrupt_exit(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    strings: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    writer.begin_block("if (emela_current_fiber != NULL && emela_current_fiber->forced)");
+    writer.line("emela_current_fiber->forced = 0;");
+    writer.line("emela_interrupt_hold(emela_current_fiber);");
+    emit_pending_cleanups(
+        layouts, function, 0, writer, names, strings, loops, blocks, protects, next_temp,
+        next_label,
+    )?;
+    writer.line("emela_current_fiber->forced = 1;");
+    emit_failure_return(layouts, function, writer);
+    writer.end_block();
+    Ok(())
 }

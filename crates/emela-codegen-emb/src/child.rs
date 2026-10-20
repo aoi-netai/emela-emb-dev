@@ -80,6 +80,12 @@ pub(super) fn emit_runtime(
         writer.line(&format!("*({cty} *)result = ({cty}){{.tag = INT32_C({tag}), .payload.v{tag}.f0 = emela_cause_interrupt()}};", cty = layouts.c_type(exit), tag = emela_core::EXIT_FAILURE));
         writer.line("return;");
         writer.end_block();
+        if layouts.has_error_abi {
+            writer.begin_block("if (child->status == 3)");
+            writer.line(&format!("*({cty} *)result = ({cty}){{.tag = INT32_C({tag}), .payload.v{tag}.f0 = emela_cause_fail(child->error)}};", cty = layouts.c_type(exit), tag = emela_core::EXIT_FAILURE));
+            writer.line("return;");
+            writer.end_block();
+        }
         writer.line("if (child->status != 1) emela_scheduler_invalid();");
         if represented {
             writer.line("EmelaAny emela_v_0 = child->result;");

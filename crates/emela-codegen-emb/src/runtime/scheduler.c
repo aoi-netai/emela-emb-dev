@@ -50,6 +50,7 @@ struct emela_fiber {
   int finishing;
 #ifdef EMELA_FAILURE_RUNTIME
   emela_frame *failure_stop;
+  int forced;
 #endif
 #ifdef EMELA_RESUME_RUNTIME
   emela_resume *perform;
@@ -150,6 +151,7 @@ static EmelaFiber emela_fiber_create(void) {
   fiber->cancelled = fiber->finishing = 0;
 #ifdef EMELA_FAILURE_RUNTIME
   fiber->failure_stop = NULL;
+  fiber->forced = 0;
 #endif
 #ifdef EMELA_RESUME_RUNTIME
   fiber->perform = NULL;

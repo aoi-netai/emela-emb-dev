@@ -62,6 +62,11 @@ pub(super) fn validate(
                         on_fail: None,
                         ..
                     } => {}
+                    Value::Fiber {
+                        op: emela_core::FiberOp::CauseRaise,
+                        on_fail: Some(_),
+                        ..
+                    } => {}
                     Value::Fiber { .. } => {
                         return Err(unsupported(
                             &function.name,
@@ -709,6 +714,12 @@ pub(super) fn emit_function(
             "static int {name}_unwind(emela_fiber *fiber, emela_frame *base)"
         ));
         writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+        if layouts.has_error_abi {
+            writer.line("while (frame->guard_depth != 0 && frame->guards[frame->guard_depth - 1].running) {");
+            writer.line("  if (!fiber->forced) emela_scheduler_invalid();");
+            writer.line("  fiber->holds = frame->guards[--frame->guard_depth].holds;");
+            writer.line("}");
+        }
         writer.line("if (frame->guard_depth == 0) return 0;");
         writer.line("emela_protection_leave(fiber, frame->guards, frame->guard_depth, 0, UINT32_MAX, &base->pc);");
         writer.line("return 1;");
@@ -1694,7 +1705,7 @@ fn emit_sync_statement(
 ) -> Result<(), Vec<Error>> {
     let mut statement = statement.clone();
     if let Stmt::Let {
-        value: Value::Call { on_fail, .. },
+        value: Value::Call { on_fail, .. } | Value::Fiber { on_fail, .. },
         ..
     } = &mut statement
     {

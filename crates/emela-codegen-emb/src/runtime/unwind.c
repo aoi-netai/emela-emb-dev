@@ -13,6 +13,9 @@ static int emela_interrupt_masked(emela_fiber *fiber) {
   emela_scheduler_invalid();
 }
 static int emela_should_unwind(emela_fiber *fiber) {
+#ifdef EMELA_FAILURE_RUNTIME
+  if (fiber->forced) return 1;
+#endif
   return (fiber->cancelled
 #ifdef EMELA_FAILURE_RUNTIME
     || fiber->failure_stop != NULL
@@ -24,6 +27,10 @@ typedef struct {
   uint32_t next;
   uint32_t keep;
   int running;
+#ifdef EMELA_FAILURE_RUNTIME
+  unsigned holds;
+  int forced;
+#endif
 } emela_protection;
 static inline void emela_interrupt_hold(emela_fiber *fiber) {
   if (fiber->holds == UINT32_MAX) emela_scheduler_exhausted();
@@ -42,6 +49,11 @@ static inline void emela_protection_leave(emela_fiber *fiber, emela_protection *
   guard->running = 1;
   guard->next = next;
   guard->keep = keep;
+#ifdef EMELA_FAILURE_RUNTIME
+  guard->holds = fiber->holds;
+  guard->forced = fiber->forced;
+  fiber->forced = 0;
+#endif
   emela_interrupt_hold(fiber);
   *pc = guard->cleanup;
 }
@@ -50,6 +62,9 @@ static inline int emela_protection_finish(emela_fiber *fiber, emela_protection *
   if (*depth == 0 || !guards[*depth - 1].running) emela_scheduler_invalid();
   emela_protection guard = guards[--*depth];
   emela_interrupt_unhold(fiber);
+#ifdef EMELA_FAILURE_RUNTIME
+  fiber->forced |= guard.forced;
+#endif
   if (emela_should_unwind(fiber)) return 0;
   emela_protection_leave(fiber, guards, *depth, guard.keep, guard.next, pc);
   return 1;
@@ -74,8 +89,9 @@ static int emela_unwind_context(emela_fiber *fiber) {
   fiber->state = EMELA_FIBER_RUNNING;
   while (fiber->top != NULL) {
 #ifdef EMELA_FAILURE_RUNTIME
-    if (fiber->top == fiber->failure_stop) {
+    if (!fiber->cancelled && fiber->top == fiber->failure_stop) {
       fiber->failure_stop = NULL;
+      fiber->forced = 0;
       emela_ready_push(fiber);
       return 1;
     }
@@ -171,3 +187,14 @@ static void emela_resume_drive(emela_fiber *target) {
   }
   emela_current_fiber = saved;
 }
+
+#ifdef EMELA_FAILURE_RUNTIME
+static inline void emela_force_interrupt(emela_fiber *fiber) {
+  for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
+    emela_fiber *context = &emela_fibers[slot];
+    if (context->state != EMELA_FIBER_FREE && emela_same_fiber(context->root, fiber->root)) {
+      context->cancelled = context->forced = 1;
+    }
+  }
+}
+#endif

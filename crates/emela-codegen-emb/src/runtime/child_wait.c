@@ -63,6 +63,17 @@ static void emela_child_wait_step(emela_fiber *fiber, emela_frame *base) {
   if (child->status == 0 || waiter->linked) emela_scheduler_invalid();
   if (waiter->verb == EMELA_WAIT_JOIN && child->status == 2)
     emela_board_defect(EMELA_DEFECT_PANIC, "fiber was interrupted", UINT16_C(21));
+#ifdef EMELA_FAILURE_RUNTIME
+  if (waiter->verb == EMELA_WAIT_JOIN && child->status == 3) {
+    /* The scope's original failure remains the boundary result. */
+    for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
+      emela_fiber *context = &emela_fibers[slot];
+      if (context->state != EMELA_FIBER_FREE && emela_same_fiber(context->root, fiber->root))
+        context->forced = 1;
+    }
+    return;
+  }
+#endif
   /* Even a discarded result must observe termination and interruption. */
   if (waiter->deliver != NULL && waiter->result != NULL) waiter->deliver(child, waiter->result);
   emela_frame_return(fiber);
