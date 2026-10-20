@@ -33,6 +33,7 @@ volatile float emela_runtime_fp_main;
 volatile float emela_runtime_fp_irq;
 static unsigned locked;
 static EmelaTask request_task, cleanup_tasks[3];
+static unsigned cleanup_pending[3];
 static unsigned requests, expected_request, cleanup_calls, cleanup_order;
 static unsigned produced, released, success_produced, success_released;
 typedef struct { char message[3]; void *parts; } Context;
@@ -93,7 +94,8 @@ void board_request_start(EmelaTask task, int32_t n) {
   }
 }
 void board_wait_start(EmelaTask task, int32_t n) {
-  main_callback(); CHECK(n >= 1 && n <= 3); cleanup_tasks[n - 1] = task; cleanup_calls++;
+  main_callback(); CHECK(n >= 1 && n <= 3 && !cleanup_pending[n - 1]);
+  cleanup_tasks[n - 1] = task; cleanup_pending[n - 1] = 1; cleanup_calls++;
 }
 void runtime_mark(int32_t n) { main_callback(); CHECK(n == (int32_t)++cleanup_order); }
 static void produce_failure(void *p, EmelaError *error) {
@@ -245,11 +247,15 @@ int main(void) {
     fiber = emela_runtime_cleanup_start(&result); drain();
     CHECK(cleanup_calls == 2 && cleanup_order == 1);
     /* Scope completion interrupts the child. The board stops its pending device explicitly. */
+    CHECK(cleanup_pending[1]); cleanup_pending[1] = 0;
     notify(cleanup_tasks[1], 0, 42, 1); drain();
     CHECK(cleanup_calls == 3 && cleanup_order == 2 && !emela_fiber_done(fiber) && result == -1);
+    CHECK(cleanup_pending[0]); cleanup_pending[0] = 0;
     emela_runtime_stopped_pending++; notify(cleanup_tasks[0], 0, 0, 0);
+    CHECK(cleanup_pending[2]); cleanup_pending[2] = 0;
     notify(cleanup_tasks[2], 0, 3, 1); drain();
     CHECK(emela_fiber_done(fiber) && result == 42 && cleanup_order == 4);
+    CHECK(!cleanup_pending[0] && !cleanup_pending[1] && !cleanup_pending[2]);
     old = cleanup_tasks[2]; emela_fiber_release(fiber); check_empty();
     emela_runtime_cancelled_cleanups++; emela_runtime_cleanup_iterations = i + 1;
   }
