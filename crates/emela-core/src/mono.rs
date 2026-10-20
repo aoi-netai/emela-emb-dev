@@ -874,6 +874,11 @@ impl<'a> Mono<'a> {
                 suspends,
             } => {
                 let new_ty = self.ty(*ty);
+                let specializes_suspension = matches!(self.m.ty(*ty), Type::Fn(f)
+                    if f.sets.is_some_and(|sets| self.m.types.has_param(sets.effects)));
+                let specialized_suspends = *suspends
+                    || (specializes_suspension
+                        && matches!(self.out.ty(new_ty), Type::Fn(f) if f.suspends));
                 // A lambda whose R turned out not to need the evidence table drops its parameter.
                 let drops_ev = matches!(
                     (self.m.ty(*ty), self.out.ty(new_ty)),
@@ -898,7 +903,7 @@ impl<'a> Mono<'a> {
                     params: ps,
                     ty: new_ty,
                     body: Box::new(body),
-                    suspends: *suspends,
+                    suspends: specialized_suspends,
                 }
             }
             Expr::Concat(parts) => Expr::Concat(
@@ -1069,10 +1074,16 @@ impl<'a> Mono<'a> {
                 let old_ty = self.typer.type_of(c);
                 let old_ty = self.import(old_ty);
                 let new_ty = self.ty(old_ty);
-                let (old_ev, new) = match (self.out.ty(old_ty), self.out.ty(new_ty)) {
-                    (Type::Fn(a), Type::Fn(b)) => (a.ev, Some(b.clone())),
-                    _ => (false, None),
-                };
+                let (old_ev, specializes_suspension, new) =
+                    match (self.out.ty(old_ty), self.out.ty(new_ty)) {
+                        (Type::Fn(a), Type::Fn(b)) => (
+                            a.ev,
+                            a.sets
+                                .is_some_and(|sets| self.out.types.has_param(sets.effects)),
+                            Some(b.clone()),
+                        ),
+                        _ => (false, false, None),
+                    };
                 let callee = Callee::Indirect(Box::new(self.expr(c)));
                 let (new_args, fails, suspends) = match new {
                     Some(b) => {
@@ -1089,7 +1100,7 @@ impl<'a> Mono<'a> {
                         (
                             self.values(args, &slots),
                             fails && b.fails,
-                            suspends && b.suspends,
+                            (suspends || specializes_suspension) && b.suspends,
                         )
                     }
                     None => (self.exprs(args), fails, suspends),

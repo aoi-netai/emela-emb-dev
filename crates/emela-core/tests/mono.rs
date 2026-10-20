@@ -378,3 +378,58 @@ fn measure() {
         );
     }
 }
+
+#[test]
+fn const_function_values_specialize_callback_effects_without_changing_immediate_calls() {
+    let m = lower_files(&[(
+        "main.emel",
+        r#"
+import Std.Fiber.{Fiber}
+const APPLY = fn(callback) { callback() }
+pub fn pure() -> Int { APPLY(fn() { 42 }) }
+error Boom
+pub fn failing(bad: Bool) -> Int fails Boom {
+  APPLY(fn() { if bad { fail Boom } else { 42 } })
+}
+effect Read { fn get() -> Int }
+handler Answer implements Read { fn get() { 42 } }
+pub fn evidence() -> Int { with Answer { APPLY(fn() { (use Read).get() }) } }
+pub fn asynchronous() -> Int use Async {
+  Fiber.scope(fn() {
+    child = Fiber.fork(fn() { 42 })
+    APPLY(fn() { Fiber.join(child) })
+  })
+}
+"#,
+    )]);
+    let out = mono(&m);
+    let marks: Vec<_> = out
+        .functions
+        .iter()
+        .filter_map(|(_, f)| {
+            if !f.constant || !f.name.starts_with("APPLY[") {
+                return None;
+            }
+            let Type::Fn(ft) = out.ty(f.ret) else {
+                panic!("const value remains a function")
+            };
+            Some((ft.fails, ft.ev, ft.suspends))
+        })
+        .collect();
+    assert!(
+        marks.contains(&(false, false, false)),
+        "pure specialization remains synchronous"
+    );
+    assert!(
+        marks.contains(&(true, false, false)),
+        "failure specialization keeps its failure ABI"
+    );
+    assert!(
+        marks.contains(&(false, true, false)),
+        "immediate evidence specialization stays synchronous"
+    );
+    assert!(
+        marks.contains(&(false, false, true)),
+        "Async specialization marks calls and lambda as suspending"
+    );
+}
