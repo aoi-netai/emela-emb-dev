@@ -32,7 +32,7 @@ static void emela_deferred_wake_waiters(emela_deferred_slot *slot) {
     waiter->previous = waiter->next = NULL;
     waiter->linked = 0;
     emela_fiber *fiber = emela_fiber_get(waiter->owner);
-    if (!fiber->cancelled) {
+    if (!fiber->cancelled || emela_interrupt_masked(fiber)) {
       if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
       emela_ready_push(fiber);
     }

@@ -8353,6 +8353,7 @@ struct TypeLayouts<'a> {
     deferred_await_types: Vec<TypeId>,
     child_join_types: Vec<TypeId>,
     child_await_types: Vec<TypeId>,
+    child_interrupts: bool,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8441,6 +8442,7 @@ impl<'a> TypeLayouts<'a> {
             deferred_await_types: Vec::new(),
             child_join_types: Vec::new(),
             child_await_types: Vec::new(),
+            child_interrupts: false,
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8479,6 +8481,17 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Interrupt,
+                        args,
+                        ..
+                    } => {
+                        let [handle] = args.as_slice() else {
+                            return Err(invalid_flow_ir(&function.name, "Interrupt arity"));
+                        };
+                        child::value_type(&layouts, function, handle)?;
+                        layouts.child_interrupts = true;
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Await { exit },
                         args,

@@ -63,6 +63,7 @@ pub(super) fn validate(
                             | emela_core::FiberOp::Poll
                             | emela_core::FiberOp::Join
                             | emela_core::FiberOp::Await { .. }
+                            | emela_core::FiberOp::Interrupt
                             | emela_core::FiberOp::DeferredAwait,
                         on_fail: None,
                         ..
@@ -654,7 +655,7 @@ pub(super) fn emit_function(
     }
     writer.begin_block("for (;;)");
     if layouts.has_unwind {
-        writer.line("if (fiber->cancelled && fiber->holds == 0) return;");
+        writer.line("if (fiber->cancelled && !emela_interrupt_masked(fiber)) return;");
     }
     writer.begin_block("switch (frame->base.pc)");
     let mut next_temp = 0;
@@ -682,7 +683,10 @@ pub(super) fn emit_function(
                     dst,
                     value:
                         Value::Fiber {
-                            op: op @ (emela_core::FiberOp::Join | emela_core::FiberOp::Await { .. }),
+                            op:
+                                op @ (emela_core::FiberOp::Join
+                                | emela_core::FiberOp::Await { .. }
+                                | emela_core::FiberOp::Interrupt),
                             args,
                             on_fail: None,
                         },

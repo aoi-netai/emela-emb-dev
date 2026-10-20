@@ -1,6 +1,7 @@
 use super::*;
 
 mod await_;
+mod interrupt;
 mod join;
 mod protect;
 

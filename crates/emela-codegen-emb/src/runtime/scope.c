@@ -54,7 +54,7 @@ static void emela_child_after_step(emela_fiber *fiber) {
   emela_heap_release(child);
   if (scope->closed && scope->running == 0) {
     emela_fiber *closer = emela_resume_live(scope->closer);
-    if (closer != NULL && !closer->cancelled && closer->state == EMELA_FIBER_WAITING)
+    if (closer != NULL && (!closer->cancelled || emela_interrupt_masked(closer)) && closer->state == EMELA_FIBER_WAITING)
       emela_ready_push(closer);
     if (scope->closer.slot == EMELA_SLOT_NONE) emela_scope_finish(scope);
   }

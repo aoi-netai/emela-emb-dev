@@ -12,7 +12,7 @@ static int emela_resume_unavailable(emela_resume *resume) {
   emela_fiber *root = emela_resume_live(resume->root);
   emela_fiber *caller = emela_resume_live(resume->caller);
   return root == NULL || root->state == EMELA_FIBER_DONE || caller == NULL || caller->finishing ||
-    ((root->cancelled || root->finishing || caller->cancelled) && caller->holds == 0);
+    ((root->cancelled || root->finishing || caller->cancelled) && !emela_interrupt_masked(caller));
 }
 static void emela_resume_wake(emela_resume *resume) {
   if (emela_resume_unavailable(resume)) return;
@@ -34,7 +34,6 @@ static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *resu
   EmelaFiber handle = emela_fiber_create();
   emela_fiber *implementation = emela_fiber_get(handle);
   implementation->root = caller->root;
-  implementation->holds = caller->holds;
   implementation->cancelled = caller->cancelled;
   emela_resume *resume = (emela_resume *)emela_heap_allocate(sizeof(emela_resume), EMELA_RESUME_KIND);
   *resume = (emela_resume){

@@ -1,4 +1,5 @@
 /* Join and Await share a FIFO. Each waiter uses one slot of the existing frame pool. */
+enum { EMELA_WAIT_JOIN, EMELA_WAIT_AWAIT, EMELA_WAIT_INTERRUPT };
 struct emela_child_waiter {
   emela_frame base;
   emela_child *child;
@@ -8,16 +9,18 @@ struct emela_child_waiter {
   void *result;
   void (*deliver)(emela_child *, void *);
   int linked;
-  int awaiting;
+  int verb;
 };
 _Static_assert(sizeof(emela_child_waiter) <= EMELA_FRAME_BYTES, "increase frame_bytes for Fiber.join/await");
-static void emela_child_check(emela_child *child, int awaiting) {
+static void emela_child_check(emela_child *child, int verb) {
   if (child == NULL) emela_scheduler_invalid();
   if (child->scope->ended) {
-    if (awaiting)
+    if (verb == EMELA_WAIT_AWAIT)
       emela_board_defect(EMELA_DEFECT_PANIC, "fiber was awaited after its scope ended", UINT16_C(38));
-    else
+    else if (verb == EMELA_WAIT_JOIN)
       emela_board_defect(EMELA_DEFECT_PANIC, "fiber was joined after its scope ended", UINT16_C(37));
+    else
+      emela_board_defect(EMELA_DEFECT_PANIC, "fiber was interrupted after its scope ended", UINT16_C(42));
   }
 }
 static void emela_child_publish(emela_child *child) {
@@ -29,7 +32,7 @@ static void emela_child_publish(emela_child *child) {
     waiter->previous = waiter->next = NULL;
     waiter->linked = 0;
     emela_fiber *fiber = emela_fiber_get(waiter->owner);
-    if (!fiber->cancelled) {
+    if (!fiber->cancelled || emela_interrupt_masked(fiber)) {
       if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
       emela_ready_push(fiber);
     }
@@ -49,17 +52,17 @@ static void emela_child_wait_drop(emela_frame *base) {
 static void emela_child_wait_step(emela_fiber *fiber, emela_frame *base) {
   emela_child_waiter *waiter = (emela_child_waiter *)base;
   emela_child *child = waiter->child;
-  emela_child_check(child, waiter->awaiting);
+  emela_child_check(child, waiter->verb);
   if (child->status == 0 || waiter->linked) emela_scheduler_invalid();
-  if (!waiter->awaiting && child->status == 2)
+  if (waiter->verb == EMELA_WAIT_JOIN && child->status == 2)
     emela_board_defect(EMELA_DEFECT_PANIC, "fiber was interrupted", UINT16_C(21));
   /* Even a discarded result must observe termination and interruption. */
   if (waiter->deliver != NULL && waiter->result != NULL) waiter->deliver(child, waiter->result);
   emela_frame_return(fiber);
 }
-static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int awaiting,
+static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int verb,
                                    void *result, void (*deliver)(emela_child *, void *)) {
-  emela_child_check(child, awaiting);
+  emela_child_check(child, verb);
   emela_child_waiter *waiter = (emela_child_waiter *)emela_frame_push(fiber, sizeof(*waiter), emela_child_wait_step);
   waiter->base.drop = emela_child_wait_drop;
   waiter->child = child;
@@ -68,7 +71,7 @@ static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int 
   waiter->deliver = deliver;
   waiter->previous = waiter->next = NULL;
   waiter->linked = 0;
-  waiter->awaiting = awaiting;
+  waiter->verb = verb;
   emela_heap_retain(child);
   if (child->status == 0) {
     waiter->previous = child->tail;
@@ -79,4 +82,16 @@ static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int 
     fiber->state = EMELA_FIBER_WAITING;
     emela_resume_boundary(fiber);
   }
+}
+static inline void emela_child_interrupt(emela_fiber *fiber, emela_child *child) {
+  emela_child_check(child, EMELA_WAIT_INTERRUPT);
+  if (child->status != 0) return;
+  for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
+    emela_fiber *context = &emela_fibers[slot];
+    if (context->state != EMELA_FIBER_FREE && emela_same_fiber(context->root, child->execution))
+      context->cancelled = 1;
+  }
+  /* Self interruption is delivered after the current mask, without waiting on itself. */
+  if (emela_same_fiber(fiber->root, child->execution)) return;
+  emela_child_wait(fiber, child, EMELA_WAIT_INTERRUPT, NULL, NULL);
 }

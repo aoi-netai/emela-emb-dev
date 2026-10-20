@@ -1,4 +1,17 @@
 /* A context is reclaimed only after its operation contexts and cleanup frames have ended. */
+static int emela_interrupt_masked(emela_fiber *fiber) {
+  for (uint32_t depth = 0; depth < EMELA_FIBER_CAPACITY; depth++) {
+    if (fiber->holds != 0) return 1;
+#ifdef EMELA_RESUME_RUNTIME
+    if (fiber->perform == NULL) return 0;
+    fiber = emela_resume_live(fiber->perform->caller);
+    if (fiber == NULL) emela_scheduler_invalid();
+#else
+    return 0;
+#endif
+  }
+  emela_scheduler_invalid();
+}
 typedef struct {
   uint32_t cleanup;
   uint32_t next;
@@ -30,7 +43,7 @@ static inline int emela_protection_finish(emela_fiber *fiber, emela_protection *
   if (*depth == 0 || !guards[*depth - 1].running) emela_scheduler_invalid();
   emela_protection guard = guards[--*depth];
   emela_interrupt_unhold(fiber);
-  if (fiber->cancelled && fiber->holds == 0) return 0;
+  if (fiber->cancelled && !emela_interrupt_masked(fiber)) return 0;
   emela_protection_leave(fiber, guards, *depth, guard.keep, guard.next, pc);
   return 1;
 }
@@ -85,7 +98,7 @@ static void emela_unwind_sweep(void) {
       if (fiber->active != 0) continue;
       EmelaFiber owner = {slot, fiber->generation};
       if (emela_unwind_has_operations(owner)) continue;
-      if (fiber->cancelled && fiber->holds == 0 && !fiber->finishing)
+      if (fiber->cancelled && !emela_interrupt_masked(fiber) && !fiber->finishing)
         progress |= emela_unwind_context(fiber);
       if (!fiber->finishing) continue;
       fiber->state = EMELA_FIBER_DONE;
@@ -100,7 +113,7 @@ static void emela_resume_drive(emela_fiber *target) {
   emela_fiber *saved = emela_current_fiber, *work = target;
   target->state = EMELA_FIBER_RUNNING;
   for (;;) {
-    if (work->cancelled && work->holds == 0) { emela_unwind_sweep(); break; }
+    if (work->cancelled && !emela_interrupt_masked(work)) { emela_unwind_sweep(); break; }
     work->active++;
     emela_current_fiber = work;
 #ifdef EMELA_RESUME_RUNTIME

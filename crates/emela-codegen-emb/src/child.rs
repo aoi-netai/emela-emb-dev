@@ -4,7 +4,9 @@ use super::*;
 
 impl TypeLayouts<'_> {
     pub(super) fn has_child_waits(&self) -> bool {
-        !self.child_join_types.is_empty() || !self.child_await_types.is_empty()
+        !self.child_join_types.is_empty()
+            || !self.child_await_types.is_empty()
+            || self.child_interrupts
     }
 }
 
@@ -101,6 +103,11 @@ pub(super) fn emit_wait(
         return Err(invalid_flow_ir(&function.name, "Join arity"));
     };
     let ty = value_type(layouts, function, handle)?;
+    if op == emela_core::FiberOp::Interrupt {
+        let handle = operand_expression(handle).map_err(|why| unsupported(&function.name, why))?;
+        writer.line(&format!("emela_child_interrupt(fiber, {handle});"));
+        return Ok(());
+    }
     let result = dst
         .map(|v| format!("&{}", variable_name(v)))
         .unwrap_or_else(|| "NULL".into());

@@ -17,6 +17,7 @@ static void emela_task_abandon(EmelaFiber owner);
 #ifdef EMELA_UNWIND_RUNTIME
 static void emela_resume_drive(emela_fiber *fiber);
 static void emela_unwind_sweep(void);
+static int emela_interrupt_masked(emela_fiber *fiber);
 #endif
 typedef void (*emela_step)(emela_fiber *, emela_frame *);
 struct emela_frame {
