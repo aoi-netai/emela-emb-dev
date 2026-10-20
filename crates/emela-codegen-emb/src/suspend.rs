@@ -51,7 +51,8 @@ pub(super) fn validate(
                     } => {}
                     Value::Fiber {
                         op:
-                            emela_core::FiberOp::CauseKind { .. }
+                            emela_core::FiberOp::CauseToString
+                            | emela_core::FiberOp::CauseKind { .. }
                             | emela_core::FiberOp::Attempt { .. }
                             | emela_core::FiberOp::Complete
                             | emela_core::FiberOp::Poll
@@ -1461,8 +1462,13 @@ pub(super) fn emit_fiber_value(
     dst: Option<VarId>,
     op: emela_core::FiberOp,
     args: &[Operand],
+    names: &HashMap<FnId, String>,
+    strings: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if op == emela_core::FiberOp::CauseToString {
+        return cause::emit_to_string(layouts, function, dst, args, names, strings, writer);
+    }
     if matches!(op, emela_core::FiberOp::CauseKind { .. }) {
         return cause::emit_kind(function, dst, args, writer);
     }

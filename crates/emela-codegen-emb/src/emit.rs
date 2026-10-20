@@ -1266,6 +1266,13 @@ impl StringBufferPlan {
                     buffer_producers.insert(*dst);
                     producer_positions.insert(*dst, statement_id);
                 }
+                Value::Fiber {
+                    op: emela_core::FiberOp::CauseToString,
+                    ..
+                } => {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
                 Value::Call {
                     callee: Callee::Direct(id),
                     ..
@@ -2536,25 +2543,57 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     }
 
     let mut reachable = HashSet::new();
-    while let Some(id) = pending.pop() {
-        if !reachable.insert(id) {
-            continue;
-        }
-        let function = &flow.functions[id];
-        if function.constant {
-            continue;
-        }
-        for (_, statement) in function.stmts.iter() {
-            if let Stmt::Let { value, .. } = statement {
-                match value {
-                    Value::Call {
-                        callee: Callee::Direct(callee),
-                        ..
+    loop {
+        while let Some(id) = pending.pop() {
+            if !reachable.insert(id) {
+                continue;
+            }
+            let function = &flow.functions[id];
+            if function.constant {
+                continue;
+            }
+            for (_, statement) in function.stmts.iter() {
+                if let Stmt::Let { value, .. } = statement {
+                    match value {
+                        Value::Call {
+                            callee: Callee::Direct(callee),
+                            ..
+                        }
+                        | Value::FnRef(callee) => pending.push(*callee),
+                        _ => {}
                     }
-                    | Value::FnRef(callee) => pending.push(*callee),
-                    _ => {}
                 }
             }
+        }
+        let shows_causes = reachable.iter().any(|id| {
+            flow.functions[*id].stmts.iter().any(|(_, stmt)| {
+                matches!(
+                    stmt,
+                    Stmt::Let {
+                        value: Value::Fiber {
+                            op: emela_core::FiberOp::CauseToString,
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+        });
+        if shows_causes {
+            for &(error, show) in &flow.error_shows {
+                if !reachable.contains(&show)
+                    && reachable.iter().any(|id| {
+                        flow.functions[*id].vars.iter().any(
+                        |(_, v)| matches!(flow.core.types[v.ty], Type::Enum(e, _) if e == error),
+                    )
+                    })
+                {
+                    pending.push(show);
+                }
+            }
+        }
+        if pending.is_empty() {
+            break;
         }
     }
     reachable
@@ -5277,7 +5316,16 @@ fn emit_statement_inner(
                     args,
                     on_fail: None,
                 } => {
-                    suspend::emit_fiber_value(layouts, function, *dst, *op, args, writer)?;
+                    suspend::emit_fiber_value(
+                        layouts,
+                        function,
+                        *dst,
+                        *op,
+                        args,
+                        names,
+                        string_buffers,
+                        writer,
+                    )?;
                 }
                 Value::Handler { name, effect, ops } => {
                     emit_handler_value(layouts, function, *dst, *effect, name, ops, writer)?;
@@ -7721,6 +7769,10 @@ fn functions_with_string_output(
                         op: RuntimeOp::ShowString,
                         args,
                     } => args.len() == 1 && !matches!(args[0], Operand::Const(Const::String(_))),
+                    Value::Fiber {
+                        op: emela_core::FiberOp::CauseToString,
+                        ..
+                    } => true,
                     Value::Call {
                         callee: Callee::Direct(callee),
                         ..
@@ -8370,6 +8422,7 @@ struct TypeLayouts<'a> {
     any_box_types: Vec<TypeId>,
     any_box_ids: HashMap<TypeId, usize>,
     error_types: Vec<(EnumId, TypeId)>,
+    error_shows: Vec<(EnumId, FnId)>,
     has_error_abi: bool,
 }
 
@@ -8479,6 +8532,7 @@ impl<'a> TypeLayouts<'a> {
             any_box_types: Vec::new(),
             any_box_ids: HashMap::new(),
             error_types: Vec::new(),
+            error_shows: flow.error_shows.clone(),
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
                     && (function.fails
