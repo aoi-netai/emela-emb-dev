@@ -199,3 +199,7 @@ fn discarded_tuple_projections_accept_represented_and_unit_fields() {
 fn discarded_list_emptiness_is_heapless() {
     run_discarded("list_empty", 0);
 }
+#[test]
+fn discarded_list_heads_accept_represented_and_unit_elements() {
+    run_discarded("list_head", 2048);
+}

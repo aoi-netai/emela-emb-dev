@@ -5959,7 +5959,7 @@ fn emit_list_head(
         ));
     };
     let has_repr = layouts.type_repr(element_ty) != Repr::Void;
-    if has_repr != dst.is_some() {
+    if dst.is_some() && !has_repr {
         return Err(invalid_flow_ir(
             &function.name,
             "ListHead destination does not match its element representation",
