@@ -100,6 +100,20 @@ class ResourceTests(unittest.TestCase):
         frames[0]["bytes"] = 16385
         self.assertFalse(validate(sections, symbols, frames)["ok"])
 
+    def test_observed_use_includes_recorded_msp_and_unpainted_caller_frame(self):
+        for used in [0, 7, 255]:
+            sections, symbols, frames, observed = fixture()
+            observed["used"] = used
+            self.assertFalse(validate(sections, symbols, frames, observed=observed)["ok"])
+        sections, symbols, frames, observed = fixture()
+        observed["min_sp"] = observed["initial_sp"]
+        observed["used"] = 7
+        self.assertFalse(validate(sections, symbols, frames, observed=observed)["ok"])
+        observed["used"] = 8
+        self.assertTrue(validate(sections, symbols, frames, observed=observed)["ok"])
+        observed["used"] = 512
+        self.assertTrue(validate(sections, symbols, frames, observed=observed)["ok"])
+
     def test_objdump_and_nm_parsers_accept_real_layout_forms(self):
         sections = sections_from_objdump("""  0 .text 00000200 08000000 08000000 00001000 2**2
                   CONTENTS, ALLOC, LOAD, READONLY, CODE

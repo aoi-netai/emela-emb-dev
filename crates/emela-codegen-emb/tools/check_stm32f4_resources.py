@@ -198,6 +198,9 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
                 errors.append("observed MSP address is outside reserved stack")
             if values["painted"] != values["initial_sp"] - bottom:
                 errors.append("painted stack extent disagrees with initial MSP")
+            minimum_used = max(top - values["min_sp"], capacity - values["painted"])
+            if values["used"] < minimum_used:
+                errors.append("observed stack use omits recorded MSP or unpainted caller frame")
     return {
         "target": "STM32F446", "ok": not errors, "errors": errors,
         "flash": {"physical_bytes": FLASH_SIZE, "budget_bytes": flash_budget, "allocated_union_bytes": union_size(flash), "loaded_union_bytes": union_size(loaded_flash), "image_span_bytes": flash_span},
