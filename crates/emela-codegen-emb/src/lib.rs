@@ -28,6 +28,7 @@ pub struct Options {
     frame_bytes: u16,
     task_capacity: u16,
     event_capacity: u16,
+    deferred_capacity: u16,
     task_adapters: Vec<(String, String)>,
     isr_entries: Vec<String>,
     isr_safe_externals: Vec<String>,
@@ -43,6 +44,7 @@ impl Default for Options {
             frame_bytes: 256,
             task_capacity: 8,
             event_capacity: 8,
+            deferred_capacity: 8,
             task_adapters: Vec::new(),
             isr_entries: Vec::new(),
             isr_safe_externals: Vec::new(),
@@ -107,6 +109,13 @@ impl Options {
     /// Sets the maximum number of queued completion events (default 8).
     pub fn with_event_capacity(mut self, count: u16) -> Self {
         self.event_capacity = count;
+        self
+    }
+
+    /// Sets the maximum number of live Deferred values (default 8).
+    /// Storage is emitted only when a reachable program can use Deferred.
+    pub fn with_deferred_capacity(mut self, count: u16) -> Self {
+        self.deferred_capacity = count;
         self
     }
 

@@ -40,12 +40,19 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     crate::fiber::erase_inert_failures(&mut lowered_flow, &mut closures);
     let closure_functions: HashSet<_> = closures.functions.keys().copied().collect();
     crate::function_coerce::lower(&mut lowered_flow, &closure_functions);
+    let deferred_pool = crate::fiber::needs_deferred_pool(&lowered_flow, &closures);
+    if deferred_pool && options.deferred_capacity == 0 {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidOptions,
+            message: "deferred_capacity must be positive for Deferred operations".into(),
+        }]);
+    }
     crate::static_handler::lower(&mut lowered_flow);
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
-    let layouts = TypeLayouts::new(flow, &emitted_functions, &closures)?;
+    let layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
     for (_, function) in flow
         .functions
         .iter()
@@ -424,10 +431,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             has_tasks,
             layouts.has_resumes,
             layouts.has_scopes,
+            layouts.deferred_pool,
         );
     }
     if layouts.has_scopes {
         source.line(include_str!("runtime/scope_types.c"));
+    }
+    if layouts.deferred_pool {
+        source.line(include_str!("runtime/deferred_types.c"));
     }
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
@@ -436,6 +447,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         crate::heap::emit_runtime(&mut source, options.heap_bytes());
         emit_closure_string_copy_helper(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
+        if layouts.deferred_pool {
+            source.line(&format!(
+                "#define EMELA_DEFERRED_KIND UINT32_C({})",
+                layouts.deferred_kind()
+            ));
+            source.line(include_str!("runtime/deferred.c"));
+        }
         layouts.emit_heap_destroy_switch(&closures.environments, &mut source);
         layouts.emit_public_release_helpers(&mut source);
         layouts.emit_public_function_ownership_helpers(&mut source);
@@ -8238,6 +8256,7 @@ struct TypeLayouts<'a> {
     resume_types: Vec<TypeId>,
     has_resumes: bool,
     has_scopes: bool,
+    deferred_pool: bool,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8263,6 +8282,7 @@ impl<'a> TypeLayouts<'a> {
         flow: &'a emela_lir::Module,
         emitted: &HashSet<FnId>,
         closures: &crate::static_closure::ClosureLowering,
+        deferred_pool: bool,
     ) -> Result<Self, Vec<Error>> {
         let mut layouts = TypeLayouts {
             core: &flow.core,
@@ -8306,6 +8326,7 @@ impl<'a> TypeLayouts<'a> {
             has_resumes: suspend::has_operations(flow, emitted)
                 || crate::fiber::has_scopes(flow, emitted),
             has_scopes: crate::fiber::has_scopes(flow, emitted),
+            deferred_pool,
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -9239,6 +9260,13 @@ impl<'a> TypeLayouts<'a> {
             writer.line("if (child->result.tag == 0) emela_heap_enqueue(child->result.payload.any_box, pending, tail);");
             writer.line("break; }");
             writer.line(&format!("case UINT32_C({}): {{", self.deferred_kind()));
+            if self.deferred_pool {
+                writer.line("emela_deferred *deferred = (emela_deferred *)value;");
+                writer.begin_block("if (deferred->slot != EMELA_SLOT_NONE)");
+                writer.line("EmelaAny stored = emela_deferred_recycle(deferred);");
+                writer.line("if (stored.tag == 0) emela_heap_enqueue(stored.payload.any_box, pending, tail);");
+                writer.end_block();
+            }
             writer.line("emela_heap_enqueue(((emela_deferred *)value)->scope, pending, tail);");
             writer.line("break; }");
         }

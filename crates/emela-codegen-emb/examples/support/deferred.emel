@@ -1,0 +1,9 @@
+import Std.Fiber.{Fiber, Scope}
+import Std.Deferred.{Deferred}
+
+pub fn work() -> () use Async {
+  Fiber.scope(fn() {
+    d: Deferred[Int] = (use Scope).deferred()
+    ()
+  })
+}

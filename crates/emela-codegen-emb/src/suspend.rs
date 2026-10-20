@@ -171,7 +171,14 @@ pub(super) fn emit_runtime(
     tasks: bool,
     resumes: bool,
     scopes: bool,
+    deferred: bool,
 ) {
+    if deferred {
+        writer.line(&format!(
+            "#define EMELA_DEFERRED_CAPACITY {}",
+            options.deferred_capacity
+        ));
+    }
     if scopes {
         writer.line("#define EMELA_SCOPE_RUNTIME 1");
     }

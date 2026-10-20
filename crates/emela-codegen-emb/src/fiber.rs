@@ -15,13 +15,105 @@ pub(crate) fn has_scopes(module: &Module, emitted: &HashSet<emela_lir::FnId>) ->
                     s,
                     Stmt::Let {
                         value: Value::Fiber {
-                            op: FiberOp::Scope { .. } | FiberOp::Fork | FiberOp::Deferred,
+                            op: FiberOp::Scope { .. }
+                                | FiberOp::Fork
+                                | FiberOp::Deferred
+                                | FiberOp::Complete
+                                | FiberOp::Poll
+                                | FiberOp::DeferredAwait,
                             ..
                         },
                         ..
                     }
                 )
             })
+    })
+}
+
+// Scope includes a constructor closure even when no deferred operation is used. Exclude only
+// those generated constructors; ordinary direct constructors and operation calls need the pool.
+pub(crate) fn needs_deferred_pool(module: &Module, closures: &ClosureLowering) -> bool {
+    let reachable = crate::emit::runtime_reachable(module);
+    let mut constructors = HashSet::new();
+    for (id, f) in module
+        .functions
+        .iter()
+        .filter(|(id, _)| reachable.contains(id))
+    {
+        let (positions, _) = crate::emit::function_positions(f);
+        for (stmt, s) in f.stmts.iter().filter(|(s, _)| positions.contains_key(s)) {
+            let _ = (id, stmt);
+            if let Stmt::Let {
+                value: Value::Handler { effect, ops, .. },
+                ..
+            } = s
+            {
+                if !module.core.effects[*effect]
+                    .name
+                    .starts_with("Std.Fiber.Scope[")
+                {
+                    continue;
+                }
+                for (index, op) in module.core.effects[*effect].ops.iter().enumerate() {
+                    if op.name != "deferred" {
+                        continue;
+                    }
+                    for (_, def) in f.stmts.iter() {
+                        if let Stmt::Let {
+                            dst: Some(dst),
+                            value: Value::FnRef(target),
+                            ..
+                        } = def
+                        {
+                            if *dst == ops[index] && closures.functions.contains_key(target) {
+                                constructors.insert(*target);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    module.functions.iter().any(|(id, f)| {
+        if !reachable.contains(&id) {
+            return false;
+        }
+        let (positions, _) = crate::emit::function_positions(f);
+        f.stmts.iter().any(|(stmt, s)| {
+            positions.contains_key(&stmt)
+                && match s {
+                    Stmt::Let {
+                        value:
+                            Value::Fiber {
+                                op: FiberOp::Deferred,
+                                ..
+                            },
+                        ..
+                    } => !constructors.contains(&id),
+                    Stmt::Let {
+                        value:
+                            Value::Fiber {
+                                op: FiberOp::Complete | FiberOp::Poll | FiberOp::DeferredAwait,
+                                ..
+                            },
+                        ..
+                    } => true,
+                    Stmt::Let {
+                        value:
+                            Value::Call {
+                                callee: emela_lir::Callee::Op { effect, op, .. },
+                                ..
+                            },
+                        ..
+                    } => {
+                        module.core.effects[*effect]
+                            .name
+                            .starts_with("Std.Fiber.Scope[")
+                            && module.core.effects[*effect].ops[*op].name == "deferred"
+                    }
+                    _ => false,
+                }
+        })
     })
 }
 

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
 
+mod deferred;
 mod fiber;
 mod suspend;
 

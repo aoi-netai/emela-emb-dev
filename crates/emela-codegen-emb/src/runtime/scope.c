@@ -2,6 +2,9 @@
 static void emela_scope_finish(emela_scope *scope) {
   if (scope->ended || !scope->closed || scope->running != 0) return;
   scope->ended = 1;
+#ifdef EMELA_DEFERRED_CAPACITY
+  emela_deferred_scope_end(scope);
+#endif
   emela_child *child = scope->children;
   scope->children = NULL;
   while (child != NULL) {
@@ -115,8 +118,9 @@ static inline emela_fiber *emela_child_begin(emela_scope *scope) {
 }
 static inline EmelaAny emela_deferred_create(emela_scope *scope) {
   emela_scope_check(scope);
-  emela_deferred *deferred = (emela_deferred *)emela_heap_allocate(sizeof(*deferred), EMELA_DEFERRED_KIND);
-  deferred->scope = scope;
-  emela_heap_retain(scope);
-  return (EmelaAny){.payload.any_box = deferred};
+#ifdef EMELA_DEFERRED_CAPACITY
+  return emela_deferred_allocate(scope);
+#else
+  emela_scheduler_invalid(); /* No reachable operation can invoke this generated constructor. */
+#endif
 }
