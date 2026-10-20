@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 
+from validation_process import prepare_output, run_captured
 from run_stm32f4 import CRATE, ROOT, NEGATIVE_MODES, RUNTIME_MODES, atomic_json
 
 FIXTURES = ["scalar", "completion"] + ["runtime-" + mode for mode in RUNTIME_MODES] + ["negative-" + mode for mode in NEGATIVE_MODES]
@@ -23,17 +24,11 @@ def execute(report, out, label, command, environment, timeout):
     env = dict(environment, TMPDIR=str(temporary))
     started = time.monotonic()
     try:
-        result = subprocess.run(command, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", timeout=timeout)
-        content, code = result.stdout, result.returncode
+        code, content, timed_out = run_captured(command,cwd=ROOT,env=env,timeout=timeout)
+        if timed_out: stage["timeout_seconds"] = timeout
     except OSError as error:
         content, code = str(error), None
         stage["error"] = str(error)
-    except subprocess.TimeoutExpired as error:
-        content = error.stdout or ""
-        if isinstance(content, bytes):
-            content = content.decode(errors="replace")
-        code = None
-        stage["timeout_seconds"] = timeout
     (out / (label + ".log")).write_text(content)
     stage.update({"status": "passed" if code == 0 else "failed", "exit_code": code, "elapsed_seconds": round(time.monotonic() - started, 3), "log": label + ".log"})
     atomic_json(out / "report.json", report)
@@ -52,7 +47,11 @@ def main():
     parser.add_argument("--timeout", type=int, default=900, help="Wall-clock limit per host/build/case stage.")
     args = parser.parse_args()
     out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        prepare_output(out)
+    except (OSError,ValueError) as error:
+        print(str(error),file=sys.stderr)
+        return 1
     (out / "tmp").mkdir(exist_ok=True)
     report = {"schema_version": 1, "target": "STM32F446", "status": "running", "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
               "scope": "full" if not args.skip_host and set(args.fixtures) == set(FIXTURES) and set(args.optimizations) == {"O0", "O2"} else "partial", "stages": [], "cases": []}

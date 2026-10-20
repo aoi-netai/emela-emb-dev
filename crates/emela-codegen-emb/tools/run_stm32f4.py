@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 
+from validation_process import prepare_output, run_captured
+
 CRATE = Path(__file__).resolve().parents[1]
 ROOT = CRATE.parents[1]
 BOARD = CRATE / "examples/renode-f446"
@@ -43,7 +45,7 @@ def check_metrics(fixture, values):
     if values["gpioa_odr"] != 0xe0:
         raise ValueError(f"unexpected GPIOA_ODR: {values['gpioa_odr']:#x}")
     stack = values["stack"]
-    if stack["guard_ok"] != 1 or stack["samples"] < 2 or not 0 < stack["used"] <= stack["painted"] <= stack["capacity"]:
+    if stack["guard_ok"] != 1 or stack["samples"] < 2 or not 0 < stack["used"] <= stack["capacity"] or not 0 < stack["painted"] <= stack["capacity"]:
         raise ValueError(f"invalid stack observation: {stack}")
     if fixture == "completion":
         got = values["fixture"]
@@ -72,6 +74,7 @@ def check_metrics(fixture, values):
 
 class Case:
     def __init__(self, out, fixture, optimization):
+        prepare_output(out)
         self.out, self.fixture, self.optimization = out, fixture, optimization
         self.monitor_directory = Path(tempfile.mkdtemp(prefix="emela-renode-path-", dir="/tmp"))
         self.monitor = self.monitor_directory / "artifacts"
@@ -104,17 +107,11 @@ class Case:
         if env:
             environment.update(env)
         try:
-            completed = subprocess.run(command, cwd=ROOT, env=environment, text=True, errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-            output, code = completed.stdout, completed.returncode
+            code, output, timed_out = run_captured(command,cwd=ROOT,env=environment,timeout=timeout)
+            if timed_out: step["timeout_seconds"] = timeout
         except OSError as error:
             output, code = str(error), None
             step["error"] = str(error)
-        except subprocess.TimeoutExpired as error:
-            output = error.stdout or ""
-            if isinstance(output, bytes):
-                output = output.decode(errors="replace")
-            code = None
-            step["timeout_seconds"] = timeout
         (self.out / (name + ".log")).write_text(output)
         step.update({"status": "passed" if code == 0 else "failed", "exit_code": code,
                      "elapsed_seconds": round(time.monotonic() - start, 3), "log": name + ".log"})
@@ -208,7 +205,11 @@ def main():
     parser.add_argument("--optimization", default=os.environ.get("EMELA_EMB_OPT_LEVEL", "O2"))
     args = parser.parse_args()
     output = args.output or Path(os.environ.get("EMELA_EMB_RENODE_OUT", "/tmp/emela-codegen-emb-renode-" + args.fixture))
-    case = Case(output.resolve(), args.fixture, args.optimization)
+    try:
+        case = Case(output.resolve(), args.fixture, args.optimization)
+    except (OSError, ValueError) as error:
+        print(str(error),file=sys.stderr)
+        return 1
     try:
         case.execute()
         case.report["status"] = "passed"
