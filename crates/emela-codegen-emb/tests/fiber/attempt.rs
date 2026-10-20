@@ -121,3 +121,38 @@ int main(void) { for(int i=0;i<1000;i++) assert(emela_export_attempt_0(42)==42);
 "#,
     );
 }
+
+#[test]
+fn attempt_keeps_the_embedded_policy_of_stopping_immediately_on_defect() {
+    let source = r#"
+import Std.Fiber.{Fiber, Success, Failure}
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+effect Resource { fn read() -> Int }
+handler Res implements Resource { fn read() { 0 }
+ release { mark(99) }
+}
+pub fn stopped() -> Int {
+ Fiber.attempt(fn() { with Res { panic("test defect") } }) match {
+  Success(_) -> 1
+  Failure(_) -> 2
+ }
+}
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    compile_and_run(
+        compile(&core, &options()).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+void mark(int32_t n) { (void)n;abort(); }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) {
+ assert(k==EMELA_DEFECT_PANIC && n==11 && memcmp(m,"test defect",11)==0);exit(0);
+}
+int main(void) { (void)emela_export_stopped_0();abort(); }
+"#,
+    );
+}

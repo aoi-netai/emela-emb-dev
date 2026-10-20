@@ -2539,6 +2539,64 @@ fn type_contains_string_with_types(
     }
 }
 
+// A literal terminal defect cannot run cleanup under this backend's immediate-stop policy.
+fn runtime_statements(function: &Function) -> HashSet<StmtId> {
+    fn visit(
+        f: &Function,
+        seq: SeqId,
+        visited: &mut HashSet<SeqId>,
+        result: &mut HashSet<StmtId>,
+        suspends: bool,
+    ) {
+        if !visited.insert(seq) {
+            return;
+        }
+        for &id in &f.seqs[seq].stmts {
+            result.insert(id);
+            match &f.stmts[id] {
+                Stmt::Let {
+                    value: Value::Closure(c),
+                    ..
+                } => visit(f, c.body, visited, result, c.suspends),
+                Stmt::If { then, else_, .. } => {
+                    visit(f, *then, visited, result, suspends);
+                    visit(f, *else_, visited, result, suspends);
+                }
+                Stmt::Switch { cases, default, .. } => {
+                    for case in cases {
+                        visit(f, case.body, visited, result, suspends);
+                    }
+                    if let Some(seq) = default {
+                        visit(f, *seq, visited, result, suspends);
+                    }
+                }
+                Stmt::Block { body, .. } | Stmt::Loop { body, .. } => {
+                    visit(f, *body, visited, result, suspends)
+                }
+                Stmt::Protect { body, cleanup, .. } => {
+                    visit(f, *body, visited, result, suspends);
+                    let body = &f.seqs[*body];
+                    if suspends || !body.stmts.is_empty() || !matches!(body.term, Term::Defect(_)) {
+                        visit(f, *cleanup, visited, result, suspends);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut result = HashSet::new();
+    if let Some(body) = function.body {
+        visit(
+            function,
+            body,
+            &mut HashSet::new(),
+            &mut result,
+            function.suspends,
+        );
+    }
+    result
+}
+
 pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     let mut pending: Vec<FnId> = flow
         .functions
@@ -2563,7 +2621,8 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
             if function.constant {
                 continue;
             }
-            for (_, statement) in function.stmts.iter() {
+            let active = runtime_statements(function);
+            for (_, statement) in function.stmts.iter().filter(|(id, _)| active.contains(id)) {
                 if let Stmt::Let { value, .. } = statement {
                     match value {
                         Value::Call {

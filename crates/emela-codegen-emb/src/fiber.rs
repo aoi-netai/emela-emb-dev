@@ -562,7 +562,7 @@ pub(crate) fn normalize_infallible_cause_raise(module: &mut Module) {
                     let body = f.seqs.alloc(emela_lir::Seq {
                         stmts: vec![block],
                         term: Term::Defect(
-                            emela_lir::Const::String("unexpected failure from empty Cause".into())
+                            emela_lir::Const::String("assertion failed: empty Cause failed".into())
                                 .into(),
                         ),
                     });
