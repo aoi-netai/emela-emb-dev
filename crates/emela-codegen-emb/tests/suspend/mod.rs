@@ -1586,3 +1586,73 @@ int main(void) {{
         );
     }
 }
+
+#[test]
+fn suspend_switch_handles_payload_and_nullary_tags() {
+    let mut core = emela_core::Module::new();
+    let payload = core.add_enum(EnumDef {
+        name: "Choice".into(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![TypeId::INT]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let color = core.add_enum(EnumDef {
+        name: "Color".into(),
+        params: 0,
+        variants: vec![VariantDef::unit("Red"), VariantDef::unit("Blue")],
+        error: false,
+        external: false,
+    });
+    let payload = core.enum_type(payload, vec![]);
+    let color = core.enum_type(color, vec![]);
+    let mut flow = Module::new(core);
+    for (name, ty) in [("choice", payload), ("color", color)] {
+        let mut b = FnBuilder::new(&flow.core, name);
+        b.set_exported().set_suspends().set_ret(TypeId::INT);
+        let input = b.param("input", ty);
+        let first = b.seq(|b| b.term(Term::Yield(Some(Const::Int(11).into()))));
+        let second = b.seq(|b| b.term(Term::Yield(Some(Const::Int(22).into()))));
+        let result = b.var("result", TypeId::INT);
+        b.switch(
+            Some(result),
+            SwitchOn::Tag(input),
+            vec![(CaseKey::Variant(0), first), (CaseKey::Variant(1), second)],
+            None,
+        );
+        b.term(Term::Return(Some(result.into())));
+        flow.add(b.finish());
+    }
+    compile_and_run(
+        compile_flow(&flow, &Options::default()).unwrap(),
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static int expected;
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{ (void)m; assert(expected && k == EMELA_DEFECT_NO_MATCH && n == 8); exit(0); }}
+int main(void) {{
+  for (int i = 0; i < 1000; i++) {{
+    int32_t a = 0, b = 0;
+    emela_type_{ty} value = {{.tag = i % 2}};
+    EmelaFiber f = emela_export_choice_0_start(value, &a), g = emela_export_color_1_start(i % 2, &b);
+    while (!emela_fiber_done(f) || !emela_fiber_done(g)) assert(emela_scheduler_run(1));
+    assert(a == (i % 2 ? 22 : 11) && a == b);
+    emela_fiber_release(f); emela_fiber_release(g);
+  }}
+  expected = 1;
+  emela_type_{ty} invalid = {{.tag = 99}};
+  EmelaFiber f = emela_export_choice_0_start(invalid, NULL);
+  while (!emela_fiber_done(f)) emela_scheduler_run(1);
+  abort();
+}}
+"#,
+            ty = payload.index()
+        ),
+    );
+}

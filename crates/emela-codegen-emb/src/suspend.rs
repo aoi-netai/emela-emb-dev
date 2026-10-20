@@ -831,26 +831,56 @@ pub(super) fn emit_function(
                 ));
             }
             Node::Switch(on, cases, default) => {
-                let SwitchOn::Lit(var) = on else {
-                    return Err(unsupported(
-                        &function.name,
-                        "aggregate switch in suspend function",
-                    ));
+                let (scrutinee, tag_switch) = match *on {
+                    SwitchOn::Lit(var) => (variable_name(var), false),
+                    SwitchOn::Tag(var) => {
+                        let ty = function.vars[var].ty;
+                        let Type::Enum(id, _) = layouts.types[ty] else {
+                            return Err(invalid_flow_ir(
+                                &function.name,
+                                "tag switch on a non-enum",
+                            ));
+                        };
+                        if layouts.enum_is_i32(id) {
+                            (variable_name(var), true)
+                        } else if layouts.enum_fields(ty).is_some() {
+                            (format!("{}.tag", variable_name(var)), true)
+                        } else {
+                            return Err(unsupported(
+                                &function.name,
+                                "suspend switch enum representation",
+                            ));
+                        }
+                    }
                 };
-                writer.begin_block(&format!("switch ({})", variable_name(*var)));
+                writer.begin_block(&format!("switch ({scrutinee})"));
                 for (key, target) in cases {
-                    let CaseKey::Lit(value) = key else {
-                        return Err(invalid_flow_ir(&function.name, "nonliteral scalar switch"));
-                    };
-                    writer.line(&format!(
-                        "case {}: frame->base.pc = {target}; break;",
-                        constant_expression(value)
+                    let label = match (key, on) {
+                        (CaseKey::Lit(value), SwitchOn::Lit(_)) => constant_expression(value)
                             .map_err(|why| unsupported(&function.name, why))?
-                            .unwrap()
-                    ));
+                            .ok_or_else(|| invalid_flow_ir(&function.name, "void switch case"))?,
+                        (CaseKey::Variant(variant), SwitchOn::Tag(var)) => {
+                            let Type::Enum(id, _) = layouts.types[function.vars[*var].ty] else {
+                                unreachable!()
+                            };
+                            if *variant >= layouts.core.enums[id].variants.len() {
+                                return Err(invalid_flow_ir(
+                                    &function.name,
+                                    "switch variant out of range",
+                                ));
+                            }
+                            int32_literal(i32::try_from(*variant).map_err(|_| {
+                                invalid_flow_ir(&function.name, "switch variant too large")
+                            })?)
+                        }
+                        _ => return Err(invalid_flow_ir(&function.name, "switch key type")),
+                    };
+                    writer.line(&format!("case {label}: frame->base.pc = {target}; break;"));
                 }
                 if let Some(target) = default {
                     writer.line(&format!("default: frame->base.pc = {target}; break;"));
+                } else if tag_switch {
+                    writer.line("default: emela_board_defect(EMELA_DEFECT_NO_MATCH, \"no match\", UINT16_C(8));");
                 } else {
                     writer.line("default: emela_scheduler_invalid();");
                 }
