@@ -8,10 +8,16 @@ import tempfile
 import unittest
 
 from validation_process import prepare_output, run_captured
-from run_stm32f4 import CRATE, check_metrics, metric
+from run_stm32f4 import CRATE, check_metrics, metric, renode_interval
 
 
 class ValidationRunnerTests(unittest.TestCase):
+    def test_simulation_seconds_are_formatted_as_a_valid_time_interval(self):
+        self.assertEqual(renode_interval("120.000000"),"0:02:00.000000")
+        self.assertEqual(renode_interval("0.500000"),"0:00:00.500000")
+        self.assertEqual(renode_interval("3601.125"),"1:00:01.125")
+        with self.assertRaises(ValueError):renode_interval("invalid")
+
     def test_metric_names_do_not_match_a_longer_metric_prefix(self):
         log="INFO EMELA_X_LONG\n0x99\nINFO EMELA_X\n0x2a\n"
         self.assertEqual(metric(log,"EMELA_X"),42)

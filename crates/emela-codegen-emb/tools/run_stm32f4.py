@@ -41,6 +41,14 @@ def metric(log, label):
     raise ValueError(f"missing value after {label}")
 
 
+def renode_interval(duration):
+    if not re.fullmatch(r"\d+\.\d+", duration):
+        raise ValueError("EMELA_EMB_RENODE_RUN_TIME must be decimal seconds")
+    whole, fraction = duration.split(".")
+    seconds = int(whole)
+    return f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}.{fraction}"
+
+
 def check_metrics(fixture, values):
     if values["gpioa_odr"] != 0xe0:
         raise ValueError(f"unexpected GPIOA_ODR: {values['gpioa_odr']:#x}")
@@ -128,7 +136,7 @@ class Case:
         elif fixture == "completion":
             example, board, duration, mips = "renode_completion", "completion_board.c", "0.500000", 100
         elif fixture.startswith("runtime-") and fixture[8:] in RUNTIME_MODES:
-            example, board, duration, mips, mode = "renode_runtime", "runtime_board.c", "10.000000", 100, fixture[8:]
+            example, board, duration, mips, mode = "renode_runtime", "runtime_board.c", "120.000000", 100, fixture[8:]
         elif fixture.startswith("negative-") and fixture[9:] in NEGATIVE_MODES:
             example, board, duration, mips, mode = "renode_negative", "negative_board.c", "0.020000", 10, fixture[9:]
         else:
@@ -178,14 +186,13 @@ class Case:
         (self.out / "stm32f4.repl").write_text(repl)
         (self.out / "machine.repl").write_text(f'using {json.dumps(str(self.monitor / "stm32f4.repl"))}\ndwt: Miscellaneous.DWT @ sysbus 0xE0001000\n    frequency: 84000000\nnvic:\n    systickFrequency: 84000000\nsyscfg: Miscellaneous.STM32_SYSCFG @ sysbus 0x40013800\nflash:\n    size: 524288\nsram:\n    size: 131072\nled: Miscellaneous.LED @ gpioPortA 5\ngpioPortA:\n    5 -> led@0\n')
         duration = os.environ.get("EMELA_EMB_RENODE_RUN_TIME", duration)
-        if not re.fullmatch(r"\d+\.\d+", duration):
-            raise ValueError("EMELA_EMB_RENODE_RUN_TIME must be decimal seconds")
-        self.report["simulation"] = {"seconds":float(duration),"mips":mips,"wall_timeout_seconds":int(os.environ.get("EMELA_EMB_RENODE_TIMEOUT","180"))}
-        script = f'mach create\nmachine LoadPlatformDescription @{self.monitor / "machine.repl"}\nsysbus LoadELF @{self.monitor / "firmware.elf"}\nsysbus.cpu VectorTableOffset 0x08000000\nsysbus.cpu PerformanceInMips {mips}\nemulation RunFor "0:00:{duration}"\nsysbus InfoLog "EMELA_GPIOA_ODR"\nsysbus ReadDoubleWord 0x40020014\n'
+        interval = renode_interval(duration)
+        self.report["simulation"] = {"seconds":float(duration),"mips":mips,"wall_timeout_seconds":int(os.environ.get("EMELA_EMB_RENODE_TIMEOUT","600"))}
+        script = f'mach create\nmachine LoadPlatformDescription @{self.monitor / "machine.repl"}\nsysbus LoadELF @{self.monitor / "firmware.elf"}\nsysbus.cpu VectorTableOffset 0x08000000\nsysbus.cpu PerformanceInMips {mips}\nemulation RunFor "{interval}"\nsysbus InfoLog "EMELA_GPIOA_ODR"\nsysbus ReadDoubleWord 0x40020014\n'
         for name, address in sorted(selected.items()):
             script += f'sysbus InfoLog "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{address:08x}\n'
         (self.out / "run.resc").write_text(script + "quit\n")
-        log = self.run("renode", [renode, "--disable-xwt", "--console", "--plain", "-e", "include @" + str(self.monitor / "run.resc")], timeout=int(os.environ.get("EMELA_EMB_RENODE_TIMEOUT", "180")), env={"XDG_CONFIG_HOME": str(self.out / "renode-config")})
+        log = self.run("renode", [renode, "--disable-xwt", "--console", "--plain", "-e", "include @" + str(self.monitor / "run.resc")], timeout=int(os.environ.get("EMELA_EMB_RENODE_TIMEOUT", "600")), env={"XDG_CONFIG_HOME": str(self.out / "renode-config")})
         if re.search(r"There was an error executing command|Unhandled Exception|\[ERROR\]", log):
             raise ValueError("Renode reported a command or runtime error")
         raw = {name: metric(log, "EMELA_METRIC_" + name) for name in selected}
