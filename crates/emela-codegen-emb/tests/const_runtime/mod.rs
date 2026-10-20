@@ -1021,7 +1021,7 @@ fn texts(xs:List[List[String]])->Int{42}
 pub fn integer()->Int{ints(ITEMS)}
 pub fn text()->Int{texts(ITEMS)}
 "#;
-    let output = emit_source(source, 128);
+    let output = emit_source(source, 96);
     let integer = export(&output, "integer");
     let text = export(&output, "text");
     compile_and_run(
