@@ -437,7 +437,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         );
     }
     if layouts.has_scopes {
-        if !layouts.child_join_types.is_empty() {
+        if layouts.has_child_waits() {
             source.line("#define EMELA_CHILD_WAIT_RUNTIME");
         }
         source.line(include_str!("runtime/scope_types.c"));
@@ -475,7 +475,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         suspend::emit_resume_runtime(&layouts, &mut source);
     }
     if layouts.has_scopes {
-        if !layouts.child_join_types.is_empty() {
+        if layouts.has_child_waits() {
             source.line(include_str!("runtime/child_wait.c"));
             child::emit_runtime(&layouts, &mut source)?;
         }
@@ -8328,6 +8328,7 @@ struct TypeLayouts<'a> {
     deferred_poll_types: Vec<TypeId>,
     deferred_await_types: Vec<TypeId>,
     child_join_types: Vec<TypeId>,
+    child_await_types: Vec<TypeId>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8412,6 +8413,7 @@ impl<'a> TypeLayouts<'a> {
             deferred_poll_types: Vec::new(),
             deferred_await_types: Vec::new(),
             child_join_types: Vec::new(),
+            child_await_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8450,6 +8452,39 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Await { exit },
+                        args,
+                        ..
+                    } => {
+                        let [handle] = args.as_slice() else {
+                            return Err(invalid_flow_ir(&function.name, "Await arity"));
+                        };
+                        let ty = child::value_type(&layouts, function, handle)?;
+                        let mut params = vec![TypeId::UNIT; layouts.core.enums[*exit].params];
+                        let Some(first) = params.first_mut() else {
+                            return Err(invalid_flow_ir(
+                                &function.name,
+                                "Await Exit type parameters",
+                            ));
+                        };
+                        *first = ty;
+                        let result = layouts.types.enum_type(*exit, params);
+                        if dst.is_some_and(|dst| {
+                            layouts.types.erase_sets(function.vars[dst].ty)
+                                != layouts.types.erase_sets(result)
+                        }) {
+                            return Err(invalid_flow_ir(&function.name, "Await result type"));
+                        }
+                        layouts.collect(result, &function.name, &mut states)?;
+                        if child::success_type(&layouts, result) != Some(ty) {
+                            return Err(invalid_flow_ir(&function.name, "Await Success payload"));
+                        }
+                        layouts.add_any_box_type(ty);
+                        if !layouts.child_await_types.contains(&result) {
+                            layouts.child_await_types.push(result);
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Join,
                         args,
@@ -8791,6 +8826,31 @@ impl<'a> TypeLayouts<'a> {
         function: &str,
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>> {
+        if let Type::Enum(id, args) = self.types[ty].clone()
+            && self.core.enums[id].name == "Std.Fiber.Exit"
+            && args
+                .iter()
+                .any(|&arg| matches!(self.types[arg], Type::Set(_)))
+        {
+            // Flow erases the error set of Await to Unit. A declared Exit[A, {}] uses the
+            // same runtime layout, including across direct function result boundaries.
+            let args = args
+                .into_iter()
+                .map(|arg| {
+                    if matches!(self.types[arg], Type::Set(_)) {
+                        TypeId::UNIT
+                    } else {
+                        arg
+                    }
+                })
+                .collect();
+            let canonical = self.types.enum_type(id, args);
+            self.collect(canonical, function, states)?;
+            let index = self.aggregate_ids[&canonical];
+            self.aggregate_ids.insert(ty, index);
+            states.insert(ty, 2);
+            return Ok(());
+        }
         if let Type::Cell(content) = self.types[ty].clone() {
             self.collect(content, function, states)?;
             return Ok(());
@@ -8902,7 +8962,11 @@ impl<'a> TypeLayouts<'a> {
 
     fn enum_layout_required(&self, id: emela_core::EnumId) -> bool {
         let def = &self.core.enums[id];
-        !def.external && !def.variants.is_empty() && !self.enum_is_i32(id)
+        // Cause's source field describes its error set; it is never a runtime closure.
+        def.name != "Std.Cause.Cause"
+            && !def.external
+            && !def.variants.is_empty()
+            && !self.enum_is_i32(id)
     }
 
     fn type_repr(&self, ty: TypeId) -> Repr {
@@ -8926,7 +8990,9 @@ impl<'a> TypeLayouts<'a> {
             Type::Tuple(_) => type_name(ty),
             Type::Fn(_) => function_type_name(ty),
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
-            Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
+            Type::Enum(id, _) if self.enum_layout_required(id) => {
+                type_name(self.aggregates[self.aggregate_ids[&ty]].ty)
+            }
             Type::Any => "EmelaAny".to_owned(),
             _ => c_type(self.type_repr(ty)).to_owned(),
         }
@@ -8939,6 +9005,10 @@ impl<'a> TypeLayouts<'a> {
     fn is_fiber_handle(&self, ty: TypeId) -> bool {
         self.is_named_external(ty, "Std.Fiber.Fiber")
             || self.is_named_external(ty, "Std.Deferred.Deferred")
+    }
+
+    fn is_cause(&self, ty: TypeId) -> bool {
+        matches!(&self.types[ty], Type::Enum(id, _) if self.core.enums[*id].name == "Std.Cause.Cause")
     }
 
     fn error_enum(&self, ty: TypeId) -> Option<EnumId> {
@@ -8985,7 +9055,7 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        if self.is_fiber_handle(ty) {
+        if self.is_fiber_handle(ty) || self.is_cause(ty) {
             return true;
         }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
@@ -9024,7 +9094,7 @@ impl<'a> TypeLayouts<'a> {
     }
 
     fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        if self.is_fiber_handle(ty) {
+        if self.is_fiber_handle(ty) || self.is_cause(ty) {
             return true;
         }
         if self.any_box_required && matches!(self.types[ty], Type::Any) {
@@ -9099,6 +9169,7 @@ impl<'a> TypeLayouts<'a> {
     fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty)
             || self.is_fiber_handle(ty)
+            || self.is_cause(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope
@@ -9132,6 +9203,7 @@ impl<'a> TypeLayouts<'a> {
     ) {
         if self.is_managed_list(ty)
             || self.is_fiber_handle(ty)
+            || self.is_cause(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope
@@ -9164,6 +9236,7 @@ impl<'a> TypeLayouts<'a> {
     fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
         if self.is_managed_list(ty)
             || self.is_fiber_handle(ty)
+            || self.is_cause(ty)
             || matches!(
                 self.types[ty],
                 Type::Handler(_) | Type::Evidence | Type::FiberScope

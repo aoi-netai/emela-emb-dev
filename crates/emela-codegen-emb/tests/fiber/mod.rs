@@ -1,5 +1,6 @@
 use super::*;
 
+mod await_;
 mod join;
 
 fn options() -> Options {

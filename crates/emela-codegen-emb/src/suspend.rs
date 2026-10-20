@@ -68,6 +68,7 @@ pub(super) fn validate(
                             emela_core::FiberOp::Complete
                             | emela_core::FiberOp::Poll
                             | emela_core::FiberOp::Join
+                            | emela_core::FiberOp::Await { .. }
                             | emela_core::FiberOp::DeferredAwait,
                         on_fail: None,
                         ..
@@ -622,7 +623,7 @@ pub(super) fn emit_function(
                     dst,
                     value:
                         Value::Fiber {
-                            op: emela_core::FiberOp::Join,
+                            op: op @ (emela_core::FiberOp::Join | emela_core::FiberOp::Await { .. }),
                             args,
                             on_fail: None,
                         },
@@ -631,7 +632,7 @@ pub(super) fn emit_function(
                 {
                     prepare_result(layouts, function, *dst, writer);
                     writer.line(&format!("frame->base.pc = {next};"));
-                    child::emit_join(layouts, function, *dst, args, writer)?;
+                    child::emit_wait(layouts, function, *dst, *op, args, writer)?;
                     writer.line("return;");
                 } else if let Stmt::Let {
                     dst,
