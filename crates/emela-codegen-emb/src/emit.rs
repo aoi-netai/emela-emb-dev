@@ -235,7 +235,6 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.blank();
     }
     layouts.emit_declarations(&mut header);
-    layouts.emit_error_declaration(&mut header);
     if has_scheduler {
         header.line(include_str!("runtime/scheduler.h"));
     }
@@ -2180,10 +2179,13 @@ fn function_value_abi_type_supported(
             layouts.enum_is_i32(enum_id)
                 || layouts.core.enums[enum_id].external
                 || layouts.is_cause(ty)
+                || aggregate_function_abi_supported(layouts, ty, seen)
         }
+        Type::Tuple(_) => aggregate_function_abi_supported(layouts, ty, seen),
         Type::Fn(function_type) => {
             if !seen.insert(ty) {
-                return false;
+                // Function signatures may refer back through an aggregate field.
+                return true;
             }
             let supported = function_type.sets.is_none()
                 && function_type
@@ -2196,6 +2198,29 @@ fn function_value_abi_type_supported(
         }
         _ => false,
     }
+}
+
+fn aggregate_function_abi_supported(
+    layouts: &TypeLayouts<'_>,
+    ty: TypeId,
+    seen: &mut HashSet<TypeId>,
+) -> bool {
+    let Some(&index) = layouts.aggregate_ids.get(&ty) else {
+        return false;
+    };
+    if !seen.insert(ty) {
+        return true;
+    }
+    let fields = match &layouts.aggregates[index].kind {
+        AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+        AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+    };
+    let supported = fields.into_iter().flatten().all(|&field| {
+        layouts.type_repr(field) == Repr::Void
+            || function_value_abi_type_supported(layouts, field, seen)
+    });
+    seen.remove(&ty);
+    supported
 }
 
 fn validate_function_refs(
@@ -8893,6 +8918,20 @@ impl<'a> TypeLayouts<'a> {
                         }))
             }),
         };
+        let mut validated = HashSet::new();
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
+            for ty in std::iter::once(function.ret).chain(function.vars.iter().map(|(_, v)| v.ty)) {
+                layouts.validate_finite_types(
+                    ty,
+                    &function.name,
+                    &mut HashSet::new(),
+                    &mut validated,
+                )?;
+            }
+        }
         let mut states = HashMap::new();
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id) {
@@ -9157,6 +9196,30 @@ impl<'a> TypeLayouts<'a> {
                 }
             }
         }
+        // Signature edges do not embed their parameter/result layouts in a function record.
+        // Collect them after the current inline aggregate has finished, so a callback returning
+        // a tuple containing its enclosing enum does not create an artificial recursive box.
+        let mut function_index = 0;
+        let mut list_index = 0;
+        loop {
+            if let Some(&ty) = layouts.function_types.get(function_index) {
+                let Type::Fn(ft) = layouts.types[ty].clone() else {
+                    unreachable!()
+                };
+                function_index += 1;
+                for dependency in ft.params.into_iter().chain([ft.ret]) {
+                    layouts.collect(dependency, "function value signature", &mut states)?;
+                }
+            } else if let Some(&ty) = layouts.list_types.get(list_index) {
+                let Type::List(element) = layouts.types[ty] else {
+                    unreachable!()
+                };
+                list_index += 1;
+                layouts.collect(element, "List element", &mut states)?;
+            } else {
+                break;
+            }
+        }
         layouts.has_error_abi |= layouts.function_types.iter().any(
             |&ty| matches!(&layouts.types[ty], Type::Fn(function_type) if function_type.fails),
         );
@@ -9179,14 +9242,25 @@ impl<'a> TypeLayouts<'a> {
                 layouts.error_types.push((id, ty));
             }
         }
-        let mut index = 0;
-        while index < layouts.list_types.len() {
-            let list_ty = layouts.list_types[index];
-            let Type::List(element) = layouts.types[list_ty].clone() else {
-                unreachable!("list layout has a non-List type")
+        // EmelaAny is an EmelaError record, which embeds each concrete error payload.
+        // An inline Any within an error payload would therefore make its C layout infinite.
+        // Reuse recursive field boxes for these edges, including ones nested in tuples.
+        let error_dependencies = layouts.error_declaration_dependencies();
+        for &index in &error_dependencies {
+            let aggregate = &layouts.aggregates[index];
+            let variants = match &aggregate.kind {
+                AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+                AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
             };
-            layouts.collect(element, "List element", &mut states)?;
-            index += 1;
+            for (variant, fields) in variants.into_iter().enumerate() {
+                for (field, &ty) in fields.iter().enumerate() {
+                    if matches!(layouts.types[ty], Type::Any) {
+                        layouts
+                            .recursive_edges
+                            .insert((aggregate.ty, variant, field));
+                    }
+                }
+            }
         }
         for aggregate in &layouts.aggregates {
             let fields = match &aggregate.kind {
@@ -9317,6 +9391,47 @@ impl<'a> TypeLayouts<'a> {
         Ok(())
     }
 
+    fn validate_finite_types(
+        &mut self,
+        ty: TypeId,
+        function: &str,
+        active: &mut HashSet<TypeId>,
+        validated: &mut HashSet<TypeId>,
+    ) -> Result<(), Vec<Error>> {
+        if let Type::Enum(id, _) = self.types[ty]
+            && active.iter().any(|&other| {
+                other != ty
+                    && matches!(self.types[other], Type::Enum(other_id, _) if other_id == id)
+            })
+        {
+            return Err(unsupported(
+                function,
+                "recursive enum type that changes its type arguments",
+            ));
+        }
+        if validated.contains(&ty) || !active.insert(ty) {
+            return Ok(());
+        }
+        let dependencies = match self.types[ty].clone() {
+            Type::Fn(ft) => ft.params.into_iter().chain([ft.ret]).collect(),
+            Type::Tuple(fields) => fields,
+            Type::List(element) | Type::Cell(element) => vec![element],
+            Type::Enum(id, args) if self.enum_layout_required(id) => self.core.enums[id]
+                .variants
+                .iter()
+                .flat_map(|variant| &variant.tys)
+                .map(|&field| self.types.subst(field, &args))
+                .collect(),
+            _ => vec![],
+        };
+        for dependency in dependencies {
+            self.validate_finite_types(dependency, function, active, validated)?;
+        }
+        active.remove(&ty);
+        validated.insert(ty);
+        Ok(())
+    }
+
     fn collect(
         &mut self,
         ty: TypeId,
@@ -9352,15 +9467,11 @@ impl<'a> TypeLayouts<'a> {
             self.collect(content, function, states)?;
             return Ok(());
         }
-        if let Type::Fn(function_type) = self.types[ty].clone() {
+        if matches!(self.types[ty], Type::Fn(_)) {
             if self.function_types.contains(&ty) {
                 return Ok(());
             }
             self.function_types.push(ty);
-            for parameter in function_type.params {
-                self.collect(parameter, function, states)?;
-            }
-            self.collect(function_type.ret, function, states)?;
             return Ok(());
         }
         if matches!(self.types[ty], Type::Any) {
@@ -9958,15 +10069,15 @@ impl<'a> TypeLayouts<'a> {
         for &box_ty in &self.recursive_box_types {
             let box_index = self.recursive_box_ids[&box_ty];
             let kind = self.list_types.len() + box_index;
-            let aggregate_index = self
-                .aggregate_helper_index(box_ty)
-                .expect("recursive box payload must have an ownership helper");
             writer.line(&format!("case UINT32_C({kind}):"));
             writer.begin_block("");
-            writer.line(&format!(
-                "emela_heap_enqueue_value_{aggregate_index}((const {} *)value, pending, tail);",
-                self.c_type(box_ty)
-            ));
+            self.emit_enqueue_value_expression(
+                box_ty,
+                &format!("(*((const {} *)value))", self.c_type(box_ty)),
+                "pending",
+                "tail",
+                writer,
+            );
             writer.line("break;");
             writer.end_block();
         }
@@ -10347,44 +10458,46 @@ impl<'a> TypeLayouts<'a> {
             + u32::try_from(handler_index).expect("too many handler effects")
     }
 
-    fn function_types_in_dependency_order(&self) -> Vec<TypeId> {
-        fn visit(
-            layouts: &TypeLayouts<'_>,
-            ty: TypeId,
-            active: &mut HashSet<TypeId>,
-            visited: &mut HashSet<TypeId>,
-            ordered: &mut Vec<TypeId>,
-        ) {
-            if visited.contains(&ty) || !active.insert(ty) {
-                return;
-            }
-            let Type::Fn(function_type) = layouts.types[ty].clone() else {
-                return;
-            };
-            for dependency in function_type
-                .params
-                .into_iter()
-                .chain(std::iter::once(function_type.ret))
-                .filter(|&dependency| matches!(layouts.types[dependency], Type::Fn(_)))
-            {
-                visit(layouts, dependency, active, visited, ordered);
-            }
-            active.remove(&ty);
-            visited.insert(ty);
-            ordered.push(ty);
-        }
-
-        let mut active = HashSet::new();
+    fn error_declaration_dependencies(&self) -> HashSet<usize> {
+        let mut pending: Vec<_> = self.error_types.iter().map(|&(_, ty)| ty).collect();
         let mut visited = HashSet::new();
-        let mut ordered = Vec::with_capacity(self.function_types.len());
-        for &ty in &self.function_types {
-            visit(self, ty, &mut active, &mut visited, &mut ordered);
+        while let Some(ty) = pending.pop() {
+            let Some(&index) = self.aggregate_ids.get(&ty) else {
+                continue;
+            };
+            if !visited.insert(index) {
+                continue;
+            }
+            let aggregate = &self.aggregates[index];
+            let variants = match &aggregate.kind {
+                AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+                AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+            };
+            for (variant, fields) in variants.into_iter().enumerate() {
+                for (field, &ty) in fields.iter().enumerate() {
+                    if !self.is_recursive_box_field(aggregate.ty, variant, field) {
+                        pending.push(ty);
+                    }
+                }
+            }
         }
-        ordered
+        visited
     }
 
     fn emit_declarations(&self, writer: &mut Writer) {
-        for ty in self.function_types_in_dependency_order() {
+        // All named value types are visible in prototypes, even when an aggregate contains
+        // a callback whose signature returns that aggregate. Only inline fields require a
+        // complete definition, so function records can precede the ordered aggregates.
+        for &ty in &self.function_types {
+            let name = function_type_name(ty);
+            writer.line(&format!("typedef struct {name} {name};"));
+        }
+        for aggregate in &self.aggregates {
+            let name = type_name(aggregate.ty);
+            writer.line(&format!("typedef struct {name} {name};"));
+        }
+        writer.blank();
+        for &ty in &self.function_types {
             let Type::Fn(function_type) = self.types[ty].clone() else {
                 unreachable!("function type registry contains a non-function")
             };
@@ -10408,7 +10521,7 @@ impl<'a> TypeLayouts<'a> {
             if function_type.suspends && self.type_repr(function_type.ret) != Repr::Void {
                 parameters.push(format!("{} *result", self.c_type(function_type.ret)));
             }
-            writer.line("typedef struct {");
+            writer.line(&format!("struct {} {{", function_type_name(ty)));
             writer.line(&format!(
                 "  {} (*call)({});",
                 if function_type.suspends {
@@ -10419,13 +10532,32 @@ impl<'a> TypeLayouts<'a> {
                 parameters.join(", ")
             ));
             writer.line("  void *env;");
-            writer.line(&format!("}} {};", function_type_name(ty)));
+            writer.line("};");
         }
         if !self.function_types.is_empty() {
             writer.blank();
         }
-        for aggregate in &self.aggregates {
-            writer.line("typedef struct {");
+        let error_dependencies = self.error_declaration_dependencies();
+        let declarations = self
+            .aggregates
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| error_dependencies.contains(index))
+            .map(|(_, aggregate)| Some(aggregate))
+            .chain(std::iter::once(None))
+            .chain(
+                self.aggregates
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !error_dependencies.contains(index))
+                    .map(|(_, aggregate)| Some(aggregate)),
+            );
+        for aggregate in declarations {
+            let Some(aggregate) = aggregate else {
+                self.emit_error_declaration(writer);
+                continue;
+            };
+            writer.line(&format!("struct {} {{", type_name(aggregate.ty)));
             match &aggregate.kind {
                 AggregateKind::Tuple(fields) => {
                     let mut represented = false;
@@ -10476,7 +10608,7 @@ impl<'a> TypeLayouts<'a> {
                     writer.line("  } payload;");
                 }
             }
-            writer.line(&format!("}} {};", type_name(aggregate.ty)));
+            writer.line("};");
             writer.blank();
         }
     }

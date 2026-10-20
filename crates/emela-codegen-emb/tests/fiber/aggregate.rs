@@ -445,7 +445,7 @@ int main(void) {{
     );
 }
 
-fn release_helper(output: &Output, ty: usize) -> String {
+pub(super) fn release_helper(output: &Output, ty: usize) -> String {
     let header = &output
         .files
         .iter()

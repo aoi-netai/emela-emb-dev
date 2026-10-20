@@ -5,6 +5,7 @@ mod attempt;
 mod await_;
 mod cause;
 mod failure;
+mod function_aggregate;
 mod interrupt;
 mod join;
 mod notes;

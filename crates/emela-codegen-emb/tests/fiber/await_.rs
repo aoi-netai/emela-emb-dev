@@ -532,7 +532,7 @@ int main(void) {
 }
 
 #[test]
-fn returning_await_exit_through_scope_keeps_the_function_value_result_diagnostic() {
+fn returning_await_exit_through_scope_owns_the_exit_after_scope_end() {
     let core = support::try_lower(
         &[(
             "main.emel",
@@ -547,12 +547,50 @@ pub fn terminal(n: Int) -> Exit[Int, {}] use Async {
         Roots::Exported,
     )
     .unwrap();
-    let errors = compile(&core, &options()).unwrap_err();
-    assert!(errors.iter().any(|e| {
-        e.kind == ErrorKind::Unsupported
-            && e.message
-                .contains("function values with unsupported parameter, result, or suspend types")
-    }));
+    let mut output = compile(&core, &options()).unwrap();
+    notes::add_heap_check(&mut output);
+    let header = &output
+        .files
+        .iter()
+        .find(|f| f.path == "emela_embedded.h")
+        .unwrap()
+        .contents;
+    let ty: usize = header
+        .lines()
+        .find(|line| line.starts_with("EmelaFiber emela_export_terminal_0_start("))
+        .unwrap()
+        .split("emela_type_")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let release = aggregate::release_helper(&output, ty);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{ (void)k; (void)m; (void)n; abort(); }}
+int main(void) {{
+  for (int i = 0; i < 1000; ++i) {{
+    emela_type_{ty} value = {{0}};
+    EmelaFiber f = emela_export_terminal_0_start(i, i % 3 ? &value : NULL);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    emela_fiber_release(f);
+    if (i % 3) {{ assert(value.tag == 0 && value.payload.v0.f0 == i); {release}(&value); }}
+    assert(test_heap_empty());
+  }}
+}}
+"#
+        ),
+    );
 }
 
 #[test]
