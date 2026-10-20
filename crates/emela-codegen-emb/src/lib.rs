@@ -21,6 +21,40 @@ mod type_normalize;
 mod unicode_grapheme;
 mod writer;
 
+/// Ownership contract for a synchronous board adapter's result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalResult {
+    /// Acquire a complete owning copy before returning to Emela. The board keeps the result
+    /// alive until that copy completes; returning pointers into the C callee's stack is invalid.
+    Borrowed,
+    /// Transfer a complete Emela owning value, including every managed field, to the caller.
+    /// Owners must belong to this generated module's fixed heap, never malloc or a C stack.
+    Owned,
+    /// Return an ownerless String pointing at the additional caller-provided output buffer.
+    /// The board must check its byte capacity before writing; valid only for String results.
+    /// For verified Flow failures, the error is acquired using the Borrowed contract.
+    StringBuffer,
+}
+
+/// Explicit synchronous C adapter using the generated module's C value representations.
+/// All arguments are borrowed until the call returns. Retaining them requires acquiring
+/// independent ownership while they are still valid; ownerless String bytes need copying.
+#[derive(Debug, Clone)]
+pub struct ExternalAdapter {
+    symbol: String,
+    result: ExternalResult,
+}
+
+impl ExternalAdapter {
+    /// Selects a board symbol and its result ownership or caller-output-buffer contract.
+    pub fn new(symbol: impl Into<String>, result: ExternalResult) -> Self {
+        Self {
+            symbol: symbol.into(),
+            result,
+        }
+    }
+}
+
 /// Configuration for embedded C generation.
 ///
 /// Configuration for board-independent generation and fixed embedded resource limits.
@@ -37,6 +71,7 @@ pub struct Options {
     event_capacity: u16,
     deferred_capacity: u16,
     task_adapters: Vec<(String, String)>,
+    external_adapters: Vec<(String, ExternalAdapter)>,
     isr_entries: Vec<String>,
     isr_safe_externals: Vec<String>,
 }
@@ -54,6 +89,7 @@ impl Default for Options {
             event_capacity: 8,
             deferred_capacity: 8,
             task_adapters: Vec::new(),
+            external_adapters: Vec::new(),
             isr_entries: Vec::new(),
             isr_safe_externals: Vec::new(),
         }
@@ -145,6 +181,21 @@ impl Options {
         let c_symbol = c_symbol.into();
         self.task_adapters.retain(|(symbol, _)| symbol != &c_symbol);
         self.task_adapters.push((c_symbol, adapter.into()));
+        self
+    }
+
+    /// Maps a synchronous external C binding to an explicit generated-value board adapter.
+    /// Existing scalar bindings need no override. Non-scalar bindings require one to avoid
+    /// accidentally linking a host C backend function with an incompatible ownership ABI.
+    pub fn with_external_adapter(
+        mut self,
+        c_symbol: impl Into<String>,
+        adapter: ExternalAdapter,
+    ) -> Self {
+        let c_symbol = c_symbol.into();
+        self.external_adapters
+            .retain(|(symbol, _)| symbol != &c_symbol);
+        self.external_adapters.push((c_symbol, adapter));
         self
     }
 

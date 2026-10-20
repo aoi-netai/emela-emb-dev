@@ -18,6 +18,7 @@ mod owned;
 mod string_append;
 mod string_comparison;
 mod suspend;
+mod sync_external;
 mod task_values;
 mod value_audit;
 

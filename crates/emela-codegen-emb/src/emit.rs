@@ -20,6 +20,8 @@ mod const_bridge;
 mod deferred;
 #[path = "error.rs"]
 mod error_runtime;
+#[path = "external.rs"]
+mod external;
 #[path = "owned.rs"]
 mod owned;
 #[path = "suspend.rs"]
@@ -47,6 +49,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let const_groups = crate::const_origins::groups(flow)?;
     crate::const_origins::function_groups(flow)?;
     let mut prepared_flow = flow.clone();
+    external::normalize_exports(&mut prepared_flow);
     const_bridge::prepare(&mut prepared_flow, &const_groups);
     let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
     runtime_consts.extend(
@@ -54,6 +57,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             .iter()
             .flat_map(|group| group.specializations.iter().copied()),
     );
+
     crate::scope_abi::normalize(&mut prepared_flow)?;
     crate::fiber::normalize_scope_results(&mut prepared_flow);
     let mut closures = crate::static_closure::lower(&prepared_flow)?;
@@ -89,10 +93,20 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 .insert(flow.functions[id].name.clone());
         }
     }
+    let external_bindings = external::resolve(flow, &emitted_functions, &mut layouts, options)?;
+
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
-    let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
+    let mut string_output_functions =
+        functions_with_string_output(flow, &emitted_functions, &layouts);
+    external::extend_string_output(
+        flow,
+        &emitted_functions,
+        &external_bindings,
+        &layouts,
+        &mut string_output_functions,
+    );
     layouts.owned_aggregate_returns = flow
         .functions
         .iter()
@@ -124,7 +138,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .iter()
         .filter_map(|(id, function)| {
             (emitted_functions.contains(&id)
-                && function_needs_heap(id, function, &layouts, &closures, &string_output_functions))
+                && (function_needs_heap(
+                    id,
+                    function,
+                    &layouts,
+                    &closures,
+                    &string_output_functions,
+                ) || external::needs_heap(function, external_bindings.get(&id), &layouts)))
             .then_some(id)
         })
         .collect();
@@ -183,7 +203,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             if function.suspends {
                 suspend::external_symbol(function, options)?
             } else {
-                validate_external(flow, function)?
+                let binding = &external_bindings[&id];
+                if binding.adapted {
+                    function_name(id, function)
+                } else {
+                    binding.symbol.clone()
+                }
             }
         } else {
             function_name(id, function)
@@ -239,6 +264,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.blank();
     }
     layouts.emit_declarations(&mut header);
+    external::emit_header(
+        flow,
+        &external_bindings,
+        &layouts,
+        heap_required,
+        &mut header,
+    );
     if has_scheduler {
         header.line(include_str!("runtime/scheduler.h"));
     }
@@ -338,8 +370,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = !runtime_consts.is_empty()
-        || has_scheduler
+    let needs_defect_hook = !runtime_consts.is_empty() || has_scheduler
+        || external_bindings
+            .iter()
+            .any(|(&id, binding)| binding.adapted && flow.functions[id].fails)
+        || external_bindings
+            .values()
+            .any(|binding| binding.result == crate::ExternalResult::StringBuffer)
+
         || heap_required
         || has_prim(
             flow,
@@ -501,6 +539,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         crate::heap::emit_public_retain(&mut source);
         crate::heap::emit_public_release(&mut source);
         emit_public_string_ownership(&mut source);
+        external::emit_ownership_helpers(flow, &external_bindings, &layouts, &mut source);
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
@@ -696,9 +735,21 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 &mut source,
             )?;
         } else if function.external.is_some() {
+            let prefix = if external_bindings[&id].adapted {
+                ""
+            } else {
+                "extern "
+            };
             source.line(&format!(
-                "extern {};",
-                signature(&layouts, function, name, false, false, false)
+                "{prefix}{};",
+                signature(
+                    &layouts,
+                    function,
+                    name,
+                    external_bindings[&id].adapted,
+                    function.fails && external_bindings[&id].adapted,
+                    string_output_functions.contains(&id)
+                )
             ));
         } else if !function.exported || function.fails {
             source.line(&format!(
@@ -780,6 +831,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                     ),
                 }]);
             }
+            external::emit_adapter(
+                &layouts,
+                function,
+                &external_bindings[&id],
+                &names[&id],
+                &mut source,
+            );
             continue;
         }
         let Some(body) = function.body else {
@@ -2354,7 +2412,8 @@ fn validate_isr_function(
                     ));
                 }
                 if callee.external.is_some() {
-                    let symbol = &names[callee_id];
+                    let symbol =
+                        external::isr_symbol(flow, callee, &names[callee_id], options, entry_name)?;
                     if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
                         active.remove(&id);
                         return Err(unsupported(
