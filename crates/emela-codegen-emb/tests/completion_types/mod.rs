@@ -217,3 +217,127 @@ fn unresolved_and_inconsistent_function_sets_have_explicit_invalid_flow_diagnost
         );
     }
 }
+
+#[test]
+fn growing_enum_keeps_owned_closure_and_string_payloads_across_suspension() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+@external(c, "host_wait")
+suspend fn wait(n: Int) -> Int
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+effect Wait { suspend fn get(n: Int) -> Int }
+handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+pub fn work(n: Int) -> Int use Async {
+  text = Int.to_string(n)
+  value: Grow[fn() -> String] = End(fn() { text })
+  with Waiting { (use Wait).get(n) }
+  value match { End(f) -> if f() == "42" { 42 } else { 0 }
+    Next(_) -> -1 }
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let options = Options::default()
+        .with_heap_bytes(8192)
+        .with_frame_bytes(512)
+        .with_task_adapter("host_wait", "board_wait_start");
+    let mut output =
+        compile(&core, &options).expect("opaque Fn payload has a materialized environment");
+    let run = export_name(&output, "work");
+    add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+static EmelaTask pending;
+uint32_t emela_board_event_lock(void) {{return 0;}}
+void emela_board_event_unlock(uint32_t p) {{(void)p;}}
+void board_wait_start(EmelaTask t,int32_t n) {{assert(n==42);pending=t;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n) {{(void)k;(void)s;(void)n;abort();}}
+int main(void) {{for(int i=0;i<1000;i++) {{int32_t result=-1;EmelaFiber f={run}(42,&result);
+ while(emela_scheduler_run(1)) {{}} assert(result==-1);assert(emela_task_complete_int(pending,0));
+ while(!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+ assert(result==42);emela_fiber_release(f);assert(test_heap_empty());}}return 0;}}
+"#
+        ),
+    );
+}
+
+#[test]
+fn growing_enum_opaque_edges_trace_cycles_through_cell_and_any() {
+    let mut core = emela_core::Module::new();
+    let p = core.type_param(0);
+    let id = core.add_enum(EnumDef {
+        name: "Grow".into(),
+        params: 1,
+        variants: vec![],
+        error: false,
+        external: false,
+    });
+    let list_p = core.list(p);
+    let next = core.enum_type(id, vec![list_p]);
+    core.enums[id].variants = vec![
+        VariantDef::positional("End", vec![p]),
+        VariantDef::positional("Next", vec![next]),
+    ];
+    let cell_ty = core.cell(TypeId::ANY);
+    let wrap_ty = core.enum_type(id, vec![cell_ty]);
+    let mut b = FnBuilder::new(&core, "cycle");
+    b.set_exported().set_ret(TypeId::INT);
+    let n = b.assign("n", TypeId::INT, Value::Const(Const::Int(42)));
+    let initial = b.assign("initial", TypeId::ANY, Value::Coerce(n));
+    let cell = b.assign(
+        "cell",
+        cell_ty,
+        Value::Builtin {
+            op: Builtin::CellNew,
+            args: vec![initial.into()],
+        },
+    );
+    let wrap = b.assign(
+        "wrap",
+        wrap_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: id,
+                variant: 0,
+            },
+            args: vec![cell.into()],
+        },
+    );
+    let boxed = b.assign("boxed", TypeId::ANY, Value::Coerce(wrap));
+    b.let_(
+        None,
+        Value::Builtin {
+            op: Builtin::CellSet,
+            args: vec![cell.into(), boxed.into()],
+        },
+    );
+    b.term(Term::Return(Some(n.into())));
+    let function = b.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(4096)).unwrap();
+    add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){(void)k;(void)s;(void)n;abort();}
+int main(void){for(int i=0;i<1000;i++){assert(emela_export_cycle_0()==42);assert(test_heap_empty());}return 0;}
+"#,
+    );
+}
