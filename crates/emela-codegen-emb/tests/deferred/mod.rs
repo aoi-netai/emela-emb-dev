@@ -249,3 +249,125 @@ int main(void) {{
         ),
     );
 }
+
+#[test]
+fn poll_observes_empty_and_first_value_for_scalar_and_unit_without_yielding() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Scope}
+import Std.Deferred.{Deferred}
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+pub fn poll(n: Int) -> Int use Async {
+  Fiber.scope(fn() {
+    Fiber.fork(fn() { mark(99) })
+    d: Deferred[Int] = (use Scope).deferred()
+    empty = Deferred.poll(d) match {
+      None -> True
+      Some(_) -> False
+    }
+    first = Deferred.complete(d, n)
+    again = Deferred.complete(d, n + 1)
+    value = Deferred.poll(d) match {
+      Some(x) -> x
+      None -> 0
+    }
+    u: Deferred[()] = (use Scope).deferred()
+    Deferred.complete(u, ())
+    unit = Deferred.poll(u) match {
+      Some(()) -> True
+      None -> False
+    }
+    mark(1)
+    if empty && first && !again && unit { value } else { 0 }
+  })
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(&core, &options()).unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static int marks;
+void mark(int32_t n) { assert(n == 1); marks++; }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
+int main(void) {
+  for (int i = 0; i < 1000; i++) {
+    int32_t result = -1;
+    EmelaFiber f = emela_export_poll_0_start(i, &result);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    assert(result == i && marks == i + 1); emela_fiber_release(f);
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn complete_copies_borrowed_string_and_poll_retains_it_past_scope_end() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+import Std.Fiber.{Fiber, Scope}
+import Std.Deferred.{Deferred}
+fn save(d: Deferred[String], n: Int) -> Bool {
+  text = Int.to_string(n)
+  first = Deferred.complete(d, text)
+  again = Deferred.complete(d, text)
+  first && !again
+}
+fn peek(d: Deferred[String]) -> String {
+  Deferred.poll(d) match {
+    Some(s) -> s
+    None -> ""
+  }
+}
+pub fn text(n: Int) -> String use Async {
+  Fiber.scope(fn() {
+    d: Deferred[String] = (use Scope).deferred()
+    save(d, n)
+    save(d, n + 1)
+    peek(d)
+  })
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    compile_and_run(
+        compile(
+            &core,
+            &options().with_string_capacity(16).with_deferred_capacity(1),
+        )
+        .unwrap(),
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n", k, n, m); abort(); }
+int main(void) {
+  for (int i = 0; i < 1000; i++) {
+    EmelaString value = {0};
+    EmelaFiber f = emela_export_text_0_start(42, i % 2 ? &value : NULL);
+    while (!emela_fiber_done(f)) assert(emela_scheduler_run(1));
+    emela_fiber_release(f);
+    if (i % 2) { assert(value.owner && value.length == 2 && memcmp(value.data, "42", 2) == 0); emela_embedded_release_string(&value); }
+  }
+}
+"#,
+    );
+}

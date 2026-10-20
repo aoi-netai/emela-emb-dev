@@ -8265,6 +8265,8 @@ struct TypeLayouts<'a> {
     has_scopes: bool,
     deferred_pool: bool,
     deferred_complete_types: Vec<TypeId>,
+    deferred_read_types: Vec<TypeId>,
+    deferred_poll_types: Vec<TypeId>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8336,6 +8338,8 @@ impl<'a> TypeLayouts<'a> {
             has_scopes: crate::fiber::has_scopes(flow, emitted),
             deferred_pool,
             deferred_complete_types: Vec::new(),
+            deferred_read_types: Vec::new(),
+            deferred_poll_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8374,6 +8378,26 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Poll,
+                        args,
+                        ..
+                    } => {
+                        let ty = deferred::value_type(&layouts, function, &args[0])?;
+                        layouts.add_any_box_type(ty);
+                        if !layouts.deferred_read_types.contains(&ty) {
+                            layouts.deferred_read_types.push(ty);
+                        }
+                        if let Some(dst) = dst {
+                            let option = function.vars[*dst].ty;
+                            if option_payload_type(&layouts, option) != Some(ty) {
+                                return Err(invalid_flow_ir(&function.name, "Poll result type"));
+                            }
+                            if !layouts.deferred_poll_types.contains(&option) {
+                                layouts.deferred_poll_types.push(option);
+                            }
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Complete,
                         args,

@@ -64,7 +64,7 @@ pub(super) fn validate(
                         ..
                     } => {}
                     Value::Fiber {
-                        op: emela_core::FiberOp::Complete,
+                        op: emela_core::FiberOp::Complete | emela_core::FiberOp::Poll,
                         on_fail: None,
                         ..
                     } => {}
@@ -1176,6 +1176,9 @@ pub(super) fn emit_fiber_value(
 ) -> Result<(), Vec<Error>> {
     if op == emela_core::FiberOp::Complete {
         return deferred::emit_complete(layouts, function, dst, args, writer);
+    }
+    if op == emela_core::FiberOp::Poll {
+        return deferred::emit_poll(layouts, function, dst, args, writer);
     }
     let expression = match (op, args) {
         (emela_core::FiberOp::Fork, [scope, Operand::Var(body)]) => format!(

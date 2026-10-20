@@ -67,3 +67,9 @@ static inline emela_deferred_slot *emela_deferred_prepare_complete(emela_deferre
 static inline void emela_deferred_publish(emela_deferred_slot *slot) {
   if (slot->head != NULL) emela_scheduler_invalid(); /* Waiters are connected by DeferredAwait. */
 }
+static inline emela_deferred_slot *emela_deferred_get_poll(emela_deferred *deferred) {
+  if (deferred == NULL) emela_scheduler_invalid();
+  if (deferred->scope->ended)
+    emela_board_defect(EMELA_DEFECT_PANIC, "deferred was polled after its scope ended", UINT16_C(41));
+  return emela_deferred_slot_get(deferred);
+}
