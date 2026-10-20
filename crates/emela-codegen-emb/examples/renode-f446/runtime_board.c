@@ -103,6 +103,10 @@ static void release_success(void *p) {
 }
 #endif
 void SysTick_Handler(void) {
+  /* Stop and clear the periodic source before doing notification work. */
+  *(volatile uint32_t *)UINT32_C(0xe000e010) = 0;
+  *(volatile uint32_t *)UINT32_C(0xe000ed04) = UINT32_C(1) << 25;
+  __asm volatile("dsb\nisb" ::: "memory");
   emela_validation_stack_record_sp();
   CHECK(ipsr() == 15 && primask() == 0 && locked == 0);
   *(volatile uint32_t *)UINT32_C(0xe000e010) = 0;
@@ -130,7 +134,7 @@ static void notify(EmelaTask task, unsigned kind, int32_t value, int accepted) {
   /* Keep s0 live across the exception; the ISR deliberately overwrites it. */
   __asm volatile("vmov s0, %0" :: "r"(thread_pattern) : "s0", "memory");
   __asm volatile("dmb" ::: "memory");
-  *(volatile uint32_t *)UINT32_C(0xe000e014) = 127;
+  *(volatile uint32_t *)UINT32_C(0xe000e014) = 8399;
   *(volatile uint32_t *)UINT32_C(0xe000e018) = 0;
   *(volatile uint32_t *)UINT32_C(0xe000e010) = 7;
   for (unsigned spin = 0; !irq_done; spin++) { CHECK(spin < 1000000); __asm volatile("nop"); }
