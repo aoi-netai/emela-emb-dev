@@ -1,6 +1,6 @@
 # Renodeでのembedded backend smoke確認
 
-この手順では、現行の `emela-codegen-emb` が生成したCをSTM32F446向けにクロスビルドし、Renode上で実行する。生成Cのentry、整数演算、比較、`Let`、`If`の両分岐、内部関数呼び出し、ゼロ除算時のboard defect hook、外部C関数までを確認する。
+この手順では、現行の `emela-codegen-emb` が生成したCをSTM32F446向けにクロスビルドし、Renode上で実行する。const・同期非scalar ABI・generic/成長再帰型をまとめた新しい`completion` fixtureは統合確認を参照。生成Cのentry、整数演算、比較、`Let`、`If`の両分岐、内部関数呼び出し、ゼロ除算時のboard defect hook、外部C関数までを確認する。
 
 過去の [`emela-fix-259/examples/embedded-bus`](../../../../emela-fix-259/examples/embedded-bus) は、ボード設定やRenode構成を調べる参考資料として使う。その `run.sh` は当時の `emela-cli` と旧backendをビルドするため、現行 `emela-codegen-emb` の確認には使わない。このcrateのsmoke fixtureは現在のbackend APIを直接呼び出す。
 
@@ -30,7 +30,7 @@ workspace rootから次を実行する。
 bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 ```
 
-実行内容は [`run.sh`](../examples/renode-f446/run.sh) にある。
+実行内容は [`run.sh`](../examples/renode-f446/run.sh) にある。引数なしまたは`scalar`が従来の確認、`completion`がロードマップ2〜4の統合確認を選ぶ。
 
 ツールの場所を変更する場合は、例えば次のように指定する。
 
@@ -68,4 +68,4 @@ CMSIS startupの `Reset_Handler` はCの `main()` を呼ぶ一方、embedded bac
 
 fixture付属のlinker scriptはheapを512 byte、stackを4096 byte予約する。したがって `arm-none-eabi-size` のBSS欄にはこの予約分も含まれる。smokeの実行結果から任意のアプリケーションの最大stackやheap使用量を推定してはならない。
 
-Renodeで確認できるのはモデル上の実行結果であり、実チップの電気的動作、周辺回路の全挙動、割り込み遅延、リアルタイム性は実機確認が必要である。生成Cのcompile/link、Renode実行、実機実行は別の確認段階として報告する。
+Renodeで確認できるのはモデル上の実行結果であり、実チップの電気的動作、周辺回路の全挙動、割り込み遅延やWCETはこのprobeから判断しない。本計画のtarget統合確認はユーザー方針によりemulatorを実機の代替として扱う。生成Cのcompile/linkとRenode実行は、実際に行った範囲を分けて報告する。

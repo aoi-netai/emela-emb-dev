@@ -1,0 +1,37 @@
+@external(c, "host_completion_text")
+fn board_text() -> String use {}
+const TEXT = board_text()
+const PACKET = (Some(TEXT), [TEXT])
+const GENERIC = { dbg("GENERIC")
+  ([], fn(value) { value })
+}
+fn integer(value: (List[Int], fn(Int) -> Int)) -> Int {
+  (items, apply) = value
+  List.length(items) + apply(21)
+}
+fn text(value: (List[String], fn(String) -> String)) -> Int {
+  (items, apply) = value
+  List.length(items) + String.byte_size(apply("42"))
+}
+enum Grow[A] { End(A), Next(Grow[List[A]]) }
+const GROW_VALUE: Grow[Int] = Next(End([42, 7]))
+const GROW_OTHER: Grow[Int] = Next(End([42, 7]))
+const GROW_TEXT = "#{GROW_VALUE}"
+const GROW_MATCH = GROW_VALUE == GROW_OTHER
+pub fn check() -> Int {
+  if GROW_MATCH && GROW_VALUE == GROW_OTHER {
+  (option, items) = PACKET
+  size = option match {
+    Some(value) -> String.byte_size(value)
+    None -> 0
+  }
+  first = items match {
+    [head, ..tail] -> String.byte_size(head)
+    _ -> 0
+  }
+  integer(GENERIC) + text(GENERIC) + size + first + 13 + String.byte_size(GROW_TEXT) - 18
+  } else { -1 }
+}
+pub fn text_value() -> String { TEXT }
+
+pub fn derived_text() -> String { GROW_TEXT }
