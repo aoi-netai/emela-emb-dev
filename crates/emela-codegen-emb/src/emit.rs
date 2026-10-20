@@ -799,7 +799,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             takes_string_output,
         );
         if !string_buffers.declarations.is_empty()
-            && (type_contains_string(&layouts, function.ret, &mut HashSet::new())
+            && ((type_contains_string(&layouts, function.ret, &mut HashSet::new())
+                && !layouts.owned_string_returns.contains(&function.name))
                 || failure_value_contains_string(&layouts, function))
             && !takes_string_output
         {
@@ -1167,10 +1168,15 @@ impl StringBufferPlan {
         output_calls: &HashSet<FnId>,
         returns_to_caller: bool,
     ) -> Self {
+        let (statement_positions, sequence_positions) = function_positions(function);
         let mut append_args = HashMap::new();
         let mut buffer_producers = HashSet::new();
         let mut producer_positions = HashMap::new();
-        for (statement_id, statement) in function.stmts.iter() {
+        for (statement_id, statement) in function
+            .stmts
+            .iter()
+            .filter(|(id, _)| statement_positions.contains_key(id))
+        {
             let Stmt::Let {
                 dst: Some(dst),
                 value,
@@ -1257,9 +1263,13 @@ impl StringBufferPlan {
 
         let mut uses = HashMap::new();
         let mut count = |variable| *uses.entry(variable).or_insert(0usize) += 1;
-        for (_, statement) in function.stmts.iter() {
+        for (_, statement) in function
+            .stmts
+            .iter()
+            .filter(|(id, _)| statement_positions.contains_key(id))
+        {
             match statement {
-                Stmt::Let { value, .. } => value.for_each_var(&mut count),
+                Stmt::Let { value, .. } => for_each_string_plan_var(layouts, value, &mut count),
                 Stmt::If { cond, .. } => count_operand(cond, &mut count),
                 Stmt::Switch { on, .. } => match on {
                     SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => count(*variable),
@@ -1273,7 +1283,11 @@ impl StringBufferPlan {
                 Stmt::Block { .. } | Stmt::Protect { .. } => {}
             }
         }
-        for (_, sequence) in function.seqs.iter() {
+        for (_, sequence) in function
+            .seqs
+            .iter()
+            .filter(|(id, _)| sequence_positions.contains_key(id))
+        {
             match &sequence.term {
                 Term::Yield(Some(operand))
                 | Term::Return(Some(operand))
@@ -1295,10 +1309,13 @@ impl StringBufferPlan {
         }
         drop(count);
 
-        let (statement_positions, sequence_positions) = function_positions(function);
         let mut last_uses = HashMap::new();
         let mut non_reusable_variables = HashSet::new();
-        for (statement_id, statement) in function.stmts.iter() {
+        for (statement_id, statement) in function
+            .stmts
+            .iter()
+            .filter(|(id, _)| statement_positions.contains_key(id))
+        {
             let position = statement_positions.get(&statement_id).copied().unwrap_or(0);
             let mut mark_use = |variable| {
                 last_uses
@@ -1308,7 +1325,7 @@ impl StringBufferPlan {
             };
             match statement {
                 Stmt::Let { value, .. } => {
-                    value.for_each_var(&mut mark_use);
+                    for_each_string_plan_var(layouts, value, &mut mark_use);
                     let reusable_consumer = match value {
                         Value::Builtin {
                             op:
@@ -1330,7 +1347,7 @@ impl StringBufferPlan {
                         _ => false,
                     };
                     if !reusable_consumer {
-                        value.for_each_var(|variable| {
+                        for_each_string_plan_var(layouts, value, |variable| {
                             non_reusable_variables.insert(variable);
                         });
                     }
@@ -1340,7 +1357,7 @@ impl StringBufferPlan {
                     } = value
                         && append_has_empty_constant(args)
                     {
-                        value.for_each_var(|variable| {
+                        for_each_string_plan_var(layouts, value, |variable| {
                             non_reusable_variables.insert(variable);
                         });
                     }
@@ -1373,7 +1390,11 @@ impl StringBufferPlan {
                 Stmt::Block { .. } | Stmt::Protect { .. } => {}
             }
         }
-        for (sequence_id, sequence) in function.seqs.iter() {
+        for (sequence_id, sequence) in function
+            .seqs
+            .iter()
+            .filter(|(id, _)| sequence_positions.contains_key(id))
+        {
             let position = sequence_positions.get(&sequence_id).copied().unwrap_or(0);
             let mut mark_use = |variable| {
                 last_uses
@@ -1412,7 +1433,11 @@ impl StringBufferPlan {
             .collect();
         for _ in 0..=function.vars.len() {
             let mut changed = false;
-            for (_, statement) in function.stmts.iter() {
+            for (_, statement) in function
+                .stmts
+                .iter()
+                .filter(|(id, _)| statement_positions.contains_key(id))
+            {
                 let Stmt::Let {
                     dst: Some(dst),
                     value,
@@ -1752,6 +1777,21 @@ pub(crate) fn function_positions(
         );
     }
     (statement_positions, sequence_positions)
+}
+
+fn for_each_string_plan_var(
+    layouts: &TypeLayouts<'_>,
+    value: &Value,
+    mut visit: impl FnMut(VarId),
+) {
+    value.for_each_var(&mut visit);
+    if let Value::FnRef(target) = value
+        && let Some(&environment) = layouts.closure_functions.get(target)
+    {
+        for capture in &layouts.closure_environments[environment].captures {
+            visit(capture.source);
+        }
+    }
 }
 
 fn count_operand(operand: &Operand, count: &mut impl FnMut(VarId)) {
@@ -7607,6 +7647,7 @@ fn functions_with_string_output(
                 || function.constant
                 || function.suspends
                 || function.external.is_some()
+                || layouts.owned_string_returns.contains(&function.name)
                 || !matches!(layouts.types[function.ret], Type::String)
                 || result.contains(&id)
             {
@@ -7780,6 +7821,14 @@ fn emit_return(
                 && matches!(operand, Operand::Const(Const::String(s)) if s.is_empty())
             {
                 expression = "(EmelaAny){0}".into();
+            }
+            if layouts.owned_string_returns.contains(&function.name) {
+                writer.line(&format!(
+                    "EmelaString emela_owned_return = emela_heap_own_string({expression});"
+                ));
+                emit_owned_cleanup(layouts, function, None, writer);
+                writer.ret(Some("emela_owned_return"));
+                return Ok(());
             }
             let mut moved = None;
             let copies_string_to_caller = string_buffers.returns_to_caller
@@ -8255,6 +8304,7 @@ struct TypeLayouts<'a> {
     closure_function_types: HashSet<TypeId>,
     closure_functions: HashMap<FnId, usize>,
     closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
+    owned_string_returns: HashSet<String>,
     closure_cell_captures: HashMap<String, HashSet<VarId>>,
     function_adapters: Vec<FunctionAdapterLayout>,
     function_adapter_ids: HashMap<(TypeId, TypeId), usize>,
@@ -8312,6 +8362,15 @@ impl<'a> TypeLayouts<'a> {
                 .collect(),
             closure_functions: closures.functions.clone(),
             closure_environments: closures.environments.clone(),
+            owned_string_returns: closures
+                .functions
+                .keys()
+                .filter_map(|id| {
+                    let f = &flow.functions[*id];
+                    (!f.suspends && matches!(flow.core.types[f.ret], Type::String))
+                        .then(|| f.name.clone())
+                })
+                .collect(),
             closure_cell_captures: closures
                 .functions
                 .iter()

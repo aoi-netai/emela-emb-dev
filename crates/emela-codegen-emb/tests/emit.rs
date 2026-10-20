@@ -5972,3 +5972,69 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn captured_sync_string_producers_return_owned_bytes_with_inferred_scratch() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+pub fn formatter(n: Int) -> (fn() -> String) { fn() { Int.to_string(n) } }
+pub fn capture(n: Int) -> (fn() -> String) {
+  first = Int.to_string(n)
+  String.byte_size(first)
+  other = Int.to_string(n + 1)
+  String.byte_size(other)
+  fn() { first }
+}
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    let ty = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name == "formatter")
+        .unwrap()
+        .1
+        .ret
+        .index();
+    let output = compile(&core, &Options::default().with_heap_bytes(2048)).unwrap();
+    let c = &output
+        .files
+        .iter()
+        .find(|f| f.path == "emela_embedded.c")
+        .unwrap()
+        .contents;
+    assert!(c.contains("[11]"));
+    assert!(!c.contains("char emela_string_buffer_0[256]"));
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{ (void)k; (void)m; (void)n; abort(); }}
+int main(void) {{
+  for (int i = 0; i < 1000; i++) {{
+    emela_function_type_{ty} f = emela_export_formatter_0(INT32_MIN);
+    EmelaString value = f.call(f.env);
+    emela_embedded_release_function_{ty}(&f);
+    assert(value.owner && value.length == 11 && memcmp(value.data, "-2147483648", 11) == 0);
+    emela_embedded_release_string(&value);
+    f = emela_export_capture_1(42);
+    value = f.call(f.env);
+    emela_embedded_release_function_{ty}(&f);
+    assert(value.owner && value.length == 2 && memcmp(value.data, "42", 2) == 0);
+    emela_embedded_release_string(&value);
+  }}
+}}
+"#
+        ),
+    );
+}
