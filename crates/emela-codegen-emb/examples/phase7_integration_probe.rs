@@ -12,15 +12,22 @@ fn main() {
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/phase7-integration-probe/generated"));
-    let with_collector = args.next().is_some_and(|mode| mode == "gc");
+    let mode = args.next().unwrap_or_default();
+    let with_collector = mode == "gc" || mode == "gc-string";
+    let managed_success = mode == "string" || mode == "gc-string";
+    let flow = if managed_success {
+        fixture::lower_managed(with_collector)
+    } else {
+        fixture::lower(with_collector)
+    };
     let output = compile_flow(
-        &fixture::lower(with_collector),
+        &flow,
         &Options::default()
             .with_heap_bytes(4096)
             .with_string_capacity(32)
             .with_fiber_capacity(8)
             .with_frame_capacity(48)
-            .with_frame_bytes(240)
+            .with_frame_bytes(if managed_success { 264 } else { 252 })
             .with_task_capacity(2)
             .with_event_capacity(2)
             .with_deferred_capacity(2)

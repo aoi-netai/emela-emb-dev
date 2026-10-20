@@ -24,13 +24,15 @@ fn rounds(n: Int, total: Int) -> Int fails Boom use {Scope[Boom, {State[String],
     done = Fiber.deferred()
     Deferred.complete(done, state.get())
     text = Deferred.await(done)
-    rounds(n - 1, total + String.byte_size(text))
+    if text == "42" { rounds(n - 1, total + String.byte_size(text)) } else { -1000 }
   }
 }
 pub fn work(n: Int) -> Int use Async {
   (answer, final) = State.run("initial", fn() {
     Fiber.scope(fn() { rounds(n, 0) }) escape {
-      Boom(message, parts) -> String.byte_size(message) + List.length(parts)
+      Boom(message, parts) -> if String.starts_with(message, "a") {
+        String.byte_size(message) + List.length(parts)
+      } else { -1000 }
     }
   })
   answer + String.byte_size(final)

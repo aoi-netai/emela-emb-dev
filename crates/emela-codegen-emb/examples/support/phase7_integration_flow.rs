@@ -1,12 +1,29 @@
-use emela_core::{Builtin, External, ExternalBinding, HostRef, Roots, Type, TypeId};
-use emela_lir::{FnBuilder, Module, Term, Value};
+use emela_core::{External, ExternalBinding, HostRef, Roots};
+use emela_lir::Module;
+
+#[path = "gc_anchor.rs"]
+mod gc_anchor;
 
 pub fn lower(with_collector: bool) -> Module {
-    let core = super::support::try_lower(
-        &[("main.emel", include_str!("phase7_integration.emel"))],
-        Roots::Exported,
-    )
-    .expect("lower phase 7 integration fixture");
+    lower_value(with_collector, false)
+}
+
+pub fn lower_managed(with_collector: bool) -> Module {
+    lower_value(with_collector, true)
+}
+
+fn lower_value(with_collector: bool, managed_success: bool) -> Module {
+    let mut source = include_str!("phase7_integration.emel").to_owned();
+    if managed_success {
+        source = source
+            .replace(
+                "fn request(n: Int) -> Int fails",
+                "fn request(n: Int) -> String fails",
+            )
+            .replace("state.set(Int.to_string(value))", "state.set(value)");
+    }
+    let core = super::support::try_lower(&[("main.emel", &source)], Roots::Exported)
+        .expect("lower phase 7 integration fixture");
     let mut flow = emela_codegen_emb::flow_from_core(&core).expect("verified source Flow");
     let (_, request) = flow
         .functions
@@ -22,30 +39,7 @@ pub fn lower(with_collector: bool) -> Module {
         }],
     });
     if with_collector {
-        // A reachable Cell[Any] makes the compiler generate cycle tracing for this module.
-        // The integration workload itself never creates a cycle.
-        let cell_type = flow.core.types.intern(Type::Cell(TypeId::ANY));
-        let mut b = FnBuilder::new(&flow.core, "gc_anchor");
-        b.set_exported().set_ret(TypeId::ANY);
-        let value = b.param("value", TypeId::ANY);
-        let cell = b.assign(
-            "cell",
-            cell_type,
-            Value::Builtin {
-                op: Builtin::CellNew,
-                args: vec![value.into()],
-            },
-        );
-        let result = b.assign(
-            "result",
-            TypeId::ANY,
-            Value::Builtin {
-                op: Builtin::CellGet,
-                args: vec![cell.into()],
-            },
-        );
-        b.term(Term::Return(Some(result.into())));
-        flow.add(b.finish());
+        gc_anchor::add(&mut flow);
     }
     flow
 }
