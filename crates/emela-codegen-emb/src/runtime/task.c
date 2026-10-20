@@ -43,7 +43,13 @@ static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kin
   task->state = EMELA_TASK_PENDING;
   fiber->state = EMELA_FIBER_WAITING;
   EmelaTask handle = {slot, task->generation};
+#ifdef EMELA_RESUME_RUNTIME
+  fiber->pending_task = handle;
+#endif
   emela_board_event_unlock(irq_state);
+#ifdef EMELA_RESUME_RUNTIME
+  emela_resume_boundary(fiber);
+#endif
   return handle;
 }
 
@@ -94,7 +100,11 @@ static int emela_task_dispatch_one(void) {
   emela_task_slot *task = &emela_tasks[event.task.slot];
   if (task->generation != event.task.generation || task->state != EMELA_TASK_QUEUED) {
     emela_board_event_unlock(irq_state);
+#ifdef EMELA_RESUME_RUNTIME
+    return 1; /* A completed root abandoned this task before the queued event was consumed. */
+#else
     emela_scheduler_invalid();
+#endif
   }
   EmelaFiber owner = task->fiber;
   void *result = task->result;
@@ -105,6 +115,9 @@ static int emela_task_dispatch_one(void) {
   emela_board_event_unlock(irq_state);
 
   emela_fiber *fiber = emela_fiber_get(owner);
+#ifdef EMELA_RESUME_RUNTIME
+  fiber->pending_task = (EmelaTask){EMELA_SLOT_NONE, 0};
+#endif
   if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
   if (result != NULL) {
     switch (kind) {
@@ -118,3 +131,22 @@ static int emela_task_dispatch_one(void) {
   emela_ready_push(fiber);
   return 1;
 }
+
+#ifdef EMELA_RESUME_RUNTIME
+static void emela_task_abandon(EmelaFiber owner) {
+  emela_fiber *fiber = emela_fiber_get(owner);
+  EmelaTask handle = fiber->pending_task;
+  if (handle.slot == EMELA_SLOT_NONE) return;
+  uint32_t irq_state = emela_board_event_lock();
+  emela_task_slot *task = &emela_tasks[handle.slot];
+  if (task->generation != handle.generation || task->state == EMELA_TASK_FREE) {
+    emela_board_event_unlock(irq_state);
+    emela_scheduler_invalid();
+  }
+  task->state = EMELA_TASK_FREE;
+  task->next = emela_task_free;
+  emela_task_free = handle.slot;
+  fiber->pending_task = (EmelaTask){EMELA_SLOT_NONE, 0};
+  emela_board_event_unlock(irq_state);
+}
+#endif

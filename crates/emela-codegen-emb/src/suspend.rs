@@ -14,7 +14,7 @@ pub(super) fn validate(
     emitted: &HashSet<FnId>,
     options: &Options,
 ) -> Result<bool, Vec<Error>> {
-    let mut enabled = false;
+    let mut enabled = has_operations(flow, emitted);
     for (id, function) in flow.functions.iter().filter(|(id, _)| emitted.contains(id)) {
         if !function.suspends {
             continue;
@@ -48,11 +48,12 @@ pub(super) fn validate(
             if let Stmt::Let { value, .. } = stmt {
                 match value {
                     Value::Call {
-                        callee: Callee::Direct(target),
-                        on_fail: None,
-                        ..
+                        on_fail: Some(_), ..
                     } => {
-                        let _ = target;
+                        return Err(unsupported(
+                            &function.name,
+                            "failure edge in a suspend frame (phase 7 follow-up)",
+                        ));
                     }
                     Value::Fiber { .. } => {
                         return Err(unsupported(
@@ -93,6 +94,21 @@ pub(super) fn validate(
         }]);
     }
     Ok(enabled)
+}
+
+pub(super) fn has_operations(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        if !emitted.contains(&id) {
+            return false;
+        }
+        let (positions, _) = function_positions(function);
+        function.stmts.iter().any(|(id, stmt)| {
+            positions.contains_key(&id)
+                && matches!(stmt,
+            Stmt::Let { value: Value::Call { callee: Callee::Op { effect, op, .. }, .. }, .. }
+                if flow.core.effects[*effect].ops[*op].suspend)
+        })
+    })
 }
 
 pub(super) fn has_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
@@ -141,7 +157,10 @@ pub(super) fn task_signature(layouts: &TypeLayouts<'_>, function: &Function, nam
     format!("void {name}({})", params.join(", "))
 }
 
-pub(super) fn emit_runtime(writer: &mut Writer, options: &Options, tasks: bool) {
+pub(super) fn emit_runtime(writer: &mut Writer, options: &Options, tasks: bool, resumes: bool) {
+    if resumes {
+        writer.line("#define EMELA_RESUME_RUNTIME 1");
+    }
     writer.line(&format!(
         "#define EMELA_FIBER_CAPACITY {}",
         options.fiber_capacity
@@ -484,6 +503,9 @@ pub(super) fn emit_function(
         writer.line(&format!("#define {name} (frame->{name})"));
     }
     writer.begin_block("for (;;)");
+    if layouts.has_resumes {
+        writer.line("if (fiber->perform != NULL && emela_resume_over(fiber->root)) return;");
+    }
     writer.begin_block("switch (frame->base.pc)");
     let mut next_temp = 0;
     for (index, node) in graph.nodes.iter().enumerate() {
@@ -492,6 +514,38 @@ pub(super) fn emit_function(
             Node::Statement(id, next) => {
                 let statement = &function.stmts[*id];
                 if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Call {
+                            callee:
+                                Callee::Op {
+                                    handler,
+                                    effect,
+                                    op,
+                                },
+                            args,
+                            on_fail: None,
+                            ..
+                        },
+                    ..
+                } = statement
+                    && layouts.core.effects[*effect].ops[*op].suspend
+                {
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    let result = dst
+                        .map(|id| format!("&{}", variable_name(id)))
+                        .unwrap_or_else(|| "NULL".to_owned());
+                    emit_operation(
+                        layouts, function, *dst, *handler, *effect, *op, args, "fiber", &result,
+                        writer,
+                    )?;
+                    writer.begin_block("if (fiber->state == EMELA_FIBER_READY)");
+                    writer.line(
+                        "emela_ready_remove(fiber); fiber->state = EMELA_FIBER_RUNNING; continue;",
+                    );
+                    writer.end_block();
+                    writer.line("return;");
+                } else if let Stmt::Let {
                     dst,
                     value:
                         Value::Call {
@@ -726,7 +780,8 @@ pub(super) fn emit_function(
         "emela_frame *base = emela_frame_push(fiber, sizeof({name}_frame), {name}_step);"
     ));
     writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
-    writer.line(&format!("*frame = ({name}_frame){{.base = *base}};"));
+    // Clear in place: a struct compound literal can put the entire frame on the C stack at O0.
+    writer.line("for (size_t offset = sizeof(emela_frame); offset < sizeof(*frame); offset++) ((unsigned char *)frame)[offset] = 0;");
     writer.line(&format!("frame->base.pc = {entry};"));
     writer.line(&format!("frame->base.drop = {name}_drop;"));
     if has_result {
@@ -839,4 +894,157 @@ fn prepare_result(
             writer.assign(&owned_variable_name(dst), "INT32_C(1)");
         }
     }
+}
+
+pub(super) fn emit_resume_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    writer.line(&format!(
+        "#define EMELA_RESUME_KIND UINT32_C({})",
+        layouts.resume_kind()
+    ));
+    writer.line(include_str!("runtime/resume.c"));
+    for &ty in &layouts.resume_types {
+        let Type::Fn(ft) = &layouts.types[ty] else {
+            unreachable!()
+        };
+        writer.begin_block(
+            &function_ref_adapter_signature(
+                layouts,
+                ty,
+                &format!("emela_resume_value_{}", ty.index()),
+            )
+            .replacen("static ", "static inline ", 1),
+        );
+        writer.line("emela_resume *resume = emela_resume_prepare(emela_env);");
+        writer.line("if (resume == NULL) return;");
+        let result = ft.params[0];
+        if layouts.type_repr(result) != Repr::Void {
+            writer.begin_block("if (resume->result != NULL)");
+            writer.decl(&layouts.c_type(result), "returned", Some("emela_arg_0"));
+            retain_frame_value(layouts, result, "returned", writer);
+            writer.line(&format!(
+                "*(({} *)resume->result) = returned;",
+                layouts.c_type(result)
+            ));
+            writer.end_block();
+        }
+        writer.line("emela_resume_commit(resume);");
+        writer.end_block();
+    }
+}
+
+pub(super) fn emit_operation(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    handler: VarId,
+    effect: EffectId,
+    operation: usize,
+    args: &[Operand],
+    caller: &str,
+    result: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let index = *layouts.handler_layout_ids.get(&effect).ok_or_else(|| {
+        invalid_flow_ir(&function.name, "suspend operation without handler layout")
+    })?;
+    let ty = layouts.handler_layouts[index].operations[operation];
+    let Type::Fn(ft) = &layouts.types[ty] else {
+        unreachable!()
+    };
+    if ft.fails || ft.ev || !ft.suspends {
+        return Err(unsupported(
+            &function.name,
+            "suspend operation with failure or unsupported effect ABI",
+        ));
+    }
+    let resume_ty = *ft.params.last().expect("resume parameter");
+    let pointer = format!(
+        "(({} *){})",
+        TypeLayouts::handler_type_name(effect),
+        variable_name(handler)
+    );
+    writer.line(&format!(
+        "if ({pointer} == NULL) emela_scheduler_invalid();"
+    ));
+    writer.line(&format!("if (!{pointer}->active) emela_board_defect(EMELA_DEFECT_PANIC, {pointer}->released_message, {pointer}->released_message_length);"));
+    if let Some(dst) = dst {
+        prepare_result(layouts, function, Some(dst), writer);
+    }
+    writer.line(&format!("emela_fiber *implementation = emela_operation_begin({caller}, {result}, {pointer}->resume_error_{operation}, {pointer}->resume_error_length_{operation});"));
+    let mut arguments = vec![
+        "implementation".to_owned(),
+        format!("{pointer}->op_{operation}.env"),
+    ];
+    arguments.extend(
+        args.iter()
+            .map(operand_expression)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|why| unsupported(&function.name, why))?,
+    );
+    arguments.push(format!(
+        "({}){{emela_resume_value_{}, implementation->perform}}",
+        layouts.c_type(resume_ty),
+        resume_ty.index()
+    ));
+    writer.line(&format!(
+        "if ({pointer}->op_{operation}.call == NULL) emela_scheduler_invalid();"
+    ));
+    writer.line("emela_fiber *saved_context = emela_current_fiber;");
+    writer.line("emela_current_fiber = implementation;");
+    writer.line(&format!(
+        "{pointer}->op_{operation}.call({});",
+        arguments.join(", ")
+    ));
+    writer.line("emela_current_fiber = saved_context;");
+    writer.begin_block(
+        "if (implementation->top == NULL && implementation->state == EMELA_FIBER_RUNNING)",
+    );
+    writer.line("implementation->state = EMELA_FIBER_DONE;");
+    writer.line("emela_resume_after_step(implementation);");
+    writer.end_block();
+    writer.begin_block("else if (implementation->state == EMELA_FIBER_RUNNING)");
+    writer.line("emela_ready_push(implementation);");
+    writer.end_block();
+    Ok(())
+}
+
+pub(super) fn emit_sync_operation(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    handler: VarId,
+    effect: EffectId,
+    operation: usize,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    writer.begin_block("");
+    writer.line("EmelaFiber sync_handle = emela_fiber_create();");
+    writer.line("emela_fiber *sync_caller = emela_fiber_get(sync_handle);");
+    writer.line("if (emela_current_fiber != NULL) sync_caller->root = emela_current_fiber->root;");
+    let result = dst
+        .map(|id| format!("&{}", variable_name(id)))
+        .unwrap_or_else(|| "NULL".to_owned());
+    emit_operation(
+        layouts,
+        function,
+        dst,
+        handler,
+        effect,
+        operation,
+        args,
+        "sync_caller",
+        &result,
+        writer,
+    )?;
+    writer.begin_block("if (implementation->state == EMELA_FIBER_READY)");
+    writer.line("emela_ready_remove(implementation); emela_resume_drive(implementation);");
+    writer.end_block();
+    writer.begin_block("if (sync_caller->state != EMELA_FIBER_READY)");
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"immediate operation did not resume\", UINT16_C(34));");
+    writer.end_block();
+    writer.line("emela_ready_remove(sync_caller); sync_caller->state = EMELA_FIBER_DONE;");
+    writer.line("emela_resume_sweep(); emela_fiber_release(sync_handle);");
+    writer.end_block();
+    Ok(())
 }

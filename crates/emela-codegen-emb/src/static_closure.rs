@@ -48,7 +48,11 @@ pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
             if !reachable.contains(&id) {
                 return None;
             }
+            let (positions, _) = crate::emit::function_positions(function);
             function.stmts.iter().find_map(|(statement, stmt)| {
+                if !positions.contains_key(&statement) {
+                    return None;
+                }
                 let Stmt::Let {
                     dst: Some(dst),
                     value: Value::Closure(closure),

@@ -68,6 +68,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let parent = &flow.functions[environment.parent];
         for capture in &environment.captures {
             if type_contains_cell(&layouts, capture.ty, &mut HashSet::new())
+                && matches!(&layouts.types[environment.function_type], Type::Fn(ft) if ft.suspends)
+            {
+                return Err(unsupported(
+                    &parent.name,
+                    "suspend closure capturing a frame-local Cell",
+                ));
+            }
+            if type_contains_cell(&layouts, capture.ty, &mut HashSet::new())
                 && (!matches!(layouts.types[capture.ty], Type::Cell(_))
                     || !cell_capture_is_bounded(
                         flow,
@@ -99,8 +107,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
     validate_local_cells(flow, &emitted_functions, &layouts)?;
+    let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
     let heap_required = flow.functions.iter().any(|(id, function)| {
-        emitted_functions.contains(&id) && function_needs_heap(id, function, &layouts, &closures)
+        emitted_functions.contains(&id)
+            && function_needs_heap(id, function, &layouts, &closures, &string_output_functions)
     });
     if options.heap_bytes() == 0 && heap_required {
         let (_, function) = flow
@@ -108,7 +118,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             .iter()
             .find(|(id, function)| {
                 emitted_functions.contains(id)
-                    && function_needs_heap(*id, function, &layouts, &closures)
+                    && function_needs_heap(
+                        *id,
+                        function,
+                        &layouts,
+                        &closures,
+                        &string_output_functions,
+                    )
             })
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
@@ -173,7 +189,6 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         names.insert(id, implementation_name);
     }
     validate_isr_entries(flow, &emitted_functions, &layouts, &names, options)?;
-    let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -193,7 +208,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     header.line("#include <stdint.h>");
     header.blank();
     layouts.emit_string_declaration(&mut header);
-    if has_scheduler {
+    if has_scheduler
+        || layouts
+            .function_types
+            .iter()
+            .any(|&ty| matches!(&layouts.types[ty], Type::Fn(ft) if ft.suspends))
+    {
         header.line("typedef struct emela_fiber emela_fiber;");
     }
     if layouts.has_error_abi || layouts.any_abi {
@@ -395,7 +415,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <stddef.h>");
     source.blank();
     if has_scheduler {
-        suspend::emit_runtime(&mut source, options, has_tasks);
+        suspend::emit_runtime(&mut source, options, has_tasks, layouts.has_resumes);
     }
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
@@ -415,6 +435,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
+    }
+    if layouts.has_resumes {
+        suspend::emit_resume_runtime(&layouts, &mut source);
     }
     let has_int_shift = has_builtin(
         flow,
@@ -784,11 +807,45 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         source.blank();
     }
     for &(target, function_type) in &function_ref_adapters {
+        let target_function = &flow.functions[target];
+        let takes_output = string_output_functions.contains(&target);
+        let adapter_capacity = if takes_output {
+            let plan = StringBufferPlan::new(
+                &layouts,
+                target_function,
+                options.string_capacity(),
+                &string_output_functions,
+                true,
+            );
+            target_function
+                .seqs
+                .iter()
+                .filter_map(|(_, seq)| match &seq.term {
+                    Term::Return(Some(Operand::Var(var))) => Some(
+                        plan.buffers
+                            .get(var)
+                            .map_or(options.string_capacity(), |(_, size)| *size),
+                    ),
+                    Term::Return(Some(Operand::Const(Const::String(value)))) => Some(
+                        u16::try_from(value.len())
+                            .unwrap_or(u16::MAX)
+                            .min(options.string_capacity()),
+                    ),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(options.string_capacity())
+                .max(1)
+        } else {
+            options.string_capacity()
+        };
         emit_function_ref_adapter(
             &layouts,
             function_type,
             &names[&target],
             &function_ref_adapter_name(target, function_type),
+            takes_output,
+            adapter_capacity,
             &mut source,
         );
         source.blank();
@@ -1553,7 +1610,9 @@ impl StringBufferPlan {
     }
 }
 
-fn function_positions(function: &Function) -> (HashMap<StmtId, usize>, HashMap<SeqId, usize>) {
+pub(crate) fn function_positions(
+    function: &Function,
+) -> (HashMap<StmtId, usize>, HashMap<SeqId, usize>) {
     fn visit(
         function: &Function,
         sequence: SeqId,
@@ -2538,6 +2597,7 @@ fn function_needs_heap(
     function: &Function,
     layouts: &TypeLayouts<'_>,
     closures: &crate::static_closure::ClosureLowering,
+    string_output_functions: &HashSet<FnId>,
 ) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
@@ -2564,6 +2624,10 @@ fn function_needs_heap(
     }
 
     let statement_needs_heap = function.stmts.iter().any(|(_, statement)| match statement {
+        Stmt::Let {
+            value: Value::FnRef(target),
+            ..
+        } if string_output_functions.contains(target) => true,
         Stmt::Let {
             value:
                 Value::List {
@@ -3823,6 +3887,20 @@ fn emit_handler_value(
         &format!("UINT16_C({})", message.len()),
     );
     for (index, &operation) in operations.iter().enumerate() {
+        if layouts.core.effects[effect].ops[index].suspend {
+            let message = format!(
+                "resume called twice in operation `{}` of handler `{name}`",
+                layouts.core.effects[effect].ops[index].name
+            );
+            writer.assign(
+                &format!("{target}->resume_error_{index}"),
+                &c_string_literal(message.as_bytes()),
+            );
+            writer.assign(
+                &format!("{target}->resume_error_length_{index}"),
+                &format!("UINT16_C({})", message.len()),
+            );
+        }
         if layouts.is_managed_value(function.vars[operation].ty) {
             emit_retain_operand(layouts, function, &Operand::Var(operation), writer);
         }
@@ -4766,6 +4844,21 @@ fn emit_statement_inner(
                 }
                 Value::Runtime { op, args } => {
                     emit_runtime(layouts, function, *dst, *op, args, string_buffers, writer)?;
+                }
+                Value::Call {
+                    callee:
+                        Callee::Op {
+                            handler,
+                            effect,
+                            op,
+                        },
+                    args,
+                    on_fail,
+                    ..
+                } if layouts.core.effects[*effect].ops[*op].suspend && on_fail.is_none() => {
+                    suspend::emit_sync_operation(
+                        layouts, function, *dst, *handler, *effect, *op, args, writer,
+                    )?;
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
@@ -7878,6 +7971,8 @@ fn emit_function_ref_adapter(
     function_type: TypeId,
     target_name: &str,
     adapter_name: &str,
+    takes_string_output: bool,
+    string_capacity: u16,
     writer: &mut Writer,
 ) {
     let Type::Fn(function_type_data) = layouts.types[function_type].clone() else {
@@ -7912,7 +8007,18 @@ fn emit_function_ref_adapter(
         writer.end_block();
         return;
     }
+    if takes_string_output {
+        writer.line(&format!("char buffer[{string_capacity}];"));
+        args.push("buffer".to_owned());
+        args.push(format!("UINT16_C({string_capacity})"));
+    }
     let call = format!("{target_name}({})", args.join(", "));
+    if takes_string_output {
+        writer.line(&format!("EmelaString returned = {call};"));
+        writer.ret(Some("emela_heap_own_string(returned)"));
+        writer.end_block();
+        return;
+    }
     if layouts.type_repr(function_type_data.ret) == Repr::Void {
         writer.line(&format!("{call};"));
         writer.ret(None);
@@ -7949,6 +8055,9 @@ fn emit_function_coerce_adapter(
     writer.end_block();
 
     let mut args = vec!["environment->source.env".to_owned()];
+    if source_type.suspends {
+        args.insert(0, "fiber".to_owned());
+    }
     for (parameter_index, &parameter) in source_type.params.iter().enumerate() {
         if layouts.type_repr(parameter) != Repr::Void {
             args.push(format!("emela_arg_{parameter_index}"));
@@ -7956,13 +8065,36 @@ fn emit_function_coerce_adapter(
     }
     if source_type.ev {
         args.push("emela_evidence".to_owned());
+    } else if destination_type.ev {
+        writer.line("(void)emela_evidence;");
     }
     if source_type.fails {
         args.push("emela_error_out".to_owned());
     } else if destination_type.fails {
         writer.assign("*emela_error_out", "(EmelaError){0}");
     }
+    if source_type.suspends && layouts.type_repr(source_type.ret) != Repr::Void {
+        args.push("result".to_owned());
+    }
     let call = format!("environment->source.call({})", args.join(", "));
+    if destination_type.suspends {
+        if source_type.suspends || layouts.type_repr(source_type.ret) == Repr::Void {
+            writer.line(&format!("{call};"));
+        } else {
+            writer.decl(&layouts.c_type(source_type.ret), "returned", Some(&call));
+            writer.begin_block("if (result != NULL)");
+            writer.assign("*result", "returned");
+            writer.end_block();
+            if layouts.is_managed_value(source_type.ret) {
+                writer.begin_block("else");
+                layouts.emit_release_value_expression(source_type.ret, "returned", writer);
+                writer.end_block();
+            }
+        }
+        writer.line("(void)fiber;");
+        writer.end_block();
+        return;
+    }
     if layouts.type_repr(source_type.ret) == Repr::Void {
         writer.line(&format!("{call};"));
         writer.ret(None);
@@ -8049,6 +8181,8 @@ struct TypeLayouts<'a> {
     function_adapter_ids: HashMap<(TypeId, TypeId), usize>,
     handler_layouts: Vec<HandlerLayout>,
     handler_layout_ids: HashMap<EffectId, usize>,
+    resume_types: Vec<TypeId>,
+    has_resumes: bool,
     evidence_nodes_required: bool,
     any_abi: bool,
     any_box_required: bool,
@@ -8112,6 +8246,8 @@ impl<'a> TypeLayouts<'a> {
             function_adapter_ids: HashMap::new(),
             handler_layouts: Vec::new(),
             handler_layout_ids: HashMap::new(),
+            resume_types: Vec::new(),
+            has_resumes: suspend::has_operations(flow, emitted),
             evidence_nodes_required: false,
             any_abi: false,
             any_box_required: false,
@@ -8154,6 +8290,22 @@ impl<'a> TypeLayouts<'a> {
                             .iter()
                             .map(|&operation| function.vars[operation].ty)
                             .collect::<Vec<_>>();
+                        for (index, &ty) in operations.iter().enumerate() {
+                            if !flow.core.effects[*effect].ops[index].suspend {
+                                continue;
+                            }
+                            let Type::Fn(ft) = &layouts.types[ty] else {
+                                unreachable!()
+                            };
+                            let resume = *ft
+                                .params
+                                .last()
+                                .expect("suspend handler has a resume parameter");
+                            if !layouts.resume_types.contains(&resume) {
+                                layouts.resume_types.push(resume);
+                            }
+                            layouts.closure_function_types.insert(resume);
+                        }
                         if let Some(previous) = layouts
                             .handler_layout_ids
                             .get(effect)
@@ -8354,8 +8506,7 @@ impl<'a> TypeLayouts<'a> {
         }
         let compatible = source_fn.params == destination_fn.params
             && source_fn.ret == destination_fn.ret
-            && !source_fn.suspends
-            && !destination_fn.suspends
+            && (!source_fn.suspends || destination_fn.suspends)
             && source_fn.sets.is_none()
             && destination_fn.sets.is_none()
             && (!source_fn.fails || destination_fn.fails)
@@ -8961,6 +9112,9 @@ impl<'a> TypeLayouts<'a> {
         writer.begin_block("");
         writer.line("break;");
         writer.end_block();
+        if self.has_resumes {
+            writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
+        }
         for (index, environment) in environments.iter().enumerate() {
             let kind = self.closure_environment_kind(index);
             writer.line(&format!("case UINT32_C({kind}):"));
@@ -9221,6 +9375,15 @@ impl<'a> TypeLayouts<'a> {
             writer.line("  int32_t active;");
             writer.line("  const char *released_message;");
             writer.line("  uint16_t released_message_length;");
+            for (index, _) in layout
+                .operations
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| self.core.effects[layout.effect].ops[*i].suspend)
+            {
+                writer.line(&format!("  const char *resume_error_{index};"));
+                writer.line(&format!("  uint16_t resume_error_length_{index};"));
+            }
             if layout.operations.is_empty() {
                 writer.line("  uint8_t _empty;");
             } else {
@@ -9247,6 +9410,10 @@ impl<'a> TypeLayouts<'a> {
 
     fn function_adapter_kind(&self, index: usize) -> u32 {
         self.runtime_value_kind_base() + u32::try_from(index).expect("too many function adapters")
+    }
+
+    fn resume_kind(&self) -> u32 {
+        self.any_box_kind() + 1
     }
 
     fn evidence_node_kind(&self) -> u32 {

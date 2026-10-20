@@ -45,6 +45,9 @@ pub(crate) fn lower(module: &mut Module) {
                 else {
                     return None;
                 };
+                if module.core.effects[*effect].ops[*op].suspend {
+                    return None;
+                }
                 let (static_handler, operations) =
                     resolve_handler(function, &handlers, *handler, *effect, &mut HashSet::new())?;
                 if handler_is_retired(function, static_handler) {
