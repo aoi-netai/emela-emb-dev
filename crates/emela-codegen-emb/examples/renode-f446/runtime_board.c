@@ -119,6 +119,7 @@ void SysTick_Handler(void) {
   else irq_accepted = emela_task_complete_int(irq_task, irq_value);
   if (irq_accepted) emela_runtime_notifications++;
   else emela_runtime_rejected_notifications++;
+  __asm volatile("dmb" ::: "memory");
   irq_done = 1;
 }
 static void notify(EmelaTask task, unsigned kind, int32_t value, int accepted) {
@@ -128,10 +129,12 @@ static void notify(EmelaTask task, unsigned kind, int32_t value, int accepted) {
   uint32_t thread_pattern = UINT32_C(0x40500000), restored_pattern;
   /* Keep s0 live across the exception; the ISR deliberately overwrites it. */
   __asm volatile("vmov s0, %0" :: "r"(thread_pattern) : "s0", "memory");
+  __asm volatile("dmb" ::: "memory");
   *(volatile uint32_t *)UINT32_C(0xe000e014) = 127;
   *(volatile uint32_t *)UINT32_C(0xe000e018) = 0;
   *(volatile uint32_t *)UINT32_C(0xe000e010) = 7;
   for (unsigned spin = 0; !irq_done; spin++) { CHECK(spin < 1000000); __asm volatile("nop"); }
+  __asm volatile("dmb" ::: "memory");
   __asm volatile("vmov %0, s0" : "=r"(restored_pattern) :: "memory");
   CHECK(restored_pattern == thread_pattern); emela_runtime_fp_context_checks++;
   CHECK(irq_accepted == accepted && emela_runtime_fp_irq == 1.75f && emela_runtime_fp_main == 1.25f);
