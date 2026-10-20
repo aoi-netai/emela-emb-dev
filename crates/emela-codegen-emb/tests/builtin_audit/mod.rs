@@ -20,6 +20,32 @@ fn discarded_builtin(op: Builtin, input: TypeId) -> Module {
 }
 
 #[test]
+fn unreachable_discarded_results_do_not_introduce_heap_requirements() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut b = FnBuilder::new(&flow.core, "answer");
+    b.set_exported().set_ret(TypeId::INT);
+    b.term(Term::Return(Some(Const::Int(42).into())));
+    let mut function = b.finish();
+    function.stmts.alloc(emela_lir::Stmt::Let {
+        dst: None,
+        value: Value::Builtin {
+            op: Builtin::StringChars,
+            args: vec![Const::String("unreachable".into()).into()],
+        },
+        on_defect: None,
+        on_suspend: None,
+    });
+    flow.add(function);
+    emela_lir::verify(&flow).expect("orphan statement arenas are permitted by the Flow verifier");
+    let output = compile_flow(&flow, &Options::default())
+        .expect("unreachable discarded builtin must not create heap-backed locals");
+    compile_and_run(
+        output,
+        "#include <assert.h>\n#include \"emela_embedded.h\"\nint main(void) { assert(emela_export_answer_0() == 42); }\n",
+    );
+}
+
+#[test]
 fn discarded_float_rounding_preserves_the_out_of_range_defect() {
     let output = compile_flow(
         &discarded_builtin(Builtin::FloatFloor, TypeId::FLOAT),

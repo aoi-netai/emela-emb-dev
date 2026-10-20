@@ -9,7 +9,12 @@ pub(crate) type Results = HashMap<FnId, HashSet<VarId>>;
 pub(crate) fn normalize(module: &mut Module) -> Results {
     let mut discarded = Results::new();
     for (function_id, function) in module.functions.iter_mut() {
-        let statements: Vec<_> = function.stmts.iter().map(|(id, _)| id).collect();
+        let (positions, _) = crate::emit::function_positions(function);
+        let statements: Vec<_> = function
+            .stmts
+            .iter()
+            .filter_map(|(id, _)| positions.contains_key(&id).then_some(id))
+            .collect();
         for statement_id in statements {
             let Stmt::Let {
                 dst: None, value, ..
