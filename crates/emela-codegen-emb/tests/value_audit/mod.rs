@@ -1,5 +1,7 @@
 use super::*;
 
+mod discarded;
+
 fn discarded_value_flow(kind: &str) -> Module {
     let mut core = emela_core::Module::new();
     let boxed = core.add_enum(EnumDef {

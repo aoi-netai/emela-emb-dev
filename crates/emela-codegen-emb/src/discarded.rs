@@ -1,6 +1,6 @@
 //! Materialize discarded runtime results without retaining them until function return.
 use emela_core::{Builtin, Sig, Type, TypeId};
-use emela_lir::{FnId, Module, RuntimeOp, Stmt, Value, VarData, VarId};
+use emela_lir::{Const, FnId, Function, Module, Operand, RuntimeOp, Stmt, Value, VarData, VarId};
 use std::collections::{HashMap, HashSet};
 
 // Function names need not be unique in a caller-supplied verified Flow module.
@@ -9,14 +9,15 @@ pub(crate) type Results = HashMap<FnId, HashSet<VarId>>;
 pub(crate) fn normalize(module: &mut Module) -> Results {
     let mut discarded = Results::new();
     for (function_id, function) in module.functions.iter_mut() {
-        for (_, statement) in function.stmts.iter_mut() {
+        let statements: Vec<_> = function.stmts.iter().map(|(id, _)| id).collect();
+        for statement_id in statements {
             let Stmt::Let {
                 dst: None, value, ..
-            } = statement
+            } = &function.stmts[statement_id]
             else {
                 continue;
             };
-            let Some(ty) = result_type(&mut module.core, value) else {
+            let Some(ty) = result_type(&mut module.core, function, value) else {
                 continue;
             };
             let repr = match module.core.types[ty] {
@@ -34,7 +35,7 @@ pub(crate) fn normalize(module: &mut Module) -> Results {
                 ty,
                 repr,
             });
-            let Stmt::Let { dst, .. } = statement else {
+            let Stmt::Let { dst, .. } = &mut function.stmts[statement_id] else {
                 unreachable!()
             };
             *dst = Some(variable);
@@ -44,8 +45,25 @@ pub(crate) fn normalize(module: &mut Module) -> Results {
     discarded
 }
 
-fn result_type(core: &mut emela_core::Module, value: &Value) -> Option<TypeId> {
+fn result_type(
+    core: &mut emela_core::Module,
+    function: &Function,
+    value: &Value,
+) -> Option<TypeId> {
     match value {
+        Value::List { elems, tail } => {
+            if let Some(tail) = tail {
+                let ty = operand_type(function, tail);
+                if matches!(core.types[ty], Type::List(_)) {
+                    return Some(ty);
+                }
+                return None;
+            }
+            let element = elems
+                .first()
+                .map_or(TypeId::UNIT, |value| operand_type(function, value));
+            Some(core.list(element))
+        }
         Value::Builtin {
             op:
                 Builtin::CellNew
@@ -85,4 +103,18 @@ fn signature_type(core: &mut emela_core::Module, sig: Sig) -> Option<TypeId> {
         }
         Sig::Param(_) => return None,
     })
+}
+
+fn operand_type(function: &Function, operand: &Operand) -> TypeId {
+    match operand {
+        Operand::Var(value) => function.vars[*value].ty,
+        Operand::Const(value) => match value {
+            Const::Int(_) => TypeId::INT,
+            Const::Int64(_) => TypeId::INT64,
+            Const::Float(_) => TypeId::FLOAT,
+            Const::Bool(_) => TypeId::BOOL,
+            Const::String(_) => TypeId::STRING,
+            Const::Unit => TypeId::UNIT,
+        },
+    }
 }
