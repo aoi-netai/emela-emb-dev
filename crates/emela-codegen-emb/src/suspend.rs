@@ -1435,11 +1435,7 @@ pub(super) fn retain_frame_value(
     value: &str,
     writer: &mut Writer,
 ) {
-    if matches!(layouts.types[ty], Type::String) || layouts.error_enum(ty).is_some() {
-        layouts.emit_own_value_in_place(ty, value, writer);
-    } else if layouts.is_managed_value(ty) {
-        layouts.emit_retain_value_expression(ty, value, writer);
-    }
+    layouts.emit_own_value_in_place(ty, value, writer);
 }
 
 fn freeze_statement_result(
@@ -1448,10 +1444,7 @@ fn freeze_statement_result(
     statement: &Stmt,
     writer: &mut Writer,
 ) {
-    if let Some(dst) = statement.dst()
-        && (matches!(layouts.types[function.vars[dst].ty], Type::String)
-            || layouts.error_enum(function.vars[dst].ty).is_some())
-    {
+    if let Some(dst) = statement.dst() {
         layouts.emit_freeze_value_in_place(function.vars[dst].ty, &variable_name(dst), writer);
     }
 }

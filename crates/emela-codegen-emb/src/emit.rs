@@ -63,29 +63,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let emitted_functions = runtime_reachable(flow);
     let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
     let has_tasks = suspend::has_tasks(flow, &emitted_functions);
-    let layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
-    for (_, function) in flow
-        .functions
-        .iter()
-        .filter(|(id, f)| emitted_functions.contains(id) && f.suspends)
-    {
-        for ty in function
-            .vars
-            .iter()
-            .map(|(_, var)| var.ty)
-            .chain(std::iter::once(function.ret))
-        {
-            if !matches!(layouts.types[ty], Type::String | Type::Any | Type::List(_))
-                && layouts.error_enum(ty).is_none()
-                && type_contains_string(&layouts, ty, &mut HashSet::new())
-            {
-                return Err(unsupported(
-                    &function.name,
-                    "suspend frame containing a tuple, enum, List, or Cell with a borrowed String",
-                ));
-            }
-        }
-    }
+    let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
     for (environment_index, environment) in closures.environments.iter().enumerate() {
         let parent = &flow.functions[environment.parent];
         for capture in &environment.captures {
@@ -111,26 +89,36 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                     "closure capturing a Cell outside a State.run handler lifetime",
                 ));
             }
-            if !matches!(layouts.types[capture.ty], Type::String)
-                && layouts.error_enum(capture.ty).is_none()
-                && closure_capture_contains_string(
-                    &layouts,
-                    &mut layouts.types.clone(),
-                    capture.ty,
-                    &mut HashSet::new(),
-                )
-            {
-                return Err(unsupported(
-                    &parent.name,
-                    "closure capturing a tuple, enum, or List that contains a String",
-                ));
-            }
         }
     }
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
     validate_local_cells(flow, &emitted_functions, &layouts)?;
     let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
+    layouts.owned_aggregate_returns = flow
+        .functions
+        .iter()
+        .filter(|(id, f)| {
+            emitted_functions.contains(id)
+                && !f.suspends
+                && !f.constant
+                && f.external.is_none()
+                && !matches!(layouts.types[f.ret], Type::String)
+                && layouts.has_inline_string(f.ret)
+        })
+        .filter(|(_, f)| {
+            !StringBufferPlan::new(
+                &layouts,
+                f,
+                options.string_capacity(),
+                &string_output_functions,
+                false,
+            )
+            .declarations
+            .is_empty()
+        })
+        .map(|(_, f)| f.name.clone())
+        .collect();
     let heap_required = flow.functions.iter().any(|(id, function)| {
         emitted_functions.contains(&id)
             && function_needs_heap(id, function, &layouts, &closures, &string_output_functions)
@@ -844,6 +832,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         if !string_buffers.declarations.is_empty()
             && layouts.has_inline_string(function.ret)
             && !layouts.owned_string_returns.contains(&function.name)
+            && !layouts.owned_aggregate_returns.contains(&function.name)
             && !takes_string_output
         {
             return Err(unsupported(
@@ -1891,36 +1880,6 @@ fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSe
     type_contains_string_with_types(layouts, &mut types, ty, seen)
 }
 
-fn closure_capture_contains_string(
-    layouts: &TypeLayouts<'_>,
-    types: &mut TypeTable,
-    ty: TypeId,
-    seen: &mut HashSet<TypeId>,
-) -> bool {
-    if !seen.insert(ty) {
-        return false;
-    }
-    match types[ty].clone() {
-        Type::String => true,
-        Type::Tuple(fields) => fields
-            .into_iter()
-            .any(|field| closure_capture_contains_string(layouts, types, field, seen)),
-        Type::List(element) | Type::Cell(element) => {
-            closure_capture_contains_string(layouts, types, element, seen)
-        }
-        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
-            variant.tys.iter().any(|&field| {
-                let field = types.subst(field, &args);
-                closure_capture_contains_string(layouts, types, field, seen)
-            })
-        }),
-        // Function signatures do not store their parameter/result values. Their environments
-        // already own captures, so retaining the function value preserves String backings.
-        Type::Fn(_) => false,
-        _ => false,
-    }
-}
-
 fn validate_local_cells(
     flow: &emela_lir::Module,
     emitted: &HashSet<FnId>,
@@ -2913,13 +2872,14 @@ fn function_needs_heap(
     let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
     (function.fails && layouts.managed_error_payloads)
+        || layouts.owned_aggregate_returns.contains(&function.name)
         || statement_needs_heap
         || (function.suspends
-            && (matches!(layouts.types[function.ret], Type::String)
+            && (layouts.has_inline_string(function.ret)
                 || function
                     .vars
                     .iter()
-                    .any(|(_, var)| matches!(layouts.types[var.ty], Type::String))))
+                    .any(|(_, var)| layouts.has_inline_string(var.ty))))
         || returns_managed_alias
         || local_managed_value
         || returns_managed_aggregate
@@ -3940,11 +3900,14 @@ fn emit_function_value_call(
         call_args.push(format!("&{error_name}"));
         call_args.insert(0, format!("{callee_name}.env"));
         let expression = format!("{callee_name}.call({})", call_args.join(", "));
-        if let Some(result) = dst {
-            writer.assign(&variable_name(result), &expression);
-        } else {
-            writer.line(&format!("{expression};"));
-        }
+        let discarded = emit_call_result(
+            layouts,
+            function_type.ret,
+            dst,
+            &expression,
+            writer,
+            next_temp,
+        );
         writer.begin_block(&format!("if ({error_name}.tag != UINT32_C(0))"));
         emit_call_failure_edge(
             layouts,
@@ -3961,17 +3924,46 @@ fn emit_function_value_call(
             next_label,
         )?;
         writer.end_block();
+        if let Some(value) = discarded {
+            layouts.emit_release_value_expression(function_type.ret, &value, writer);
+        }
         writer.end_block();
     } else {
         call_args.insert(0, format!("{callee_name}.env"));
         let expression = format!("{callee_name}.call({})", call_args.join(", "));
-        if let Some(result) = dst {
-            writer.assign(&variable_name(result), &expression);
-        } else {
-            writer.line(&format!("{expression};"));
+        if let Some(value) = emit_call_result(
+            layouts,
+            function_type.ret,
+            dst,
+            &expression,
+            writer,
+            next_temp,
+        ) {
+            layouts.emit_release_value_expression(function_type.ret, &value, writer);
         }
     }
     Ok(())
+}
+
+fn emit_call_result(
+    layouts: &TypeLayouts<'_>,
+    result: TypeId,
+    dst: Option<VarId>,
+    expression: &str,
+    writer: &mut Writer,
+    next_temp: &mut usize,
+) -> Option<String> {
+    if let Some(dst) = dst {
+        writer.assign(&variable_name(dst), expression);
+    } else if layouts.is_managed_value(result) {
+        let discarded = format!("emela_discarded_call_{}", *next_temp);
+        *next_temp += 1;
+        writer.decl(&layouts.c_type(result), &discarded, Some(expression));
+        return Some(discarded);
+    } else {
+        writer.line(&format!("{expression};"));
+    }
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5190,6 +5182,7 @@ fn emit_statement_inner(
                     suspends: false,
                     on_fail,
                 } => {
+                    let result_ty = layouts.function_results[id];
                     let name = names
                         .get(id)
                         .ok_or_else(|| unsupported(&function.name, "call to missing function"))?;
@@ -5231,11 +5224,14 @@ fn emit_statement_inner(
                             args.push(capacity);
                         }
                         let expression = format!("{name}({})", args.join(", "));
-                        if let Some(dst) = dst {
-                            writer.assign(&variable_name(*dst), &expression);
-                        } else {
-                            writer.line(&format!("{expression};"));
-                        }
+                        let discarded = emit_call_result(
+                            layouts,
+                            result_ty,
+                            *dst,
+                            &expression,
+                            writer,
+                            next_temp,
+                        );
                         writer.begin_block(&format!("if ({error_name}.tag != UINT32_C(0))"));
                         emit_call_failure_edge(
                             layouts,
@@ -5252,6 +5248,9 @@ fn emit_statement_inner(
                             next_label,
                         )?;
                         writer.end_block();
+                        if let Some(value) = discarded {
+                            layouts.emit_release_value_expression(result_ty, &value, writer);
+                        }
                         writer.end_block();
                     } else {
                         if let Some((buffer, capacity)) = string_output_args {
@@ -5259,10 +5258,15 @@ fn emit_statement_inner(
                             args.push(capacity);
                         }
                         let expression = format!("{name}({})", args.join(", "));
-                        if let Some(dst) = dst {
-                            writer.assign(&variable_name(*dst), &expression);
-                        } else {
-                            writer.line(&format!("{expression};"));
+                        if let Some(value) = emit_call_result(
+                            layouts,
+                            result_ty,
+                            *dst,
+                            &expression,
+                            writer,
+                            next_temp,
+                        ) {
+                            layouts.emit_release_value_expression(result_ty, &value, writer);
                         }
                     }
                     if output_scope {
@@ -8157,6 +8161,17 @@ fn emit_return(
                 writer.ret(Some("emela_owned_return"));
                 return Ok(());
             }
+            if layouts.owned_aggregate_returns.contains(&function.name) {
+                writer.decl(
+                    &layouts.c_type(function.ret),
+                    "emela_owned_return",
+                    Some(&expression),
+                );
+                layouts.emit_own_value_in_place(function.ret, "emela_owned_return", writer);
+                emit_owned_cleanup(layouts, function, None, writer);
+                writer.ret(Some("emela_owned_return"));
+                return Ok(());
+            }
             let mut moved = None;
             let copies_string_to_caller = string_buffers.returns_to_caller
                 && matches!(layouts.types[function.ret], Type::String);
@@ -8677,10 +8692,12 @@ struct TypeLayouts<'a> {
     list_types: Vec<TypeId>,
     list_ids: HashMap<TypeId, usize>,
     function_types: Vec<TypeId>,
+    function_results: HashMap<FnId, TypeId>,
     closure_function_types: HashSet<TypeId>,
     closure_functions: HashMap<FnId, usize>,
     closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
     owned_string_returns: HashSet<String>,
+    owned_aggregate_returns: HashSet<String>,
     closure_cell_captures: HashMap<String, HashSet<VarId>>,
     function_adapters: Vec<FunctionAdapterLayout>,
     function_adapter_ids: HashMap<(TypeId, TypeId), usize>,
@@ -8741,6 +8758,7 @@ impl<'a> TypeLayouts<'a> {
             list_types: Vec::new(),
             list_ids: HashMap::new(),
             function_types: Vec::new(),
+            function_results: flow.functions.iter().map(|(id, f)| (id, f.ret)).collect(),
             closure_function_types: closures
                 .environments
                 .iter()
@@ -8748,6 +8766,7 @@ impl<'a> TypeLayouts<'a> {
                 .collect(),
             closure_functions: closures.functions.clone(),
             closure_environments: closures.environments.clone(),
+            owned_aggregate_returns: HashSet::new(),
             owned_string_returns: closures
                 .functions
                 .keys()
