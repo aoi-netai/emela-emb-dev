@@ -56,7 +56,7 @@ static void emela_scope_finish(emela_scope *scope) {
     /* Ended handles keep the scope tombstone, but must not keep result cycles alive. */
     EmelaAny result = child->result;
     child->result = (EmelaAny){0};
-    if (result.tag == 0) emela_heap_release(result.payload.any_box);
+    emela_any_release(result);
 #ifdef EMELA_FAILURE_RUNTIME
     emela_error_clear(&child->error);
 #endif

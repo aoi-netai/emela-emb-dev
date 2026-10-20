@@ -430,9 +430,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         crate::heap::emit_runtime(&mut source, options.heap_bytes(), layouts.has_cell_cycles());
         emit_closure_string_copy_helper(&layouts, &mut source);
         error_runtime::emit_ownership_declarations(&layouts, &mut source);
+        emit_any_ownership_declarations(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
         owned::emit_helpers(&layouts, &mut source);
         error_runtime::emit_ownership(&layouts, true, &mut source);
+        emit_any_ownership(&layouts, true, &mut source);
         if layouts.deferred_pool {
             source.line(&format!(
                 "#define EMELA_DEFERRED_KIND UINT32_C({})",
@@ -450,6 +452,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
         error_runtime::emit_ownership(&layouts, false, &mut source);
+        emit_any_ownership(&layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
     }
@@ -3857,6 +3860,61 @@ fn emit_coerce(
         &function.name,
         "function-value coercion requiring a runtime adapter",
     ))
+}
+
+fn emit_any_ownership_declarations(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    if !layouts.any_abi {
+        return;
+    }
+    writer.line("static inline void emela_any_retain(EmelaAny value);");
+    writer.line("static inline void emela_any_own(EmelaAny *value);");
+    writer.line("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail);");
+    writer.line("static inline void emela_any_release(EmelaAny value);");
+}
+
+fn emit_any_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer) {
+    if !layouts.any_abi {
+        return;
+    }
+    writer.begin_block("static inline void emela_any_retain(EmelaAny value)");
+    writer.line("(void)value;");
+    if heap && layouts.any_box_required {
+        writer.line("if (value.tag == 0) emela_heap_retain(value.payload.any_box);");
+    }
+    if layouts.has_error_ownership() {
+        writer.line("if (value.tag != 0) emela_error_retain(value);");
+    }
+    writer.end_block();
+    writer.begin_block("static inline void emela_any_own(EmelaAny *value)");
+    writer.line("(void)value;");
+    if heap && layouts.any_box_required {
+        writer.line("if (value->tag == 0) emela_heap_retain(value->payload.any_box);");
+    }
+    if layouts.has_error_ownership() {
+        writer.line("if (value->tag != 0) emela_error_own(value);");
+    }
+    writer.end_block();
+    if heap {
+        writer.begin_block("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.line("(void)value; (void)pending; (void)tail;");
+        if layouts.any_box_required {
+            writer.line(
+                "if (value.tag == 0) emela_heap_enqueue(value.payload.any_box, pending, tail);",
+            );
+        }
+        if layouts.has_error_ownership() {
+            writer.line("if (value.tag != 0) emela_error_enqueue(value, pending, tail);");
+        }
+        writer.end_block();
+    }
+    writer.begin_block("static inline void emela_any_release(EmelaAny value)");
+    if heap {
+        writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
+        writer.line("emela_any_enqueue(value, &pending, &tail); emela_heap_drain(pending, tail);");
+    } else {
+        writer.line("(void)value;");
+    }
+    writer.end_block();
 }
 
 fn emit_public_string_ownership(writer: &mut Writer) {
@@ -9291,14 +9349,7 @@ impl<'a> TypeLayouts<'a> {
         {
             writer.line(&format!("emela_heap_retain({expression});"));
         } else if matches!(self.types[ty], Type::Any) {
-            if self.any_box_required {
-                writer.line(&format!("if (({expression}).tag == 0) emela_heap_retain(({expression}).payload.any_box);"));
-            }
-            if self.has_error_ownership() {
-                writer.line(&format!(
-                    "if (({expression}).tag != 0) emela_error_retain({expression});"
-                ));
-            }
+            writer.line(&format!("emela_any_retain({expression});"));
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!("emela_heap_retain(({expression}).owner);"));
         } else if matches!(self.types[ty], Type::Fn(_)) {
@@ -9329,12 +9380,9 @@ impl<'a> TypeLayouts<'a> {
                 "emela_heap_enqueue({expression}, {pending}, {tail});"
             ));
         } else if matches!(self.types[ty], Type::Any) {
-            if self.any_box_required {
-                writer.line(&format!("if (({expression}).tag == 0) emela_heap_enqueue(({expression}).payload.any_box, {pending}, {tail});"));
-            }
-            if self.has_error_ownership() {
-                writer.line(&format!("if (({expression}).tag != 0) emela_error_enqueue({expression}, {pending}, {tail});"));
-            }
+            writer.line(&format!(
+                "emela_any_enqueue({expression}, {pending}, {tail});"
+            ));
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!(
                 "emela_heap_enqueue(({expression}).owner, {pending}, {tail});"
@@ -9360,14 +9408,7 @@ impl<'a> TypeLayouts<'a> {
         {
             writer.line(&format!("emela_heap_release({expression});"));
         } else if matches!(self.types[ty], Type::Any) {
-            if self.any_box_required {
-                writer.line(&format!("if (({expression}).tag == 0) emela_heap_release(({expression}).payload.any_box);"));
-            }
-            if self.has_error_ownership() {
-                writer.line(&format!(
-                    "if (({expression}).tag != 0) emela_error_release({expression});"
-                ));
-            }
+            writer.line(&format!("emela_any_release({expression});"));
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!("emela_heap_release(({expression}).owner);"));
         } else if matches!(self.types[ty], Type::Fn(_)) {
@@ -9652,7 +9693,13 @@ impl<'a> TypeLayouts<'a> {
             if self.has_error_ownership() {
                 writer.line("emela_error_enqueue(child->error, pending, tail);");
             }
-            writer.line("if (child->result.tag == 0) emela_heap_enqueue(child->result.payload.any_box, pending, tail);");
+            self.emit_enqueue_value_expression(
+                TypeId::ANY,
+                "child->result",
+                "pending",
+                "tail",
+                writer,
+            );
             writer.line("break; }");
             writer.line(&format!("case UINT32_C({}): {{", self.deferred_kind()));
             if self.deferred_pool {
@@ -9663,7 +9710,13 @@ impl<'a> TypeLayouts<'a> {
                 } else {
                     writer.line("EmelaAny stored = emela_heap_trace_mode == 1 || emela_heap_trace_mode == 2 ? emela_deferred_slot_get(deferred)->value : emela_deferred_recycle(deferred);");
                 }
-                writer.line("if (stored.tag == 0) emela_heap_enqueue(stored.payload.any_box, pending, tail);");
+                self.emit_enqueue_value_expression(
+                    TypeId::ANY,
+                    "stored",
+                    "pending",
+                    "tail",
+                    writer,
+                );
                 writer.end_block();
             }
             writer.line("emela_heap_enqueue(((emela_deferred *)value)->scope, pending, tail);");

@@ -45,7 +45,7 @@ static void emela_deferred_scope_end(emela_scope *scope) {
     /* Remaining operation continuations check the ended scope before reading a reused slot. */
     emela_deferred_wake_waiters(emela_deferred_slot_get(deferred));
     EmelaAny value = emela_deferred_recycle(deferred);
-    if (value.tag == 0) emela_heap_release(value.payload.any_box);
+    emela_any_release(value);
     emela_heap_release(deferred);
   }
 }
