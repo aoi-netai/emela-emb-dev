@@ -18,9 +18,9 @@ class ValidationRunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):metric("INFO EMELA_X\n0x1\nINFO EMELA_X\n0x1\n","EMELA_X")
 
     def test_gpio_stack_and_missing_runtime_metrics_fail_closed(self):
-        values={"gpioa_odr":0xe0,"stack":{"guard_ok":1,"samples":1,"used":32,"painted":512,"capacity":512},"fixture":{}}
+        values={"gpioa_odr":0xe0,"stack":{"guard_ok":1,"samples":2,"used":32,"painted":512,"capacity":512},"fixture":{}}
         check_metrics("scalar",values)
-        for key,value in [("guard_ok",0),("samples",0),("used",513)]:
+        for key,value in [("guard_ok",0),("samples",0),("samples",1),("used",513)]:
             broken=json.loads(json.dumps(values));broken["stack"][key]=value
             with self.assertRaises(ValueError):check_metrics("scalar",broken)
         with self.assertRaises(ValueError):check_metrics("runtime-scalar",values)

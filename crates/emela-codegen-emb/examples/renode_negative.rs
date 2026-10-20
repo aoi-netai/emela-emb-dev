@@ -16,11 +16,11 @@ fn main() {
     let directory = std::path::Path::new(args.get(1).expect("output directory"));
     let mode = args
         .get(2)
-        .expect("string, heap, fiber, frame, or task")
+        .expect("string, heap, fiber, frame, task, or event")
         .as_str();
     let mut flow = Module::new(emela_core::Module::new());
     let mut options = Options::default();
-    let scheduler = matches!(mode, "fiber" | "frame" | "task");
+    let scheduler = matches!(mode, "fiber" | "frame" | "task" | "event");
     let mut b = FnBuilder::new(&flow.core, "work");
     match mode {
         "string" => {
@@ -90,7 +90,7 @@ fn main() {
             b.term(Term::Return(Some(n.into())));
             options = options.with_frame_capacity(1);
         }
-        "task" => {
+        "task" | "event" => {
             let mut wait = FnBuilder::new(&flow.core, "wait");
             wait.set_suspends().set_ret(TypeId::INT);
             let wait = flow.add(wait.finish_external(binding("host_negative_wait")));
@@ -108,7 +108,9 @@ fn main() {
             );
             b.term(Term::Return(Some(n.into())));
             options = options
-                .with_task_capacity(1)
+                .with_fiber_capacity(2)
+                .with_event_capacity(1)
+                .with_task_capacity(if mode == "event" { 2 } else { 1 })
                 .with_task_adapter("host_negative_wait", "negative_task_start");
         }
         _ => panic!("unknown negative mode"),
@@ -128,6 +130,9 @@ fn main() {
         "heap" => format!("{name}();"),
         "fiber" => format!("(void){name}(NULL);(void){name}(NULL);"),
         "frame" => format!("(void){name}(NULL);while(emela_scheduler_run(1)){{}}"),
+        "event" => format!(
+            "(void){name}(NULL);while(emela_scheduler_run(1)){{}}(void){name}(NULL);while(emela_scheduler_run(1)){{}}emela_negative_first_accepted=(uint32_t)emela_task_complete_int(emela_negative_tasks[0],42);(void)emela_task_complete_int(emela_negative_tasks[1],42);"
+        ),
         "task" => format!(
             "(void){name}(NULL);while(emela_scheduler_run(1)){{}}(void){name}(NULL);while(emela_scheduler_run(1)){{}}"
         ),
@@ -141,13 +146,15 @@ fn main() {
     let message = match mode {
         "string" => "string capacity exceeded",
         "heap" => "fixed heap exhausted",
+        "event" => "fixed event queue exhausted",
         _ => "fixed scheduler pool exhausted",
     };
     let alias = format!(
-        "#ifndef EMELA_NEGATIVE_PROBE_H\n#define EMELA_NEGATIVE_PROBE_H\n#include <stddef.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#define EMELA_NEGATIVE_SCHEDULER {}\n#define EMELA_NEGATIVE_TASK {}\n#define EMELA_NEGATIVE_STRING {}\n#define EMELA_NEGATIVE_KIND EMELA_DEFECT_{kind}\n#define EMELA_NEGATIVE_MESSAGE \"{message}\"\nextern char emela_negative_bytes[3];\nstatic inline void emela_negative_run(void){{{run}}}\n#endif\n",
+        "#ifndef EMELA_NEGATIVE_PROBE_H\n#define EMELA_NEGATIVE_PROBE_H\n#include <stddef.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#define EMELA_NEGATIVE_SCHEDULER {}\n#define EMELA_NEGATIVE_TASK {}\n#define EMELA_NEGATIVE_STRING {}\n#define EMELA_NEGATIVE_EVENT {}\n#define EMELA_NEGATIVE_KIND EMELA_DEFECT_{kind}\n#define EMELA_NEGATIVE_MESSAGE \"{message}\"\nextern char emela_negative_bytes[3];\n#if EMELA_NEGATIVE_TASK\nextern EmelaTask emela_negative_tasks[2];\nextern volatile uint32_t emela_negative_first_accepted;\n#endif\nstatic inline void emela_negative_run(void){{{run}}}\n#endif\n",
         u8::from(scheduler),
-        u8::from(mode == "task"),
-        u8::from(mode == "string")
+        u8::from(mode == "task" || mode == "event"),
+        u8::from(mode == "string"),
+        u8::from(mode == "event")
     );
     std::fs::create_dir_all(directory).unwrap();
     for file in output.files {

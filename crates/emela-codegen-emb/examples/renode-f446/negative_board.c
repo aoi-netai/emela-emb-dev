@@ -23,7 +23,9 @@ uint32_t emela_board_event_lock(void) { uint32_t old=__get_PRIMASK();__disable_i
 void emela_board_event_unlock(uint32_t old) { __set_PRIMASK(old); }
 #endif
 #if EMELA_NEGATIVE_TASK
-void negative_task_start(EmelaTask task) { (void)task;emela_negative_started++; }
+EmelaTask emela_negative_tasks[2];
+volatile uint32_t emela_negative_first_accepted;
+void negative_task_start(EmelaTask task) { if(emela_negative_started<2)emela_negative_tasks[emela_negative_started]=task;emela_negative_started++; }
 #endif
 _Noreturn void emela_board_defect(EmelaDefectKind kind,const char *message,uint16_t length) {
     static const char expected[]=EMELA_NEGATIVE_MESSAGE;
@@ -33,7 +35,10 @@ _Noreturn void emela_board_defect(EmelaDefectKind kind,const char *message,uint1
     ok &= (unsigned char)emela_negative_bytes[0]==UINT8_C(0xa5) && (unsigned char)emela_negative_bytes[2]==UINT8_C(0xc3);
 #endif
 #if EMELA_NEGATIVE_TASK
-    ok &= emela_negative_started==1;
+    ok &= emela_negative_started==(EMELA_NEGATIVE_EVENT ? 2u : 1u);
+#if EMELA_NEGATIVE_EVENT
+    ok &= emela_negative_first_accepted==1;
+#endif
 #endif
     emela_negative_observed=(uint32_t)kind;emela_negative_stops++;
     emela_validation_stack_sample();

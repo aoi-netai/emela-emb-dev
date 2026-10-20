@@ -17,7 +17,7 @@ ROOT = CRATE.parents[1]
 BOARD = CRATE / "examples/renode-f446"
 STACK_METRICS = ["used", "capacity", "painted", "guard_ok", "samples", "initial_sp", "min_sp"]
 RUNTIME_MODES = ["scalar", "gc", "string", "gc-string"]
-NEGATIVE_MODES = ["string", "heap", "fiber", "frame", "task"]
+NEGATIVE_MODES = ["string", "heap", "fiber", "frame", "task", "event"]
 
 
 def atomic_json(path, value):
@@ -43,7 +43,7 @@ def check_metrics(fixture, values):
     if values["gpioa_odr"] != 0xe0:
         raise ValueError(f"unexpected GPIOA_ODR: {values['gpioa_odr']:#x}")
     stack = values["stack"]
-    if stack["guard_ok"] != 1 or stack["samples"] == 0 or not 0 < stack["used"] <= stack["painted"] <= stack["capacity"]:
+    if stack["guard_ok"] != 1 or stack["samples"] < 2 or not 0 < stack["used"] <= stack["painted"] <= stack["capacity"]:
         raise ValueError(f"invalid stack observation: {stack}")
     if fixture == "completion":
         got = values["fixture"]
@@ -58,9 +58,9 @@ def check_metrics(fixture, values):
         for name, expected in [("iterations", 1000), ("failures", 0), ("heap_after", 0)]:
             if got.get(name) != expected:
                 raise ValueError(f"invalid runtime {name}: {got.get(name)} (expected {expected})")
-        expected = {"cleanup_iterations":1000,"cancelled_cleanups":1000,"stopped_pending":1000,"pools_clean":1,"sanity_checks":5,"notifications":4997,"isr_calls":6996,"rejected_notifications":1999,"board_rejected_leases":999,"error_produced":500,"fp_context_checks":6996}
+        expected = {"cleanup_iterations":1000,"cancelled_cleanups":1000,"stopped_pending":1000,"pools_clean":1,"sanity_checks":5,"notifications":4998,"isr_calls":6997,"rejected_notifications":1999,"board_rejected_leases":999,"error_produced":500,"fp_context_checks":6997,"irq_during_scheduler":1}
         managed = fixture in ["runtime-string","runtime-gc-string"]
-        expected.update({"error_released":1499 if managed else 1749,"success_produced":2247 if managed else 0,"success_released":2497 if managed else 0})
+        expected.update({"error_released":1499 if managed else 1749,"success_produced":2248 if managed else 0,"success_released":2498 if managed else 0})
         for name, count in expected.items():
             if got.get(name) != count:
                 raise ValueError(f"runtime {name}: {got.get(name)} != {count}")
@@ -127,7 +127,7 @@ class Case:
         fixture = self.fixture
         mode = None
         if fixture == "scalar":
-            example, board, duration, mips = "renode_smoke", "board.c", "0.100000", 1
+            example, board, duration, mips = "renode_smoke", "board.c", "0.500000", 1
         elif fixture == "completion":
             example, board, duration, mips = "renode_completion", "completion_board.c", "0.500000", 100
         elif fixture.startswith("runtime-") and fixture[8:] in RUNTIME_MODES:
@@ -183,6 +183,7 @@ class Case:
         duration = os.environ.get("EMELA_EMB_RENODE_RUN_TIME", duration)
         if not re.fullmatch(r"\d+\.\d+", duration):
             raise ValueError("EMELA_EMB_RENODE_RUN_TIME must be decimal seconds")
+        self.report["simulation"] = {"seconds":float(duration),"mips":mips,"wall_timeout_seconds":int(os.environ.get("EMELA_EMB_RENODE_TIMEOUT","180"))}
         script = f'mach create\nmachine LoadPlatformDescription @{self.monitor / "machine.repl"}\nsysbus LoadELF @{self.monitor / "firmware.elf"}\nsysbus.cpu VectorTableOffset 0x08000000\nsysbus.cpu PerformanceInMips {mips}\nemulation RunFor "0:00:{duration}"\nsysbus InfoLog "EMELA_GPIOA_ODR"\nsysbus ReadDoubleWord 0x40020014\n'
         for name, address in sorted(selected.items()):
             script += f'sysbus InfoLog "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{address:08x}\n'
