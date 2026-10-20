@@ -5,6 +5,34 @@ use emela_lir::{Callee, Const, Function, Module, Operand, RuntimeOp, Stmt, Term,
 
 pub(crate) fn lower(module: &mut Module) {
     let reachable = crate::emit::runtime_reachable(module);
+    // Retirement can arrive through an aggregate, evidence table, or another function.
+    // Without whole-program alias analysis, retain dynamic active checks for the effect.
+    let retired_effects: HashSet<_> = reachable
+        .iter()
+        .flat_map(|&id| {
+            let function = &module.functions[id];
+            function.stmts.iter().filter_map(|(_, statement)| {
+                let Stmt::Let {
+                    value:
+                        Value::Runtime {
+                            op: RuntimeOp::Retire,
+                            args,
+                        },
+                    ..
+                } = statement
+                else {
+                    return None;
+                };
+                let Some(Operand::Var(handler)) = args.first() else {
+                    return None;
+                };
+                match module.core.types[function.vars[*handler].ty] {
+                    emela_core::Type::Handler(effect) => Some(effect),
+                    _ => None,
+                }
+            })
+        })
+        .collect();
     for function_id in reachable {
         let function = &mut module.functions[function_id];
         let handlers: HashMap<_, _> = function
@@ -48,11 +76,11 @@ pub(crate) fn lower(module: &mut Module) {
                 if module.core.effects[*effect].ops[*op].suspend {
                     return None;
                 }
-                let (static_handler, operations) =
-                    resolve_handler(function, &handlers, *handler, *effect, &mut HashSet::new())?;
-                if handler_is_retired(function, static_handler) {
+                if retired_effects.contains(effect) {
                     return None;
                 }
+                let (_, operations) =
+                    resolve_handler(function, &handlers, *handler, *effect, &mut HashSet::new())?;
                 operations
                     .get(*op)
                     .copied()
@@ -142,13 +170,6 @@ fn resolve_evidence(
         return resolve_handler(function, handlers, *handler, effect, seen);
     }
     resolve_evidence(function, handlers, (*base)?, effect, seen)
-}
-
-fn handler_is_retired(function: &Function, handler: VarId) -> bool {
-    function.stmts.iter().any(|(_, statement)| {
-        matches!(statement, Stmt::Let { value: Value::Runtime { op: RuntimeOp::Retire, args }, .. }
-            if matches!(args.first(), Some(Operand::Var(variable)) if *variable == handler))
-    })
 }
 
 fn erase_unused_static_values(function: &mut Function) {

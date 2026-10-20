@@ -1,5 +1,7 @@
 use super::*;
 
+mod retire;
+
 fn discarded_builtin(op: Builtin, input: TypeId) -> Module {
     let mut flow = Module::new(emela_core::Module::new());
     let mut b = FnBuilder::new(&flow.core, "discard");
