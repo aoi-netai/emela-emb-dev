@@ -80,14 +80,6 @@ pub(super) fn emit_runtime(
         writer.end_block();
     }
     for &ty in &layouts.deferred_complete_types {
-        if !matches!(layouts.types[ty], Type::String | Type::Any)
-            && type_contains_string(layouts, ty, &mut HashSet::new())
-        {
-            return Err(unsupported(
-                "Deferred.complete",
-                "aggregate or List containing a borrowed String",
-            ));
-        }
         let represented = layouts.type_repr(ty) != Repr::Void;
         writer.begin_block(&format!(
             "static inline int32_t emela_deferred_complete_{}(emela_deferred *deferred{})",
@@ -102,15 +94,9 @@ pub(super) fn emit_runtime(
         writer.line("if (slot == NULL) return INT32_C(0);");
         writer.line("EmelaAny emela_v_1 = {0};");
         if represented {
-            if matches!(layouts.types[ty], Type::String) {
-                writer.line("emela_v_0 = emela_heap_own_string(emela_v_0);");
-            }
             let f = coerce_function(layouts, ty, TypeId::ANY);
             let vars: Vec<_> = f.vars.iter().map(|(id, _)| id).collect();
             emit_coerce(layouts, &f, Some(vars[1]), vars[0], writer)?;
-            if matches!(layouts.types[ty], Type::String) {
-                writer.line("emela_heap_release(emela_v_0.owner);");
-            }
         }
         writer.line("slot->value = emela_v_1; slot->full = 1;");
         writer.line("emela_deferred_publish(slot);");
