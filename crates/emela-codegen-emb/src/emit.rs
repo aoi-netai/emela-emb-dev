@@ -144,7 +144,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                     &layouts,
                     &closures,
                     &string_output_functions,
-                ) || external::needs_heap(function, external_bindings.get(&id), &layouts)))
+                ) || external::needs_heap(
+                    function,
+                    external_bindings.get(&id),
+                    &layouts,
+                    options,
+                )))
             .then_some(id)
         })
         .collect();

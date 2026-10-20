@@ -1,7 +1,11 @@
 use super::*;
 use emela_codegen_emb::{ExternalAdapter, ExternalResult};
 
+mod boundary;
+mod buffers;
+mod entries;
 mod failure;
+mod values;
 
 fn binding(symbol: &str) -> External {
     External {

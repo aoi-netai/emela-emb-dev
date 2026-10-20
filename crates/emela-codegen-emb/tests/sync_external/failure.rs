@@ -1,6 +1,6 @@
 use super::*;
 
-fn flow() -> Module {
+pub(super) fn flow() -> Module {
     let mut core = emela_core::Module::new();
     let error = core.add_enum(EnumDef {
         name: "Boom".into(),

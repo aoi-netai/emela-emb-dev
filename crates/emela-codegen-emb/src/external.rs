@@ -111,19 +111,7 @@ pub(super) fn resolve(
         let binding = if let Some(ExternalAdapter { symbol, result }) = adapter {
             if !is_c_identifier(symbol)
                 || generated.contains(symbol)
-                || symbol.starts_with("emela_embedded_")
-                || symbol.starts_with("emela_external_")
-                || symbol.starts_with("emela_heap_")
-                || symbol.starts_with("emela_task_")
-                || symbol.starts_with("emela_fiber_")
-                || symbol.starts_with("emela_scheduler_")
-                || matches!(
-                    symbol.as_str(),
-                    "emela_board_defect"
-                        | "emela_board_debug"
-                        | "emela_board_init"
-                        | "emela_board_idle"
-                )
+                || symbol.starts_with("emela_")
             {
                 return Err(unsupported(
                     &f.name,
@@ -186,6 +174,23 @@ pub(super) fn resolve(
         }
         bindings.insert(id, binding);
     }
+    for (_, f) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted.contains(id) && f.external.is_some() && f.suspends)
+    {
+        let symbol = suspend::external_symbol(f, options)?;
+        let mut abi = vec!["void".into(), "EmelaTask".into()];
+        abi.extend(f.params.iter().map(|&p| layouts.c_type(f.vars[p].ty)));
+        if let Some(previous) = declarations.insert(symbol, (abi.clone(), ExternalResult::Owned)) {
+            if previous != (abi, ExternalResult::Owned) {
+                return Err(unsupported(
+                    &f.name,
+                    "external symbol is instantiated with incompatible synchronous and task signatures",
+                ));
+            }
+        }
+    }
     layouts.managed_error_payloads = layouts
         .error_types
         .iter()
@@ -218,9 +223,15 @@ pub(super) fn needs_heap(
     function: &Function,
     binding: Option<&Binding>,
     layouts: &TypeLayouts<'_>,
+    options: &Options,
 ) -> bool {
     binding.is_some_and(|b| {
-        b.adapted && b.result == ExternalResult::Borrowed && layouts.is_managed_value(function.ret)
+        b.adapted
+            && ((b.result == ExternalResult::Borrowed && layouts.is_managed_value(function.ret))
+                || (options.heap_bytes() != 0
+                    && std::iter::once(function.ret)
+                        .chain(function.params.iter().map(|&p| function.vars[p].ty))
+                        .any(|ty| layouts.is_managed_value(ty))))
     })
 }
 
