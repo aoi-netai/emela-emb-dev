@@ -10,6 +10,10 @@ static void emela_scope_finish(emela_scope *scope) {
   while (child != NULL) {
     emela_child *next = child->next;
     child->next = NULL;
+    /* Ended handles keep the scope tombstone, but must not keep result cycles alive. */
+    EmelaAny result = child->result;
+    child->result = (EmelaAny){0};
+    if (result.tag == 0) emela_heap_release(result.payload.any_box);
     emela_heap_release(child);
     child = next;
   }
@@ -36,6 +40,9 @@ static void emela_child_after_step(emela_fiber *fiber) {
   emela_scope *scope = child->scope;
   emela_heap_retain(scope);
   child->status = fiber->cancelled ? 2 : 1;
+#ifdef EMELA_CHILD_WAIT_RUNTIME
+  emela_child_publish(child);
+#endif
   if (scope->running == 0) emela_scheduler_invalid();
   scope->running--;
   fiber->child = NULL;

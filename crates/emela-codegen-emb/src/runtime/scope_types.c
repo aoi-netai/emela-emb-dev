@@ -1,6 +1,9 @@
 typedef struct emela_child emela_child;
 typedef struct emela_scope emela_scope;
 typedef struct emela_deferred emela_deferred;
+#ifdef EMELA_CHILD_WAIT_RUNTIME
+typedef struct emela_child_waiter emela_child_waiter;
+#endif
 struct emela_scope {
   emela_child *children;
   EmelaFiber closer;
@@ -17,6 +20,10 @@ struct emela_child {
   EmelaFiber execution;
   EmelaAny result;
   int status;
+#ifdef EMELA_CHILD_WAIT_RUNTIME
+  emela_child_waiter *head;
+  emela_child_waiter *tail;
+#endif
 };
 /* The constructor is part of Scope's generated handler, even if never called. */
 struct emela_deferred {

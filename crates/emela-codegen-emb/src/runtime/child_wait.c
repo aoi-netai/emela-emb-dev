@@ -1,0 +1,82 @@
+/* Join and Await share a FIFO. Each waiter uses one slot of the existing frame pool. */
+struct emela_child_waiter {
+  emela_frame base;
+  emela_child *child;
+  EmelaFiber owner;
+  emela_child_waiter *previous;
+  emela_child_waiter *next;
+  void *result;
+  void (*deliver)(emela_child *, void *);
+  int linked;
+  int awaiting;
+};
+_Static_assert(sizeof(emela_child_waiter) <= EMELA_FRAME_BYTES, "increase frame_bytes for Fiber.join/await");
+static void emela_child_check(emela_child *child, int awaiting) {
+  if (child == NULL) emela_scheduler_invalid();
+  if (child->scope->ended) {
+    if (awaiting)
+      emela_board_defect(EMELA_DEFECT_PANIC, "fiber was awaited after its scope ended", UINT16_C(38));
+    else
+      emela_board_defect(EMELA_DEFECT_PANIC, "fiber was joined after its scope ended", UINT16_C(37));
+  }
+}
+static void emela_child_publish(emela_child *child) {
+  while (child->head != NULL) {
+    emela_child_waiter *waiter = child->head;
+    child->head = waiter->next;
+    if (child->head != NULL) child->head->previous = NULL;
+    else child->tail = NULL;
+    waiter->previous = waiter->next = NULL;
+    waiter->linked = 0;
+    emela_fiber *fiber = emela_fiber_get(waiter->owner);
+    if (!fiber->cancelled) {
+      if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
+      emela_ready_push(fiber);
+    }
+  }
+}
+static void emela_child_wait_drop(emela_frame *base) {
+  emela_child_waiter *waiter = (emela_child_waiter *)base;
+  if (waiter->linked) {
+    emela_child *child = waiter->child;
+    if (waiter->previous != NULL) waiter->previous->next = waiter->next;
+    else child->head = waiter->next;
+    if (waiter->next != NULL) waiter->next->previous = waiter->previous;
+    else child->tail = waiter->previous;
+  }
+  emela_heap_release(waiter->child);
+}
+static void emela_child_wait_step(emela_fiber *fiber, emela_frame *base) {
+  emela_child_waiter *waiter = (emela_child_waiter *)base;
+  emela_child *child = waiter->child;
+  emela_child_check(child, waiter->awaiting);
+  if (child->status == 0 || waiter->linked) emela_scheduler_invalid();
+  if (!waiter->awaiting && child->status == 2)
+    emela_board_defect(EMELA_DEFECT_PANIC, "fiber was interrupted", UINT16_C(21));
+  /* Even a discarded result must observe termination and interruption. */
+  if (waiter->deliver != NULL && waiter->result != NULL) waiter->deliver(child, waiter->result);
+  emela_frame_return(fiber);
+}
+static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int awaiting,
+                                   void *result, void (*deliver)(emela_child *, void *)) {
+  emela_child_check(child, awaiting);
+  emela_child_waiter *waiter = (emela_child_waiter *)emela_frame_push(fiber, sizeof(*waiter), emela_child_wait_step);
+  waiter->base.drop = emela_child_wait_drop;
+  waiter->child = child;
+  waiter->owner = (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation};
+  waiter->result = result;
+  waiter->deliver = deliver;
+  waiter->previous = waiter->next = NULL;
+  waiter->linked = 0;
+  waiter->awaiting = awaiting;
+  emela_heap_retain(child);
+  if (child->status == 0) {
+    waiter->previous = child->tail;
+    if (child->tail != NULL) child->tail->next = waiter;
+    else child->head = waiter;
+    child->tail = waiter;
+    waiter->linked = 1;
+    fiber->state = EMELA_FIBER_WAITING;
+    emela_resume_boundary(fiber);
+  }
+}
