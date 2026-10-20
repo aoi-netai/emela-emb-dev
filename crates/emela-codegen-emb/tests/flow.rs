@@ -1,5 +1,5 @@
 use emela_codegen_emb::{ErrorKind, Options, compile, compile_flow, flow_from_core, verify_flow};
-use emela_core::{Builtin, TypeId};
+use emela_core::{Builtin, CtorRef, EnumDef, Type, TypeId, VariantDef};
 use emela_lir::{
     Callee, Const, FnBuilder, Module, OnFail, RuntimeOp, Stage, Stmt, Suspend, Term, Value,
 };
@@ -314,4 +314,163 @@ fn isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls() {
             }
         }
     }
+}
+
+#[test]
+fn isr_entries_reject_discarded_cell_allocations_even_without_cell_variables() {
+    for via_callee in [false, true] {
+        let mut module = Module::new(emela_core::Module::new());
+        let mut action = FnBuilder::new(&module.core, "action");
+        action.set_exported();
+        action.let_(
+            None,
+            Value::Builtin {
+                op: Builtin::CellNew,
+                args: vec![Const::Int(42).into()],
+            },
+        );
+        action.term(Term::Return(None));
+        let action = module.add(action.finish());
+        assert!(module.functions[action].vars.is_empty());
+        if via_callee {
+            let mut entry = FnBuilder::new(&module.core, "entry");
+            entry.set_exported();
+            entry.let_(
+                None,
+                Value::Call {
+                    callee: Callee::Direct(action),
+                    args: vec![],
+                    suspends: false,
+                    on_fail: None,
+                },
+            );
+            entry.term(Term::Return(None));
+            module.add(entry.finish());
+        }
+        verify_flow(&module).unwrap();
+        compile_flow(&module, &Options::default().with_heap_bytes(256)).unwrap();
+        let entry = if via_callee { "entry" } else { "action" };
+        let errors = compile_flow(
+            &module,
+            &Options::default()
+                .with_heap_bytes(256)
+                .with_isr_entry(entry),
+        )
+        .err()
+        .expect("ISR validation must inspect allocations without a represented destination");
+        assert!(
+            errors.iter().any(|e| e.kind == ErrorKind::Unsupported
+                && e.message.contains("heap-backed")
+                && e.message.contains("ISR entry")),
+            "{errors:?}"
+        );
+    }
+}
+
+#[test]
+fn isr_entries_reject_owned_string_aggregate_producers_and_direct_callers() {
+    for is_enum in [false, true] {
+        for via_callee in [false, true] {
+            let mut module = Module::new(emela_core::Module::new());
+            let packed = module.core.add_enum(EnumDef {
+                name: "Packed".into(),
+                params: 0,
+                variants: vec![VariantDef::positional("Packed", vec![TypeId::STRING])],
+                error: false,
+                external: false,
+            });
+            let result_type = if is_enum {
+                module.core.enum_type(packed, vec![])
+            } else {
+                module.core.types.intern(Type::Tuple(vec![TypeId::STRING]))
+            };
+            let mut producer = FnBuilder::new(&module.core, "producer");
+            producer.set_exported().set_ret(result_type);
+            let n = producer.param("n", TypeId::INT);
+            let text = producer.assign(
+                "text",
+                TypeId::STRING,
+                Value::Builtin {
+                    op: Builtin::IntToString,
+                    args: vec![n.into()],
+                },
+            );
+            let value = if is_enum {
+                Value::Make {
+                    ctor: CtorRef {
+                        enum_id: packed,
+                        variant: 0,
+                    },
+                    args: vec![text.into()],
+                }
+            } else {
+                Value::Tuple(vec![text.into()])
+            };
+            let result = producer.assign("result", result_type, value);
+            producer.term(Term::Return(Some(result.into())));
+            let producer = module.add(producer.finish());
+            if via_callee {
+                let mut entry = FnBuilder::new(&module.core, "entry");
+                entry.set_exported();
+                let n = entry.param("n", TypeId::INT);
+                entry.let_(
+                    None,
+                    Value::Call {
+                        callee: Callee::Direct(producer),
+                        args: vec![n.into()],
+                        suspends: false,
+                        on_fail: None,
+                    },
+                );
+                entry.term(Term::Return(None));
+                module.add(entry.finish());
+            }
+            verify_flow(&module).unwrap();
+            compile_flow(&module, &Options::default().with_heap_bytes(1024)).unwrap();
+            let entry = if via_callee { "entry" } else { "producer" };
+            let errors = compile_flow(
+                &module,
+                &Options::default()
+                    .with_heap_bytes(1024)
+                    .with_isr_entry(entry),
+            )
+            .err()
+            .expect("ISR validation must inspect owned backing promotion");
+            assert!(
+                errors.iter().any(|e| e.kind == ErrorKind::Unsupported
+                    && e.message.contains("heap-backed")
+                    && e.message.contains("ISR entry")),
+                "{errors:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn isr_validation_preserves_static_constants_and_heapless_borrowed_string_aggregates() {
+    let mut module = Module::new(emela_core::Module::new());
+    let mut constant = FnBuilder::new(&module.core, "constant");
+    constant.set_exported().set_constant().set_ret(TypeId::INT);
+    constant.term(Term::Return(Some(Const::Int(42).into())));
+    module.add(constant.finish());
+    let tuple = module.core.types.intern(Type::Tuple(vec![TypeId::STRING]));
+    let mut borrowed = FnBuilder::new(&module.core, "borrowed");
+    borrowed.set_exported().set_ret(tuple);
+    let text = borrowed.param("text", TypeId::STRING);
+    let value = borrowed.assign("value", tuple, Value::Tuple(vec![text.into()]));
+    borrowed.term(Term::Return(Some(value.into())));
+    module.add(borrowed.finish());
+    let output = compile_flow(
+        &module,
+        &Options::default()
+            .with_isr_entry("constant")
+            .with_isr_entry("borrowed"),
+    )
+    .unwrap();
+    assert!(
+        output
+            .files
+            .iter()
+            .all(|file| !file.contents.contains("emela_heap_storage"))
+    );
 }

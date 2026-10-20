@@ -98,24 +98,21 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         })
         .map(|(_, f)| f.name.clone())
         .collect();
-    let heap_required = flow.functions.iter().any(|(id, function)| {
-        emitted_functions.contains(&id)
-            && function_needs_heap(id, function, &layouts, &closures, &string_output_functions)
-    });
+    let heap_functions: HashSet<_> = flow
+        .functions
+        .iter()
+        .filter_map(|(id, function)| {
+            (emitted_functions.contains(&id)
+                && function_needs_heap(id, function, &layouts, &closures, &string_output_functions))
+            .then_some(id)
+        })
+        .collect();
+    let heap_required = !heap_functions.is_empty();
     if options.heap_bytes() == 0 && heap_required {
         let (_, function) = flow
             .functions
             .iter()
-            .find(|(id, function)| {
-                emitted_functions.contains(id)
-                    && function_needs_heap(
-                        *id,
-                        function,
-                        &layouts,
-                        &closures,
-                        &string_output_functions,
-                    )
-            })
+            .find(|(id, _)| heap_functions.contains(id))
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
@@ -178,7 +175,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         };
         names.insert(id, implementation_name);
     }
-    validate_isr_entries(flow, &emitted_functions, &layouts, &names, options)?;
+    validate_isr_entries(
+        flow,
+        &emitted_functions,
+        &heap_functions,
+        &layouts,
+        &names,
+        options,
+    )?;
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -2157,6 +2161,7 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
 fn validate_isr_entries(
     flow: &emela_lir::Module,
     emitted: &HashSet<FnId>,
+    heap_functions: &HashSet<FnId>,
     layouts: &TypeLayouts<'_>,
     names: &HashMap<FnId, String>,
     options: &Options,
@@ -2176,6 +2181,7 @@ fn validate_isr_entries(
             flow,
             entry,
             entry_name,
+            heap_functions,
             layouts,
             names,
             options,
@@ -2190,6 +2196,7 @@ fn validate_isr_function(
     flow: &emela_lir::Module,
     id: FnId,
     entry_name: &str,
+    heap_functions: &HashSet<FnId>,
     layouts: &TypeLayouts<'_>,
     names: &HashMap<FnId, String>,
     options: &Options,
@@ -2212,9 +2219,10 @@ fn validate_isr_function(
             &format!("suspending function reachable from ISR entry `{entry_name}`"),
         ));
     }
-    if std::iter::once(function.ret)
-        .chain(function.vars.iter().map(|(_, variable)| variable.ty))
-        .any(|ty| layouts.contains_heap_ref(ty, &mut HashSet::new()))
+    if heap_functions.contains(&id)
+        || std::iter::once(function.ret)
+            .chain(function.vars.iter().map(|(_, variable)| variable.ty))
+            .any(|ty| layouts.contains_heap_ref(ty, &mut HashSet::new()))
     {
         return Err(unsupported(
             &function.name,
@@ -2283,7 +2291,15 @@ fn validate_isr_function(
                     }
                 } else if !callee.constant {
                     validate_isr_function(
-                        flow, *callee_id, entry_name, layouts, names, options, active, complete,
+                        flow,
+                        *callee_id,
+                        entry_name,
+                        heap_functions,
+                        layouts,
+                        names,
+                        options,
+                        active,
+                        complete,
                     )?;
                 }
             }
