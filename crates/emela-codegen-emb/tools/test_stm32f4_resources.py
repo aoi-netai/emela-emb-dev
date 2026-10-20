@@ -76,6 +76,9 @@ class ResourceTests(unittest.TestCase):
             self.assertIn(name, validate(sections, symbols, frames)["linked_dynamic_allocators"])
         sections, symbols, frames, observed = fixture()
         symbols["emela_heap_free_block"] = FLASH_START
+        symbols["test_malloc_pointer"] = RAM_START
+        for name in ["emela_deferred_free", "emela_fiber_free", "emela_frame_free", "emela_task_free"]:
+            symbols[name] = RAM_START
         self.assertTrue(validate(sections, symbols, frames)["ok"])
 
     def test_missing_and_unbounded_stack_records_fail(self):

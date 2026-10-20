@@ -157,8 +157,8 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
         errors.append(f"Flash image span {flash_span} exceeds budget {flash_budget}")
     if ram_bytes > ram_budget:
         errors.append(f"RAM allocated bytes {ram_bytes} exceeds budget {ram_budget}")
-    allocator_pattern = re.compile(r"(^|_)(malloc|calloc|realloc|free|memalign|aligned_alloc|sbrk|valloc|pvalloc)(_|$)")
-    allocators = sorted(name for name in symbols if not name.startswith("emela_heap_") and (allocator_pattern.search(name) or name == "cfree"))
+    allocator_pattern = re.compile(r"^(?:_*|__wrap_|__real_)(malloc|calloc|realloc|free|memalign|aligned_alloc|sbrk|valloc|pvalloc)(?:_|$)")
+    allocators = sorted(name for name in symbols if allocator_pattern.search(name) or name == "cfree")
     if allocators:
         errors.append("linked dynamic C allocator symbols: " + ", ".join(allocators))
     if not frames:
