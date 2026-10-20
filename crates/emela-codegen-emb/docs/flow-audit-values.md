@@ -84,3 +84,4 @@ Flow IRの各要素と、C表現・実装箇所・既存試験の対応を示す
 ## 入力と資源の境界
 
 入力は検証済みの`Stage::Flow`とし、Heap IR専用の値・操作は拒否する。固定heap・pool・Stringの容量超過はdefectとして扱う。
+constは静的評価と実行時の遅延cacheで扱い、具体的な関数setsをABIへ正規化する。

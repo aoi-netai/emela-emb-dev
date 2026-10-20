@@ -4,6 +4,7 @@
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
 mod const_eval;
+mod const_runtime;
 mod discarded;
 mod emit;
 mod fiber;
@@ -27,6 +28,7 @@ mod writer;
 pub struct Options {
     string_capacity: u16,
     heap_bytes: u32,
+    const_diagnostic_bytes: u16,
     fiber_capacity: u16,
     frame_capacity: u16,
     frame_bytes: u16,
@@ -43,6 +45,7 @@ impl Default for Options {
         Self {
             string_capacity: 256,
             heap_bytes: 0,
+            const_diagnostic_bytes: 1024,
             fiber_capacity: 8,
             frame_capacity: 32,
             frame_bytes: 256,
@@ -82,6 +85,14 @@ impl Options {
     /// Returns the configured byte capacity for the generated fixed heap.
     pub fn heap_bytes(&self) -> u32 {
         self.heap_bytes
+    }
+
+    /// Sets the module-wide storage for memoized runtime const defect messages (default 1024).
+    /// Storage is generated only for runtime-backed consts. Exhaustion reports a resource defect
+    /// through a separate bounded emergency buffer without allocating from the fixed heap.
+    pub fn with_const_diagnostic_bytes(mut self, bytes: u16) -> Self {
+        self.const_diagnostic_bytes = bytes;
+        self
     }
 
     /// Sets the maximum number of active or completed, unreleased fiber handles (default 8).

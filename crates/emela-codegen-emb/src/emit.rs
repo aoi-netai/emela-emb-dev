@@ -43,6 +43,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
     let mut prepared_flow = flow.clone();
+    let runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
     crate::scope_abi::normalize(&mut prepared_flow)?;
     crate::fiber::normalize_scope_results(&mut prepared_flow);
     let mut closures = crate::static_closure::lower(&prepared_flow)?;
@@ -69,6 +70,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let task_value_types = task_values::result_types(flow, &emitted_functions);
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
     layouts.discarded_results = discarded_results;
+    layouts.runtime_consts = runtime_consts.clone();
+    for &id in &runtime_consts {
+        if matches!(layouts.types[flow.functions[id].ret], Type::String) {
+            layouts
+                .owned_string_returns
+                .insert(flow.functions[id].name.clone());
+        }
+    }
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
@@ -85,16 +94,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 && layouts.has_inline_string(f.ret)
         })
         .filter(|(id, f)| {
-            !StringBufferPlan::new(
-                &layouts,
-                *id,
-                f,
-                options.string_capacity(),
-                &string_output_functions,
-                false,
-            )
-            .declarations
-            .is_empty()
+            runtime_consts.contains(id)
+                || !StringBufferPlan::new(
+                    &layouts,
+                    *id,
+                    f,
+                    options.string_capacity(),
+                    &string_output_functions,
+                    false,
+                )
+                .declarations
+                .is_empty()
         })
         .map(|(_, f)| f.name.clone())
         .collect();
@@ -317,7 +327,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_scheduler
+    let needs_defect_hook = !runtime_consts.is_empty()
+        || has_scheduler
         || heap_required
         || has_prim(
             flow,
@@ -394,6 +405,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
         );
     }
+    if !runtime_consts.is_empty() {
+        board_header.line("/* Reports a defect through active const contexts; direct board hook calls bypass them. */");
+        board_header.line("_Noreturn void emela_embedded_report_defect(EmelaDefectKind kind, const char *message, uint16_t length);");
+    }
     if main_entry.is_some() {
         board_header.line("void emela_board_init(void);");
         board_header.line("void emela_board_idle(void);");
@@ -415,6 +430,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
     source.blank();
+    if !runtime_consts.is_empty() {
+        crate::const_runtime::emit_runtime(flow, &runtime_consts, options, &mut source)?;
+    }
     if has_scheduler {
         if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
             source.line("#define EMELA_TASK_CONTEXT_RUNTIME 1");
@@ -756,8 +774,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             return Err(unsupported(&function.name, "function without a body"));
         };
         let sequence = &function.seqs[body];
-        let name = &names[&id];
-        let is_static = !function.exported || function.fails;
+        let initializer_name = format!("{}_const_init", names[&id]);
+        let is_runtime_const = runtime_consts.contains(&id);
+        let name = if is_runtime_const {
+            &initializer_name
+        } else {
+            &names[&id]
+        };
+        let is_static = is_runtime_const || !function.exported || function.fails;
         let takes_string_output = string_output_functions.contains(&id);
         let function_signature = if closures.functions.contains_key(&id) {
             closure_signature(&layouts, function, name, is_static)
@@ -807,7 +831,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                         )
                     })?;
                     source.line(&format!(
-                        "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        "{}(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        if runtime_consts.is_empty() {
+                            "emela_board_defect"
+                        } else {
+                            "emela_const_self_reference"
+                        },
                         c_string_literal(message.as_bytes())
                     ));
                 }
@@ -886,6 +915,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         )?;
         source.end_block();
         source.blank();
+        if is_runtime_const {
+            emit_const_getter(
+                &layouts,
+                id,
+                function,
+                &names[&id],
+                &initializer_name,
+                &mut source,
+            );
+        }
     }
     for &(target, function_type) in &function_ref_adapters {
         let target_function = &flow.functions[target];
@@ -2217,6 +2256,12 @@ fn validate_isr_function(
         return Ok(());
     }
     let function = &flow.functions[id];
+    if layouts.runtime_consts.contains(&id) {
+        return Err(unsupported(
+            &function.name,
+            &format!("runtime const initialization reachable from ISR entry `{entry_name}`"),
+        ));
+    }
     if function.suspends {
         return Err(unsupported(
             &function.name,
@@ -2436,6 +2481,8 @@ fn function_needs_heap(
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
     (function.fails && layouts.managed_error_payloads)
         || layouts.owned_aggregate_returns.contains(&function.name)
+        || (layouts.runtime_consts.contains(&function_id)
+            && layouts.owned_string_returns.contains(&function.name))
         || statement_needs_heap
         || (function.suspends
             && (layouts.has_inline_string(function.ret)
@@ -2450,6 +2497,82 @@ fn function_needs_heap(
             .environments
             .iter()
             .any(|environment| environment.parent == function_id)
+}
+
+fn emit_const_getter(
+    layouts: &TypeLayouts<'_>,
+    id: FnId,
+    function: &Function,
+    name: &str,
+    initializer: &str,
+    writer: &mut Writer,
+) {
+    let index = u32::from(id.into_raw());
+    let state = format!("emela_const_state_{index}");
+    let cache = format!("emela_const_value_{index}");
+    writer.line(&format!("static EmelaConstState {state};"));
+    let is_void = matches!(layouts.types[function.ret], Type::Unit | Type::Never);
+    if !is_void {
+        writer.line(&format!("static {} {cache};", layouts.c_type(function.ret)));
+    }
+    writer.begin_block(&signature(
+        layouts,
+        function,
+        name,
+        !function.exported,
+        false,
+        false,
+    ));
+    writer.begin_block(&format!("if ({state}.status == 3)"));
+    writer.line(&format!(
+        "emela_embedded_report_defect({state}.kind, {state}.message, {state}.length);"
+    ));
+    writer.end_block();
+    writer.begin_block(&format!("if ({state}.status == 1)"));
+    let message = format!(
+        "const {} refers to itself while being evaluated",
+        function.name
+    );
+    writer.line(&format!(
+        "emela_const_self_reference(EMELA_DEFECT_PANIC, {}, UINT16_C({}));",
+        c_string_literal(message.as_bytes()),
+        message.len()
+    ));
+    writer.end_block();
+    writer.begin_block(&format!("if ({state}.status == 0)"));
+    let prefix = format!("while evaluating const {}: ", function.name);
+    writer.line(&format!(
+        "EmelaConstContext context = {{ emela_const_current, &{state}, {}, UINT16_C({}) }};",
+        c_string_literal(prefix.as_bytes()),
+        prefix.len()
+    ));
+    writer.line(&format!("{state}.status = 1;"));
+    writer.line("emela_const_current = &context;");
+    if is_void {
+        writer.line(&format!("{initializer}();"));
+    } else {
+        writer.line(&format!("{cache} = {initializer}();"));
+        if layouts.has_inline_string(function.ret) {
+            layouts.emit_freeze_value_in_place(function.ret, &cache, writer);
+        }
+    }
+    writer.line("emela_const_current = context.previous;");
+    writer.line(&format!("{state}.status = 2;"));
+    writer.end_block();
+    if is_void {
+        if matches!(layouts.types[function.ret], Type::Never) {
+            writer.line(
+                "emela_board_defect(EMELA_DEFECT_PANIC, \"Never const returned\", UINT16_C(20));",
+            );
+        } else {
+            writer.ret(None);
+        }
+    } else {
+        layouts.emit_retain_value_expression(function.ret, &cache, writer);
+        writer.ret(Some(&cache));
+    }
+    writer.end_block();
+    writer.blank();
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -8333,6 +8456,7 @@ struct TypeLayouts<'a> {
     closure_functions: HashMap<FnId, usize>,
     closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
     owned_string_returns: HashSet<String>,
+    runtime_consts: HashSet<FnId>,
     owned_aggregate_returns: HashSet<String>,
     cell_types: Vec<TypeId>,
     cell_ids: HashMap<TypeId, usize>,
@@ -8406,6 +8530,7 @@ impl<'a> TypeLayouts<'a> {
             closure_functions: closures.functions.clone(),
             closure_environments: closures.environments.clone(),
             owned_aggregate_returns: HashSet::new(),
+            runtime_consts: HashSet::new(),
             owned_string_returns: closures
                 .functions
                 .keys()

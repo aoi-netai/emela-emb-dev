@@ -10,6 +10,7 @@ mod any_data;
 mod builtin_audit;
 mod cell;
 mod completion_types;
+mod const_runtime;
 mod deferred;
 mod external_scalar;
 mod fiber;
@@ -4179,7 +4180,7 @@ fn folds_const_division_by_zero_into_a_deferred_defect() {
 }
 
 #[test]
-fn ignores_an_unevaluable_unreferenced_internal_const_and_reports_its_use() {
+fn ignores_an_unevaluable_unreferenced_internal_const_and_initializes_its_use() {
     let core = emela_core::Module::new();
     let mut unused = FnBuilder::new(&core, "UNUSED");
     unused.set_ret(TypeId::INT).set_constant();
@@ -4224,11 +4225,11 @@ fn ignores_an_unevaluable_unreferenced_internal_const_and_reports_its_use() {
     caller.term(Term::Return(Some(result.into())));
     flow.add(caller.finish());
 
-    let errors = compile_flow(&flow, &Options::default())
-        .expect_err("a referenced const must be statically evaluable");
-    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
-    assert!(errors[0].message.contains("PUBLIC_USER"));
-    assert!(errors[0].message.contains("CHOICE"));
+    let output = compile_flow(&flow, &Options::default()).expect("emit a lazy branch const");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { (void)k; (void)m; (void)n; abort(); }\nint main(void) { return emela_export_PUBLIC_USER_1() == 1 ? 0 : 1; }\n",
+    );
 }
 
 #[test]

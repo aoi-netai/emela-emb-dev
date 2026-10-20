@@ -15,13 +15,7 @@ pub(crate) enum Outcome {
 }
 
 pub(crate) fn evaluate(module: &Module, function: FnId) -> Result<Outcome, &'static str> {
-    match evaluate_function(module, function, Vec::new(), &mut Vec::new())? {
-        Outcome::SelfReference { message } => Ok(Outcome::Defect {
-            kind: "PANIC",
-            message,
-        }),
-        outcome => Ok(outcome),
-    }
+    evaluate_function(module, function, Vec::new(), &mut Vec::new(), &mut 4096)
 }
 
 fn evaluate_function(
@@ -29,7 +23,12 @@ fn evaluate_function(
     id: FnId,
     arguments: Vec<Const>,
     active: &mut Vec<FnId>,
+    fuel: &mut usize,
 ) -> Result<Outcome, &'static str> {
+    if *fuel == 0 || active.len() >= 64 {
+        return Err("static const evaluation budget exhausted");
+    }
+    *fuel -= 1;
     let function = &module.functions[id];
     if active.contains(&id) {
         if function.constant {
@@ -54,7 +53,7 @@ fn evaluate_function(
     let body = function.body.ok_or("called function has no body")?;
 
     active.push(id);
-    let result = evaluate_body(module, function, body, arguments, active);
+    let result = evaluate_body(module, function, body, arguments, active, fuel);
     active.pop();
     let outcome = result?;
 
@@ -77,6 +76,7 @@ fn evaluate_body(
     body: emela_lir::SeqId,
     arguments: Vec<Const>,
     active: &mut Vec<FnId>,
+    fuel: &mut usize,
 ) -> Result<Outcome, &'static str> {
     let sequence = &function.seqs[body];
     let mut values = HashMap::new();
@@ -95,7 +95,11 @@ fn evaluate_body(
             return Err("const body contains unsupported control flow");
         };
 
-        match evaluate_value(module, value, &values, active)? {
+        if *fuel == 0 {
+            return Err("static const evaluation budget exhausted");
+        }
+        *fuel -= 1;
+        match evaluate_value(module, value, &values, active, fuel)? {
             Outcome::Value(value) => {
                 if let Some(dst) = dst {
                     values.insert(*dst, value);
@@ -126,6 +130,7 @@ fn evaluate_value(
     value: &Value,
     values: &HashMap<VarId, Const>,
     active: &mut Vec<FnId>,
+    fuel: &mut usize,
 ) -> Result<Outcome, &'static str> {
     match value {
         Value::Const(value) => Ok(Outcome::Value(value.clone())),
@@ -153,7 +158,7 @@ fn evaluate_value(
                 .iter()
                 .map(|arg| operand_value(arg, values))
                 .collect::<Result<Vec<_>, _>>()?;
-            evaluate_function(module, *id, arguments, active)
+            evaluate_function(module, *id, arguments, active, fuel)
         }
         Value::Call { .. } => Err("const body contains an indirect, fallible, or suspending call"),
         Value::Builtin { op, args } => {
