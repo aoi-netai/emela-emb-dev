@@ -5983,10 +5983,7 @@ fn emit_list_tail(
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     let Some(dst) = dst else {
-        return Err(invalid_flow_ir(
-            &function.name,
-            "ListTail has no List destination",
-        ));
+        return Ok(());
     };
     let list_ty = function.vars[list].ty;
     if !matches!(layouts.types[list_ty], Type::List(_)) || function.vars[dst].ty != list_ty {

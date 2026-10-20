@@ -203,3 +203,7 @@ fn discarded_list_emptiness_is_heapless() {
 fn discarded_list_heads_accept_represented_and_unit_elements() {
     run_discarded("list_head", 2048);
 }
+#[test]
+fn discarded_list_tail_preserves_the_source_owner() {
+    run_discarded("list_tail", 2048);
+}
