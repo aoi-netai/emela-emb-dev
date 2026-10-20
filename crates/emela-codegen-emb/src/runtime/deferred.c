@@ -56,3 +56,14 @@ static inline EmelaAny emela_deferred_allocate(emela_scope *scope) {
   emela_heap_retain(scope);
   return (EmelaAny){.payload.any_box = deferred};
 }
+
+static inline emela_deferred_slot *emela_deferred_prepare_complete(emela_deferred *deferred) {
+  if (deferred == NULL) emela_scheduler_invalid();
+  if (deferred->scope->ended)
+    emela_board_defect(EMELA_DEFECT_PANIC, "deferred was completed after its scope ended", UINT16_C(44));
+  emela_deferred_slot *slot = emela_deferred_slot_get(deferred);
+  return slot->full ? NULL : slot;
+}
+static inline void emela_deferred_publish(emela_deferred_slot *slot) {
+  if (slot->head != NULL) emela_scheduler_invalid(); /* Waiters are connected by DeferredAwait. */
+}

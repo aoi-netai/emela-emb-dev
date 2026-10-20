@@ -63,6 +63,11 @@ pub(super) fn validate(
                         on_fail: None,
                         ..
                     } => {}
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Complete,
+                        on_fail: None,
+                        ..
+                    } => {}
                     Value::Fiber { .. } => {
                         return Err(unsupported(
                             &function.name,
@@ -1132,13 +1137,16 @@ pub(super) fn emit_scope_runtime(
 }
 
 pub(super) fn emit_fiber_value(
-    _layouts: &TypeLayouts<'_>,
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     dst: Option<VarId>,
     op: emela_core::FiberOp,
     args: &[Operand],
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if op == emela_core::FiberOp::Complete {
+        return deferred::emit_complete(layouts, function, dst, args, writer);
+    }
     let expression = match (op, args) {
         (emela_core::FiberOp::Fork, [scope, Operand::Var(body)]) => format!(
             "emela_fork_{}({}, {})",

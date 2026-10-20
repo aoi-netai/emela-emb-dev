@@ -10,6 +10,8 @@ use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
+#[path = "deferred.rs"]
+mod deferred;
 #[path = "suspend.rs"]
 mod suspend;
 
@@ -471,6 +473,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if layouts.has_scopes {
         suspend::emit_scope_runtime(&layouts, &mut source)?;
+    }
+    if layouts.deferred_pool {
+        deferred::emit_runtime(&layouts, &mut source)?;
     }
     let has_int_shift = has_builtin(
         flow,
@@ -8257,6 +8262,7 @@ struct TypeLayouts<'a> {
     has_resumes: bool,
     has_scopes: bool,
     deferred_pool: bool,
+    deferred_complete_types: Vec<TypeId>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8327,6 +8333,7 @@ impl<'a> TypeLayouts<'a> {
                 || crate::fiber::has_scopes(flow, emitted),
             has_scopes: crate::fiber::has_scopes(flow, emitted),
             deferred_pool,
+            deferred_complete_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8365,6 +8372,17 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Complete,
+                        args,
+                        ..
+                    } => {
+                        let ty = deferred::value_type(&layouts, function, &args[0])?;
+                        layouts.add_any_box_type(ty);
+                        if !layouts.deferred_complete_types.contains(&ty) {
+                            layouts.deferred_complete_types.push(ty);
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Fork,
                         args,
