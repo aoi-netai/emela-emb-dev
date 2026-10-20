@@ -924,3 +924,35 @@ fn polymorphic_empty_list_const_keeps_the_heapless_representation() {
         ),
     );
 }
+
+#[test]
+fn canonical_const_roots_include_dependency_specializations_until_they_reach_a_fixed_point() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            include_str!("../../examples/support/const_polymorphic_dependency.emel"),
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    let names: Vec<_> = flow
+        .functions
+        .iter()
+        .filter(|(_, f)| f.name.starts_with("$emb_const_origins$v1$"))
+        .map(|(_, f)| {
+            let seq = &f.seqs[f.body.unwrap()];
+            let emela_lir::Stmt::Let {
+                value: Value::FnRef(canonical),
+                ..
+            } = f.stmts[seq.stmts[0]]
+            else {
+                panic!("canonical origin")
+            };
+            flow.functions[canonical].name.as_str()
+        })
+        .collect();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"BASE"));
+    assert!(names.contains(&"PAIR"));
+}

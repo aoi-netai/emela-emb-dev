@@ -28,33 +28,42 @@ pub(crate) fn monomorphize(core: &emela_core::Module) -> Prepared {
         .iter()
         .filter_map(|(id, f)| f.exported.then_some(id))
         .collect();
-    let first = emela_core::monomorphize_traced(core, &roots);
-    let mut counts = HashMap::new();
-    for (_, &origin) in first.origins.iter() {
-        let f = &core.functions[origin];
-        if f.constant && f.type_params != 0 {
-            *counts.entry(origin).or_insert(0) += 1;
+    let mut mono = emela_core::monomorphize_traced(core, &roots);
+    let mut shared = Vec::new();
+    loop {
+        let mut counts = HashMap::new();
+        for (_, &origin) in mono.origins.iter() {
+            let f = &core.functions[origin];
+            if f.constant && f.type_params != 0 {
+                *counts.entry(origin).or_insert(0) += 1;
+            }
         }
+        let mut needed: Vec<_> = counts
+            .into_iter()
+            .filter_map(|(id, count)| (count > 1).then_some(id))
+            .collect();
+        needed.extend(shared.iter().copied());
+        needed.sort_by_key(|id| u32::from(id.into_raw()));
+        needed.dedup();
+        if needed == shared {
+            break;
+        }
+        shared = needed;
+        let all_roots: Vec<_> = roots
+            .iter()
+            .copied()
+            .chain(shared.iter().copied())
+            .collect();
+        mono = emela_core::monomorphize_traced(core, &all_roots);
     }
     // A single specialization already has one cache and needs no erased representation bridge.
-    let mut shared: Vec<_> = counts
-        .into_iter()
-        .filter_map(|(id, count)| (count > 1).then_some(id))
-        .collect();
-    shared.sort_by_key(|id| u32::from(id.into_raw()));
     if shared.is_empty() {
         return Prepared {
-            module: first.module,
+            module: mono.module,
             groups: vec![],
             function_groups: vec![],
         };
     }
-    let all_roots: Vec<_> = roots
-        .iter()
-        .copied()
-        .chain(shared.iter().copied())
-        .collect();
-    let mono = emela_core::monomorphize_traced(core, &all_roots);
     let groups = shared
         .iter()
         .enumerate()
