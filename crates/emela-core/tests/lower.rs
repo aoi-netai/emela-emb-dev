@@ -896,3 +896,23 @@ fn main() {
         .collect();
     insta::assert_snapshot!(mine.join("\n\n"));
 }
+
+#[test]
+fn function_valued_const_preserves_its_whole_function_type() {
+    let m = lower_files(&[(
+        "main.emel",
+        r#"
+const APPLY = { base = 40
+  fn(value: Int) { base + value }
+}
+pub fn read() -> Int { APPLY(2) }
+"#,
+    )]);
+    let (_, value) = m.functions.iter().find(|(_, f)| f.name == "APPLY").unwrap();
+    assert!(value.constant);
+    let Type::Fn(ft) = m.ty(value.ret) else {
+        panic!("const returns a function value")
+    };
+    assert_eq!(ft.params, vec![TypeId::INT]);
+    assert_eq!(ft.ret, TypeId::INT);
+}

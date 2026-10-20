@@ -769,7 +769,7 @@ impl<'a> Lowerer<'a> {
             .filter(|&i| matches!(params[i].kind, emela_types::ParamKind::Set))
             .collect();
         let ret = match &sig.scheme.ty {
-            Ty::Fn(f) => self.ty(&f.ret),
+            Ty::Fn(f) if !matches!(self.hir.item(def), Some(Item::Const(_))) => self.ty(&f.ret),
             ty => self.ty(ty),
         };
         (ret, params.len(), sets)
@@ -822,7 +822,7 @@ impl<'a> Lowerer<'a> {
             }
             _ => unreachable!("fn_id got a definition that is not a fn, const or handler"),
         };
-        if self.takes_ev(def) {
+        if !matches!(hir.item(def), Some(Item::Const(_))) && self.takes_ev(def) {
             let ev = self.ev_local();
             params.push(ev);
             self.ev = Some(ev);

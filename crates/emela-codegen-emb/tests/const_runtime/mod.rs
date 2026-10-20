@@ -36,11 +36,8 @@ fn sum(n: Int) -> Int { if n == 0 { 0 } else { n + sum(n - 1) } }
 const VALUE = { dbg("once")
  if True { sum(6) } else { 0 } }
 const APPLY = { x = VALUE
- (fn(y: Int) { x + y }, 0) }
-pub fn read() -> Int {
- (apply, ignored) = APPLY
- apply(VALUE)
-}
+ fn(y: Int) { x + y } }
+pub fn read() -> Int { APPLY(VALUE) }
 "#,
         4096,
     );
