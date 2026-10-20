@@ -207,3 +207,7 @@ fn discarded_list_heads_accept_represented_and_unit_elements() {
 fn discarded_list_tail_preserves_the_source_owner() {
     run_discarded("list_tail", 2048);
 }
+#[test]
+fn discarded_top_level_function_reference_is_heapless() {
+    run_discarded("fn_ref", 0);
+}

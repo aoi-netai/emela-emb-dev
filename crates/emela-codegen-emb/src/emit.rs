@@ -1971,10 +1971,7 @@ fn validate_function_refs(
                 continue;
             };
             let Some(dst) = dst else {
-                return Err(invalid_flow_ir(
-                    &function.name,
-                    "FnRef has no function-value destination",
-                ));
+                continue;
             };
             let Type::Fn(function_type) = layouts.types[function.vars[*dst].ty].clone() else {
                 return Err(invalid_flow_ir(
@@ -2096,13 +2093,13 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
             }
             let active = runtime_statements(function);
             for (_, statement) in function.stmts.iter().filter(|(id, _)| active.contains(id)) {
-                if let Stmt::Let { value, .. } = statement {
+                if let Stmt::Let { dst, value, .. } = statement {
                     match value {
                         Value::Call {
                             callee: Callee::Direct(callee),
                             ..
-                        }
-                        | Value::FnRef(callee) => pending.push(*callee),
+                        } => pending.push(*callee),
+                        Value::FnRef(callee) if dst.is_some() => pending.push(*callee),
                         _ => {}
                     }
                 }
@@ -4922,10 +4919,7 @@ fn emit_statement_inner(
                 }
                 Value::FnRef(target) => {
                     let Some(dst) = dst else {
-                        return Err(invalid_flow_ir(
-                            &function.name,
-                            "FnRef has no function-value destination",
-                        ));
+                        return Ok(());
                     };
                     let Type::Fn(_) = layouts.types[function.vars[*dst].ty] else {
                         return Err(invalid_flow_ir(
