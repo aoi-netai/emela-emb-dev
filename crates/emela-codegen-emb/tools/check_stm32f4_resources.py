@@ -76,6 +76,7 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
              stack_budget=16384, max_frame_bytes=None, observed=None):
     errors = []
     ram = []
+    static_ram = []
     flash = []
     loaded_flash = []
     flash_reservations = []
@@ -96,6 +97,8 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
                 errors.append(f"{section.name} exceeds physical Flash")
         elif RAM_START <= start < RAM_START + RAM_SIZE:
             ram.append((start, end))
+            if section.name not in [".emela_stack", ".emela_stack_guard"]:
+                static_ram.append((start, end))
             if end > RAM_START + RAM_SIZE:
                 errors.append(f"{section.name} exceeds physical RAM")
         else:
@@ -148,7 +151,7 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
         names = {section.name: section for section in sections}
         for name, start, size in [(".emela_stack", bottom, capacity), (".emela_stack_guard", guard_start, guard_bytes)]:
             section = names.get(name)
-            if section is None or section.vma != start or section.size != size or "LOAD" in section.flags:
+            if section is None or section.vma != start or section.size != size or "ALLOC" not in section.flags or "LOAD" in section.flags:
                 errors.append(f"{name} does not match its NOLOAD linker reservation")
 
     flash_span = max((end - FLASH_START for _, end in flash), default=0)
@@ -167,6 +170,8 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
     if dynamic_frames:
         errors.append("unbounded dynamic GCC stack frames found")
     largest = max((frame["bytes"] for frame in frames), default=0)
+    if capacity > 0 and largest > capacity:
+        errors.append(f"individual GCC frame {largest} exceeds linked MSP capacity {capacity}")
     if max_frame_bytes is not None and largest > max_frame_bytes:
         errors.append(f"individual GCC frame {largest} exceeds budget {max_frame_bytes}")
 
@@ -196,7 +201,7 @@ def validate(sections, symbols, frames, *, flash_budget=FLASH_SIZE, ram_budget=R
     return {
         "target": "STM32F446", "ok": not errors, "errors": errors,
         "flash": {"physical_bytes": FLASH_SIZE, "budget_bytes": flash_budget, "allocated_union_bytes": union_size(flash), "loaded_union_bytes": union_size(loaded_flash), "image_span_bytes": flash_span},
-        "ram": {"physical_bytes": RAM_SIZE, "budget_bytes": ram_budget, "allocated_union_bytes": ram_bytes, "stack_reserved_bytes": capacity, "guard_reserved_bytes": guard_bytes, "static_allocated_bytes": ram_bytes - capacity - guard_bytes, "unallocated_gap_bytes": gap},
+        "ram": {"physical_bytes": RAM_SIZE, "budget_bytes": ram_budget, "allocated_union_bytes": ram_bytes, "stack_reserved_bytes": capacity, "guard_reserved_bytes": guard_bytes, "static_allocated_bytes": union_size(static_ram), "unallocated_gap_bytes": gap},
         "stack": {"budget_bytes": stack_budget, "largest_individual_frame_bytes": largest, "individual_frames": frames, "observed": stack_observed, "whole_call_stack_bound_proved": False},
         "linked_dynamic_allocators": allocators, "sections": section_report,
     }

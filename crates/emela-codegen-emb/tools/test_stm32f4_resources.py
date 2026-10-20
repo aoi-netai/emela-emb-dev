@@ -89,6 +89,17 @@ class ResourceTests(unittest.TestCase):
         frames[0]["kind"] = "dynamic,bounded"
         self.assertTrue(validate(sections, symbols, frames)["ok"])
 
+    def test_stack_reservations_require_alloc_sections(self):
+        for index in [3, 4]:
+            sections, symbols, frames, observed = fixture()
+            sections[index].flags = []
+            self.assertFalse(validate(sections, symbols, frames)["ok"])
+
+    def test_individual_frame_cannot_exceed_linked_stack_capacity(self):
+        sections, symbols, frames, observed = fixture()
+        frames[0]["bytes"] = 16385
+        self.assertFalse(validate(sections, symbols, frames)["ok"])
+
     def test_objdump_and_nm_parsers_accept_real_layout_forms(self):
         sections = sections_from_objdump("""  0 .text 00000200 08000000 08000000 00001000 2**2
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
