@@ -20,6 +20,14 @@ BOARD = CRATE / "examples/renode-f446"
 STACK_METRICS = ["used", "capacity", "painted", "guard_ok", "samples", "initial_sp", "min_sp"]
 RUNTIME_MODES = ["scalar", "gc", "string", "gc-string"]
 NEGATIVE_MODES = ["string", "heap", "fiber", "frame", "task", "event"]
+RUNTIME_METRICS = {
+    "board_rejected_leases", "cancelled_cleanups", "children_peak", "cleanup_iterations",
+    "error_produced", "error_released", "failure_line", "failures", "fibers_peak",
+    "fp_context_checks", "fp_irq", "fp_main", "frames_peak", "heap_after", "heap_peak",
+    "irq_during_scheduler", "isr_calls", "iterations", "main_callbacks", "notifications",
+    "old_generation_checks", "pools_clean", "rejected_notifications", "sanity_checks",
+    "stopped_pending", "success_produced", "success_released",
+}
 
 
 def atomic_json(path, value):
@@ -65,10 +73,13 @@ def check_metrics(fixture, values):
             raise ValueError(f"invalid expected-defect metrics: {got}")
     elif fixture.startswith("runtime-"):
         got = values["fixture"]
+        invalid = sorted(name for name in RUNTIME_METRICS if name not in got or type(got[name]) is not int)
+        if invalid:
+            raise ValueError("missing/integer runtime metrics: " + ", ".join(invalid))
         for name, expected in [("iterations", 1000), ("failures", 0), ("heap_after", 0)]:
             if got.get(name) != expected:
                 raise ValueError(f"invalid runtime {name}: {got.get(name)} (expected {expected})")
-        expected = {"cleanup_iterations":1000,"cancelled_cleanups":1000,"stopped_pending":1000,"pools_clean":1,"sanity_checks":5,"notifications":4998,"isr_calls":6997,"rejected_notifications":1999,"board_rejected_leases":999,"error_produced":500,"fp_context_checks":6997,"irq_during_scheduler":1}
+        expected = {"cleanup_iterations":1000,"cancelled_cleanups":1000,"stopped_pending":1000,"pools_clean":1,"sanity_checks":5,"failure_line":0,"fp_main":0x3fa00000,"fp_irq":0x3fe00000,"notifications":4998,"isr_calls":6997,"rejected_notifications":1999,"board_rejected_leases":999,"error_produced":500,"fp_context_checks":6997,"irq_during_scheduler":1}
         managed = fixture in ["runtime-string","runtime-gc-string"]
         expected.update({"error_released":1499 if managed else 1749,"success_produced":2248 if managed else 0,"success_released":2498 if managed else 0})
         for name, count in expected.items():
@@ -76,8 +87,9 @@ def check_metrics(fixture, values):
                 raise ValueError(f"runtime {name}: {got.get(name)} != {count}")
         for name in ["main_callbacks","old_generation_checks"]:
             if got.get(name,0)==0: raise ValueError(f"runtime did not observe {name}")
-        if got.get("children_peak", 0) > 3:
-            raise ValueError("runtime child high-water mark exceeded 3")
+        for name, limit in [("heap_peak", 4096), ("children_peak", 3), ("frames_peak", 48), ("fibers_peak", 8)]:
+            if not 0 < got[name] <= limit:
+                raise ValueError(f"runtime {name}: {got[name]} outside 1..{limit}")
 
 
 class Case:

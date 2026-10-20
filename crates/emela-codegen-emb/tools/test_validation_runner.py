@@ -35,6 +35,24 @@ class ValidationRunnerTests(unittest.TestCase):
         values["gpioa_odr"]=0x100
         with self.assertRaises(ValueError):check_metrics("scalar",values)
 
+    def test_every_required_runtime_metric_must_be_present(self):
+        fixture={"board_rejected_leases":999,"cancelled_cleanups":1000,"children_peak":2,
+                 "cleanup_iterations":1000,"error_produced":500,"error_released":1749,
+                 "failure_line":0,"failures":0,"fibers_peak":4,"fp_context_checks":6997,
+                 "fp_irq":0x3fe00000,"fp_main":0x3fa00000,"frames_peak":12,"heap_after":0,
+                 "heap_peak":1632,"irq_during_scheduler":1,"isr_calls":6997,"iterations":1000,
+                 "main_callbacks":12247,"notifications":4998,"old_generation_checks":999,
+                 "pools_clean":1,"rejected_notifications":1999,"sanity_checks":5,
+                 "stopped_pending":1000,"success_produced":0,"success_released":0}
+        values={"gpioa_odr":0xe0,"stack":{"guard_ok":1,"samples":2,"used":32,"painted":512,"capacity":512},"fixture":fixture}
+        check_metrics("runtime-scalar",values)
+        for name in fixture:
+            broken=json.loads(json.dumps(values));del broken["fixture"][name]
+            with self.subTest(missing=name),self.assertRaises(ValueError):check_metrics("runtime-scalar",broken)
+        for name,value in [("heap_peak",4097),("children_peak",4),("frames_peak",49),("fibers_peak",9),("failure_line",1),("fp_main",0),("fp_irq",0)]:
+            broken=json.loads(json.dumps(values));broken["fixture"][name]=value
+            with self.subTest(metric=name),self.assertRaises(ValueError):check_metrics("runtime-scalar",broken)
+
     def test_unknown_fixture_cannot_reuse_a_previous_success(self):
         with tempfile.TemporaryDirectory(prefix="emela-runner-regression-") as temporary:
             out=Path(temporary)
