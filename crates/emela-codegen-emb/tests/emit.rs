@@ -14,6 +14,7 @@ mod fiber;
 mod owned;
 mod string_append;
 mod string_comparison;
+mod value_audit;
 mod suspend;
 mod task_values;
 

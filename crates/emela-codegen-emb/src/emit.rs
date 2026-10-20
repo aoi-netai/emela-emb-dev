@@ -6773,7 +6773,7 @@ fn emit_field(
         }]);
     };
     let has_repr = layouts.type_repr(field_ty) != Repr::Void;
-    if has_repr != dst.is_some() {
+    if dst.is_some() && !has_repr {
         return Err(vec![Error {
             kind: ErrorKind::InvalidFlowIr,
             message: format!(
