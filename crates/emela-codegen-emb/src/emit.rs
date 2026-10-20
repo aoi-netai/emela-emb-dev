@@ -14,6 +14,8 @@ use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 mod cause;
 #[path = "child.rs"]
 mod child;
+#[path = "const_bridge.rs"]
+mod const_bridge;
 #[path = "deferred.rs"]
 mod deferred;
 #[path = "error.rs"]
@@ -42,10 +44,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // The input Flow IR was verified by compile_flow before backend lowering. Lifted closure
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
-    crate::const_origins::groups(flow)?;
+    let const_groups = crate::const_origins::groups(flow)?;
     crate::const_origins::function_groups(flow)?;
     let mut prepared_flow = flow.clone();
-    let runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
+    const_bridge::prepare(&mut prepared_flow, &const_groups);
+    let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
+    runtime_consts.extend(
+        const_groups
+            .iter()
+            .flat_map(|group| group.specializations.iter().copied()),
+    );
     crate::scope_abi::normalize(&mut prepared_flow)?;
     crate::fiber::normalize_scope_results(&mut prepared_flow);
     let mut closures = crate::static_closure::lower(&prepared_flow)?;
@@ -73,6 +81,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
     layouts.discarded_results = discarded_results;
     layouts.runtime_consts = runtime_consts.clone();
+    let const_bridges = const_bridge::Bridges::new(flow, &const_groups, &closures, &mut layouts)?;
     for &id in &runtime_consts {
         if matches!(layouts.types[flow.functions[id].ret], Type::String) {
             layouts
@@ -731,6 +740,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         ));
     }
     source.blank();
+    const_bridges.emit(flow, &layouts, &names, heap_required, &mut source)?;
     error_runtime::emit_display(
         &layouts,
         &names,
@@ -798,6 +808,20 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             )
         };
         source.begin_block(&function_signature);
+        if const_bridges.getters.contains_key(&id) {
+            const_bridges.emit_initializer(id, flow, &layouts, &names, &mut source);
+            source.end_block();
+            source.blank();
+            emit_const_getter(
+                &layouts,
+                id,
+                function,
+                &names[&id],
+                &initializer_name,
+                &mut source,
+            );
+            continue;
+        }
         if function.constant {
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),

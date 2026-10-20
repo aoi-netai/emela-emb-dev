@@ -726,3 +726,62 @@ pub fn text() -> String { IDENTITY("42", ()) }
             .any(|e| e.kind == ErrorKind::InvalidFlowIr && e.message.contains("origin marker"))
     );
 }
+
+#[test]
+fn source_polymorphic_consts_share_initialization_and_specialize_callable_families() {
+    let source = r#"
+@external(c, "tick")
+fn tick() -> Int use {}
+@external(c, "mark")
+fn mark(n: Int) -> () use {}
+const EMPTY = { dbg("EMPTY")
+ []
+}
+const MISSING = { dbg("MISSING")
+ None
+}
+const IDENTITY = { dbg("IDENTITY")
+ fn(value) { value }
+}
+const APPLY = { dbg("APPLY")
+ fn(callback) { callback() }
+}
+const CHOICE = { dbg("CHOICE")
+ if tick() == 1 { fn(value) { mark(1)
+ value } } else { fn(value) { mark(2)
+ value } }
+}
+fn ints(xs: List[Int], o: Option[Int]) -> Int { List.length(xs) + (o match {Some(n)->n
+ None->0}) }
+fn texts(xs: List[String], o: Option[String]) -> Int { List.length(xs) + (o match {Some(s)->String.byte_size(s)
+ None->0}) }
+pub fn integer() -> Int { ints(EMPTY,MISSING) + IDENTITY(20) + APPLY(fn(){21}) + CHOICE(1) }
+pub fn text() -> Int { texts(EMPTY,MISSING) + String.byte_size(IDENTITY("42")) + String.byte_size(APPLY(fn(){"42"})) + String.byte_size(CHOICE("")) + 38 }
+"#;
+    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(8192)).unwrap();
+    let integer = export(&output, "integer");
+    let text = export(&output, "text");
+    output.files.iter_mut().find(|f|f.path=="emela_embedded.c").unwrap().contents.push_str(r#"
+unsigned test_live(void){unsigned n=0;if(!emela_heap_initialized)return 0;for(unsigned char*p=emela_heap_storage;p<emela_heap_end();){emela_heap_block*b=(emela_heap_block*)(void*)p;n+=!b->is_free;p+=b->size;}return n;}
+"#);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+unsigned test_live(void);
+static unsigned initializations,ticks,marks;
+int32_t tick(void){{return ++ticks;}}
+void mark(int32_t n){{assert(n==1);++marks;}}
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
+int main(void){{assert({integer}()==42);assert({text}()==42);unsigned baseline=test_live();assert(initializations==5&&ticks==1);for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({text}()==42);assert(test_live()==baseline);}}assert(initializations==5&&ticks==1&&marks==2002);return 0;}}
+"#
+        ),
+    );
+}
