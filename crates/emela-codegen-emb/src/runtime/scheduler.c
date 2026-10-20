@@ -18,6 +18,7 @@ static void emela_task_abandon(EmelaFiber owner);
 static void emela_resume_drive(emela_fiber *fiber);
 static void emela_unwind_sweep(void);
 static int emela_interrupt_masked(emela_fiber *fiber);
+static int emela_should_unwind(emela_fiber *fiber);
 #endif
 typedef void (*emela_step)(emela_fiber *, emela_frame *);
 struct emela_frame {
@@ -47,6 +48,9 @@ struct emela_fiber {
   unsigned holds;
   int cancelled;
   int finishing;
+#ifdef EMELA_FAILURE_RUNTIME
+  emela_frame *failure_stop;
+#endif
 #ifdef EMELA_RESUME_RUNTIME
   emela_resume *perform;
 #endif
@@ -144,6 +148,9 @@ static EmelaFiber emela_fiber_create(void) {
   fiber->root = (EmelaFiber){slot, fiber->generation};
   fiber->active = fiber->holds = 0;
   fiber->cancelled = fiber->finishing = 0;
+#ifdef EMELA_FAILURE_RUNTIME
+  fiber->failure_stop = NULL;
+#endif
 #ifdef EMELA_RESUME_RUNTIME
   fiber->perform = NULL;
 #endif

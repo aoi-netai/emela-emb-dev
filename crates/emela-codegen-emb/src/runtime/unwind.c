@@ -12,6 +12,13 @@ static int emela_interrupt_masked(emela_fiber *fiber) {
   }
   emela_scheduler_invalid();
 }
+static int emela_should_unwind(emela_fiber *fiber) {
+  return (fiber->cancelled
+#ifdef EMELA_FAILURE_RUNTIME
+    || fiber->failure_stop != NULL
+#endif
+  ) && !emela_interrupt_masked(fiber);
+}
 typedef struct {
   uint32_t cleanup;
   uint32_t next;
@@ -43,7 +50,7 @@ static inline int emela_protection_finish(emela_fiber *fiber, emela_protection *
   if (*depth == 0 || !guards[*depth - 1].running) emela_scheduler_invalid();
   emela_protection guard = guards[--*depth];
   emela_interrupt_unhold(fiber);
-  if (fiber->cancelled && !emela_interrupt_masked(fiber)) return 0;
+  if (emela_should_unwind(fiber)) return 0;
   emela_protection_leave(fiber, guards, *depth, guard.keep, guard.next, pc);
   return 1;
 }
@@ -66,6 +73,13 @@ static int emela_unwind_context(emela_fiber *fiber) {
 #endif
   fiber->state = EMELA_FIBER_RUNNING;
   while (fiber->top != NULL) {
+#ifdef EMELA_FAILURE_RUNTIME
+    if (fiber->top == fiber->failure_stop) {
+      fiber->failure_stop = NULL;
+      emela_ready_push(fiber);
+      return 1;
+    }
+#endif
     if (fiber->top->unwind != NULL) {
       int action = fiber->top->unwind(fiber, fiber->top);
       if (action != 0) {
@@ -92,13 +106,17 @@ static void emela_unwind_sweep(void) {
         emela_fiber *caller = emela_resume_live(fiber->perform->caller);
         if (root == NULL) emela_scheduler_invalid();
         if (caller == NULL) emela_scheduler_invalid();
-        if (root->finishing || root->cancelled || caller->finishing) fiber->cancelled = 1;
+        if (root->finishing || root->cancelled || caller->finishing
+#ifdef EMELA_FAILURE_RUNTIME
+            || caller->failure_stop != NULL
+#endif
+        ) fiber->cancelled = 1;
       }
 #endif
       if (fiber->active != 0) continue;
       EmelaFiber owner = {slot, fiber->generation};
       if (emela_unwind_has_operations(owner)) continue;
-      if (fiber->cancelled && !emela_interrupt_masked(fiber) && !fiber->finishing)
+      if (emela_should_unwind(fiber) && !fiber->finishing)
         progress |= emela_unwind_context(fiber);
       if (!fiber->finishing) continue;
       fiber->state = EMELA_FIBER_DONE;
@@ -113,7 +131,7 @@ static void emela_resume_drive(emela_fiber *target) {
   emela_fiber *saved = emela_current_fiber, *work = target;
   target->state = EMELA_FIBER_RUNNING;
   for (;;) {
-    if (work->cancelled && !emela_interrupt_masked(work)) { emela_unwind_sweep(); break; }
+    if (emela_should_unwind(work)) { emela_unwind_sweep(); break; }
     work->active++;
     emela_current_fiber = work;
 #ifdef EMELA_RESUME_RUNTIME

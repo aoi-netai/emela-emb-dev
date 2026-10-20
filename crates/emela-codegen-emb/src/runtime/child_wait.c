@@ -24,18 +24,25 @@ static void emela_child_check(emela_child *child, int verb) {
   }
 }
 static void emela_child_publish(emela_child *child) {
-  while (child->head != NULL) {
-    emela_child_waiter *waiter = child->head;
-    child->head = waiter->next;
-    if (child->head != NULL) child->head->previous = NULL;
-    else child->tail = NULL;
+  for (emela_child_waiter *waiter = child->head; waiter != NULL;) {
+    emela_child_waiter *next = waiter->next;
+    emela_fiber *fiber = emela_fiber_get(waiter->owner);
+    /* Closing scopes only wake masked cleanup; abandoned tails are swept first. */
+    if (child->scope->closed && !child->scope->ended && !emela_interrupt_masked(fiber)) {
+      waiter = next;
+      continue;
+    }
+    if (waiter->previous != NULL) waiter->previous->next = next;
+    else child->head = next;
+    if (next != NULL) next->previous = waiter->previous;
+    else child->tail = waiter->previous;
     waiter->previous = waiter->next = NULL;
     waiter->linked = 0;
-    emela_fiber *fiber = emela_fiber_get(waiter->owner);
     if (!fiber->cancelled || emela_interrupt_masked(fiber)) {
       if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
       emela_ready_push(fiber);
     }
+    waiter = next;
   }
 }
 static void emela_child_wait_drop(emela_frame *base) {

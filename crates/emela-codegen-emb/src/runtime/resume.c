@@ -12,7 +12,11 @@ static int emela_resume_unavailable(emela_resume *resume) {
   emela_fiber *root = emela_resume_live(resume->root);
   emela_fiber *caller = emela_resume_live(resume->caller);
   return root == NULL || root->state == EMELA_FIBER_DONE || caller == NULL || caller->finishing ||
-    ((root->cancelled || root->finishing || caller->cancelled) && !emela_interrupt_masked(caller));
+    ((root->cancelled || root->finishing || caller->cancelled
+#ifdef EMELA_FAILURE_RUNTIME
+      || caller->failure_stop != NULL
+#endif
+    ) && !emela_interrupt_masked(caller));
 }
 static void emela_resume_wake(emela_resume *resume) {
   if (emela_resume_unavailable(resume)) return;

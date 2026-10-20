@@ -43,10 +43,9 @@ pub(super) fn validate(
                 match value {
                     Value::Fiber {
                         op:
-                            emela_core::FiberOp::Scope { fails: false }
+                            emela_core::FiberOp::Scope { .. }
                             | emela_core::FiberOp::Fork
                             | emela_core::FiberOp::Deferred,
-                        on_fail: None,
                         ..
                     } => {}
                     Value::Fiber {
@@ -184,7 +183,11 @@ pub(super) fn emit_runtime(
     unwind: bool,
     scopes: bool,
     deferred: bool,
+    failure: bool,
 ) {
+    if failure {
+        writer.line("#define EMELA_FAILURE_RUNTIME 1");
+    }
     if deferred {
         writer.line(&format!(
             "#define EMELA_DEFERRED_CAPACITY {}",
@@ -749,7 +752,7 @@ pub(super) fn emit_function(
     }
     writer.begin_block("for (;;)");
     if layouts.has_unwind {
-        writer.line("if (fiber->cancelled && !emela_interrupt_masked(fiber)) return;");
+        writer.line("if (emela_should_unwind(fiber)) return;");
     }
     writer.begin_block("switch (frame->base.pc)");
     let mut next_temp = 0;
@@ -826,9 +829,9 @@ pub(super) fn emit_function(
                     dst,
                     value:
                         Value::Fiber {
-                            op: emela_core::FiberOp::Scope { fails: false },
+                            op: emela_core::FiberOp::Scope { .. },
                             args,
-                            on_fail: None,
+                            on_fail,
                         },
                     ..
                 } = statement
@@ -842,12 +845,23 @@ pub(super) fn emit_function(
                     let Type::Fn(ft) = &layouts.types[function.vars[*body].ty] else {
                         return Err(invalid_flow_ir(&function.name, "Scope body type"));
                     };
-                    if ft.fails || ft.ev || !ft.suspends || ft.params != [TypeId::FIBER_SCOPE] {
+                    if ft.ev || !ft.suspends || ft.params != [TypeId::FIBER_SCOPE] {
                         return Err(unsupported(&function.name, "Scope body ABI"));
                     }
                     prepare_result(layouts, function, *dst, writer);
                     writer.line(&format!("frame->base.pc = {next};"));
-                    writer.line("emela_scope *scope = emela_scope_begin(fiber);");
+                    writer.line(&format!(
+                        "emela_scope *scope = emela_scope_begin(fiber{});",
+                        if layouts.has_error_abi {
+                            if on_fail.is_some() {
+                                ", &frame->call_error"
+                            } else {
+                                ", NULL"
+                            }
+                        } else {
+                            ""
+                        }
+                    ));
                     let body = variable_name(*body);
                     writer.line(&format!(
                         "if ({body}.call == NULL) emela_scheduler_invalid();"
@@ -857,6 +871,9 @@ pub(super) fn emit_function(
                         format!("{body}.env"),
                         "scope".to_owned(),
                     ];
+                    if ft.fails {
+                        call_args.push("&scope->frame->body_error".into());
+                    }
                     if layouts.type_repr(ft.ret) != Repr::Void {
                         call_args.push(
                             dst.map(|v| format!("&{}", variable_name(v)))
@@ -1401,10 +1418,10 @@ pub(super) fn emit_scope_runtime(
         let Type::Fn(ft) = &layouts.types[ty] else {
             return Err(unsupported("Fork", "child is not a function"));
         };
-        if ft.fails || ft.ev || !ft.suspends || !ft.params.is_empty() || ft.ret != TypeId::ANY {
+        if ft.ev || !ft.suspends || !ft.params.is_empty() || ft.ret != TypeId::ANY {
             return Err(unsupported(
                 "Fork",
-                "child must be a non-failing suspending fn() -> Any",
+                "child must be a suspending fn() -> Any",
             ));
         }
         let index = ty.index();
@@ -1433,7 +1450,14 @@ pub(super) fn emit_scope_runtime(
         writer.begin_block("if (base->pc == 0)");
         writer.line("base->pc = 1;");
         writer.line("if (frame->body.call == NULL) emela_scheduler_invalid();");
-        writer.line("frame->body.call(fiber, frame->body.env, &fiber->child->result);");
+        writer.line(&format!(
+            "frame->body.call(fiber, frame->body.env{}, &fiber->child->result);",
+            if ft.fails {
+                ", &fiber->child->error"
+            } else {
+                ""
+            }
+        ));
         writer.line("return;");
         writer.end_block();
         writer.line("emela_frame_return(fiber);");

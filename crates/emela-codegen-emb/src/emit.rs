@@ -437,6 +437,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             layouts.has_unwind,
             layouts.has_scopes,
             layouts.deferred_pool,
+            layouts.has_error_abi,
         );
     }
     if layouts.has_scopes {

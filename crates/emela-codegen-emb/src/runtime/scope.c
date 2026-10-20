@@ -1,4 +1,28 @@
-/* Structured lifetime for non-failing fibers. All work runs in the main context. */
+/* Structured lifetime and failure boundaries. All work runs in the main context. */
+struct emela_scope_frame {
+  emela_frame base;
+  emela_scope *scope;
+#ifdef EMELA_FAILURE_RUNTIME
+  EmelaError body_error;
+  EmelaError *error_out;
+#endif
+};
+static void emela_scope_close(emela_scope *scope, EmelaFiber closer);
+#ifdef EMELA_FAILURE_RUNTIME
+static void emela_scope_failed(emela_scope *scope, EmelaError error) {
+  if (scope->first_error.tag != 0) return;
+  scope->first_error = error;
+  emela_fiber *owner = emela_resume_live(scope->owner);
+  if (owner == NULL || scope->ended) emela_scheduler_invalid();
+  emela_frame *target = &scope->frame->base;
+  /* An outer failing scope must retain priority over an inner one. */
+  for (emela_frame *at = owner->top; at != NULL; at = at->parent) {
+    if (at == target) { owner->failure_stop = target; break; }
+    if (at == owner->failure_stop) break;
+  }
+  emela_scope_close(scope, scope->owner);
+}
+#endif
 static void emela_scope_finish(emela_scope *scope) {
   if (scope->ended || !scope->closed || scope->running != 0) return;
   scope->ended = 1;
@@ -43,9 +67,15 @@ static void emela_child_after_step(emela_fiber *fiber) {
   emela_scope *scope = child->scope;
   emela_heap_retain(scope);
   child->status = fiber->cancelled ? 2 : 1;
+#ifdef EMELA_FAILURE_RUNTIME
+  if (child->error.tag != 0) {
+    child->status = 3;
+    emela_scope_failed(scope, child->error);
+  }
+#endif
 #ifdef EMELA_CHILD_WAIT_RUNTIME
   /* Closing the scope settles its remaining continuations after all children are reclaimed. */
-  if (!scope->closed) emela_child_publish(child);
+  emela_child_publish(child);
 #endif
   if (scope->running == 0) emela_scheduler_invalid();
   scope->running--;
@@ -60,10 +90,6 @@ static void emela_child_after_step(emela_fiber *fiber) {
   }
   emela_heap_release(scope);
 }
-typedef struct {
-  emela_frame base;
-  emela_scope *scope;
-} emela_scope_frame;
 _Static_assert(sizeof(emela_scope_frame) <= EMELA_FRAME_BYTES, "increase frame_bytes for Scope");
 static void emela_scope_drop(emela_frame *base) {
   emela_scope *scope = ((emela_scope_frame *)base)->scope;
@@ -72,7 +98,12 @@ static void emela_scope_drop(emela_frame *base) {
   emela_heap_release(scope);
 }
 static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
-  emela_scope *scope = ((emela_scope_frame *)base)->scope;
+  emela_scope_frame *frame = (emela_scope_frame *)base;
+  emela_scope *scope = frame->scope;
+#ifdef EMELA_FAILURE_RUNTIME
+  if (frame->body_error.tag != 0) emela_scope_failed(scope, frame->body_error);
+  if (fiber->failure_stop == base) fiber->failure_stop = NULL;
+#endif
   emela_scope_close(scope, (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation});
   if (scope->running != 0) {
     fiber->state = EMELA_FIBER_WAITING;
@@ -80,6 +111,12 @@ static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
     return;
   }
   emela_scope_finish(scope);
+#ifdef EMELA_FAILURE_RUNTIME
+  if (scope->first_error.tag != 0) {
+    if (frame->error_out == NULL) emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, "unhandled error", UINT16_C(15));
+    *frame->error_out = scope->first_error;
+  }
+#endif
   emela_frame_return(fiber);
 }
 static int emela_scope_unwind(emela_fiber *fiber, emela_frame *base) {
@@ -93,13 +130,23 @@ static int emela_scope_unwind(emela_fiber *fiber, emela_frame *base) {
   emela_scope_finish(scope);
   return 0;
 }
-static inline emela_scope *emela_scope_begin(emela_fiber *fiber) {
+static inline emela_scope *emela_scope_begin(emela_fiber *fiber
+#ifdef EMELA_FAILURE_RUNTIME
+    , EmelaError *error_out
+#endif
+) {
   emela_scope *scope = (emela_scope *)emela_heap_allocate(sizeof(emela_scope), EMELA_SCOPE_KIND);
   *scope = (emela_scope){.closer = {EMELA_SLOT_NONE, 0}};
   emela_scope_frame *frame = (emela_scope_frame *)emela_frame_push(fiber, sizeof(*frame), emela_scope_step);
   frame->base.drop = emela_scope_drop;
   frame->base.unwind = emela_scope_unwind;
   frame->scope = scope;
+#ifdef EMELA_FAILURE_RUNTIME
+  scope->owner = (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation};
+  scope->frame = frame;
+  frame->body_error = (EmelaError){0};
+  frame->error_out = error_out;
+#endif
   return scope;
 }
 static void emela_scope_check(emela_scope *scope) {
