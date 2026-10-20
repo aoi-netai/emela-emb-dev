@@ -742,6 +742,20 @@ pub(super) fn emit_function(
     }
     writer.line(&format!("}} {name}_frame;"));
     writer.line(&format!("_Static_assert(sizeof({name}_frame) <= EMELA_FRAME_BYTES, \"increase Options::with_frame_bytes for {name}\");"));
+    if has_failure {
+        writer.begin_block(&format!(
+            "static int {name}_has_failure(emela_fiber *fiber, emela_frame *base)"
+        ));
+        writer.line("(void)fiber;");
+        writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+        writer.line("if (frame->call_error.tag != 0) return 1;");
+        writer.line(&format!(
+            "for (uint32_t i = 0; i < {}; i++) if (frame->pending_error[i].tag != 0) return 1;",
+            graph.max_error_depth + 1
+        ));
+        writer.line("return 0;");
+        writer.end_block();
+    }
     if graph.max_depth != 0 {
         writer.begin_block(&format!(
             "static int {name}_unwind(emela_fiber *fiber, emela_frame *base)"
@@ -1332,6 +1346,9 @@ pub(super) fn emit_function(
     writer.line("for (size_t offset = sizeof(emela_frame); offset < sizeof(*frame); offset++) ((unsigned char *)frame)[offset] = 0;");
     writer.line(&format!("frame->base.pc = {entry};"));
     writer.line(&format!("frame->base.drop = {name}_drop;"));
+    if has_failure {
+        writer.line(&format!("frame->base.has_failure = {name}_has_failure;"));
+    }
     if graph.max_depth != 0 {
         writer.line(&format!("frame->base.unwind = {name}_unwind;"));
     }
@@ -1561,6 +1578,9 @@ pub(super) fn emit_scope_runtime(
         writer.line("emela_fiber *fiber = emela_child_begin(scope);");
         writer.line(&format!("emela_fork_frame_{index} *frame = (emela_fork_frame_{index} *)emela_frame_push(fiber, sizeof(*frame), emela_fork_step_{index});"));
         writer.line(&format!("frame->base.drop = emela_fork_drop_{index};"));
+        if ft.fails {
+            writer.line("frame->base.has_failure = emela_child_has_failure;");
+        }
         writer.line("frame->body = body;");
         if layouts.is_managed_value(ty) {
             layouts.emit_retain_value_expression(ty, "body", writer);

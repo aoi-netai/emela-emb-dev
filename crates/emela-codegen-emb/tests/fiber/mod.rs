@@ -7,6 +7,7 @@ mod failure;
 mod interrupt;
 mod join;
 mod notes;
+mod overlap;
 mod protect;
 
 fn options() -> Options {

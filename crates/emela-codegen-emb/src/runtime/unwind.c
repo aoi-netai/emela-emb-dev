@@ -15,6 +15,9 @@ static int emela_interrupt_masked(emela_fiber *fiber) {
 static int emela_should_unwind(emela_fiber *fiber) {
 #ifdef EMELA_FAILURE_RUNTIME
   if (fiber->forced) return 1;
+  /* Deliver an observed failure before an external interruption discards its frame. */
+  if (fiber->top != NULL && fiber->top->has_failure != NULL &&
+      fiber->top->has_failure(fiber, fiber->top)) return 0;
 #endif
   return (fiber->cancelled
 #ifdef EMELA_FAILURE_RUNTIME
@@ -89,9 +92,13 @@ static int emela_unwind_context(emela_fiber *fiber) {
   fiber->state = EMELA_FIBER_RUNNING;
   while (fiber->top != NULL) {
 #ifdef EMELA_FAILURE_RUNTIME
-    if (!fiber->cancelled && fiber->top == fiber->failure_stop) {
+    if (fiber->top == fiber->failure_stop) {
       fiber->failure_stop = NULL;
       fiber->forced = 0;
+      emela_ready_push(fiber);
+      return 1;
+    }
+    if (!emela_should_unwind(fiber)) {
       emela_ready_push(fiber);
       return 1;
     }

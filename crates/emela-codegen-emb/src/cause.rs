@@ -77,6 +77,14 @@ pub(super) fn emit_attempts(
             }
             writer.line(&format!("}} emela_attempt_frame_{index};"));
             writer.line(&format!("_Static_assert(sizeof(emela_attempt_frame_{index}) <= EMELA_FRAME_BYTES, \"increase frame_bytes for Attempt\");"));
+            if ft.fails {
+                writer.begin_block(&format!("static int emela_attempt_has_failure_{index}(emela_fiber *fiber, emela_frame *base)"));
+                writer.line("(void)fiber;");
+                writer.line(&format!(
+                    "return ((emela_attempt_frame_{index} *)base)->error.tag != 0;"
+                ));
+                writer.end_block();
+            }
             writer.begin_block(&format!(
                 "static void emela_attempt_drop_{index}(emela_frame *base)"
             ));
@@ -135,6 +143,11 @@ pub(super) fn emit_attempts(
             writer.line(&format!("emela_attempt_frame_{index} *frame = (emela_attempt_frame_{index} *)emela_frame_push(fiber, sizeof(*frame), emela_attempt_step_{index});"));
             writer.line("for (size_t i = sizeof(emela_frame); i < sizeof(*frame); i++) ((unsigned char *)frame)[i] = 0;");
             writer.line(&format!("frame->base.drop = emela_attempt_drop_{index}; frame->body = body; frame->result = result;"));
+            if ft.fails {
+                writer.line(&format!(
+                    "frame->base.has_failure = emela_attempt_has_failure_{index};"
+                ));
+            }
             layouts.emit_retain_value_expression(body, "body", writer);
             writer.end_block();
         } else {

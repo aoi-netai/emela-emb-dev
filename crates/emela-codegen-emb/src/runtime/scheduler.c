@@ -28,6 +28,9 @@ struct emela_frame {
 #ifdef EMELA_UNWIND_RUNTIME
   int (*unwind)(emela_fiber *, emela_frame *);
 #endif
+#ifdef EMELA_FAILURE_RUNTIME
+  int (*has_failure)(emela_fiber *, emela_frame *);
+#endif
   uint32_t pc;
   uint32_t slot;
 };

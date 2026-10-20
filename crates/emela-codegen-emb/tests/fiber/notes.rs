@@ -37,26 +37,7 @@ fn later_failures_are_ordered_owned_notes_shared_by_rethrown_causes() {
             .with_event_capacity(4),
     )
     .unwrap();
-    output
-        .files
-        .iter_mut()
-        .find(|f| f.path == "emela_embedded.c")
-        .unwrap()
-        .contents
-        .push_str(
-            r#"
-int test_heap_empty(void) {
-  if (!emela_heap_initialized) return 1;
-  for (unsigned char *at = emela_heap_storage; at < emela_heap_end();) {
-    emela_heap_block *block = (emela_heap_block *)(void *)at;
-    if (!block->is_free || block->size == 0) return 0;
-    at += block->size;
-  }
-  return 1;
-}
-
-"#,
-        );
+    add_heap_check(&mut output);
     compile_and_run(
         output,
         r#"
@@ -139,4 +120,27 @@ int main(void) {
 }
 "#,
     );
+}
+
+pub(super) fn add_heap_check(output: &mut Output) {
+    output
+        .files
+        .iter_mut()
+        .find(|f| f.path == "emela_embedded.c")
+        .unwrap()
+        .contents
+        .push_str(
+            r#"
+int test_heap_empty(void) {
+  if (!emela_heap_initialized) return 1;
+  for (unsigned char *at = emela_heap_storage; at < emela_heap_end();) {
+    emela_heap_block *block = (emela_heap_block *)(void *)at;
+    if (!block->is_free || block->size == 0) return 0;
+    at += block->size;
+  }
+  return 1;
+}
+
+"#,
+        );
 }

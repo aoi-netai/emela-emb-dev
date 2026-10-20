@@ -7,6 +7,17 @@ struct emela_scope_frame {
   EmelaError *error_out;
 #endif
 };
+#ifdef EMELA_FAILURE_RUNTIME
+static int emela_scope_has_failure(emela_fiber *fiber, emela_frame *base) {
+  (void)fiber;
+  emela_scope_frame *frame = (emela_scope_frame *)base;
+  return frame->body_error.tag != 0 || frame->scope->first_error.tag != 0;
+}
+static inline int emela_child_has_failure(emela_fiber *fiber, emela_frame *base) {
+  (void)base;
+  return fiber->child != NULL && fiber->child->error.tag != 0;
+}
+#endif
 static void emela_scope_close(emela_scope *scope, EmelaFiber closer);
 #ifdef EMELA_FAILURE_RUNTIME
 static void emela_scope_failed(emela_scope *scope, EmelaError *error) {
@@ -89,7 +100,11 @@ static void emela_child_after_step(emela_fiber *fiber) {
   emela_heap_release(child);
   if (scope->closed && scope->running == 0) {
     emela_fiber *closer = emela_resume_live(scope->closer);
-    if (closer != NULL && (!closer->cancelled || emela_interrupt_masked(closer)) && closer->state == EMELA_FIBER_WAITING)
+    if (closer != NULL && (!closer->cancelled || emela_interrupt_masked(closer)
+#ifdef EMELA_FAILURE_RUNTIME
+        || scope->first_error.tag != 0
+#endif
+      ) && closer->state == EMELA_FIBER_WAITING)
       emela_ready_push(closer);
     if (scope->closer.slot == EMELA_SLOT_NONE) emela_scope_finish(scope);
   }
@@ -158,6 +173,7 @@ static inline emela_scope *emela_scope_begin(emela_fiber *fiber
   scope->frame = frame;
   frame->body_error = (EmelaError){0};
   frame->error_out = error_out;
+  frame->base.has_failure = emela_scope_has_failure;
 #endif
   return scope;
 }
