@@ -27,6 +27,7 @@ volatile uint32_t emela_runtime_old_generation_checks;
 volatile uint32_t emela_runtime_heap_after;
 volatile uint32_t emela_runtime_pools_clean;
 volatile uint32_t emela_runtime_sanity_checks;
+volatile uint32_t emela_runtime_fp_context_checks;
 volatile float emela_runtime_fp_main;
 volatile float emela_runtime_fp_irq;
 static unsigned locked;
@@ -108,6 +109,8 @@ void SysTick_Handler(void) {
   emela_runtime_isr_calls++;
   /* Force lazy FP stacking, then record the actual exception MSP. */
   emela_runtime_fp_irq = emela_runtime_fp_main + 0.5f;
+  uint32_t irq_pattern = UINT32_C(0x40e00000);
+  __asm volatile("vmov s0, %0" :: "r"(irq_pattern) : "s0", "memory");
   emela_validation_stack_record_sp();
   if (irq_kind == 1) irq_accepted = emela_task_fail(irq_task, produce_failure, &context, release_failure);
 #if EMELA_RUNTIME_MANAGED
@@ -122,10 +125,15 @@ static void notify(EmelaTask task, unsigned kind, int32_t value, int accepted) {
   CHECK(ipsr() == 0 && primask() == 0 && locked == 0);
   irq_task = task; irq_kind = kind; irq_value = value; irq_done = 0;
   unsigned before = produced + released + success_produced + success_released;
+  uint32_t thread_pattern = UINT32_C(0x40500000), restored_pattern;
+  /* Keep s0 live across the exception; the ISR deliberately overwrites it. */
+  __asm volatile("vmov s0, %0" :: "r"(thread_pattern) : "s0", "memory");
   *(volatile uint32_t *)UINT32_C(0xe000e014) = 127;
   *(volatile uint32_t *)UINT32_C(0xe000e018) = 0;
   *(volatile uint32_t *)UINT32_C(0xe000e010) = 7;
   for (unsigned spin = 0; !irq_done; spin++) { CHECK(spin < 1000000); __asm volatile("nop"); }
+  __asm volatile("vmov %0, s0" : "=r"(restored_pattern) :: "memory");
+  CHECK(restored_pattern == thread_pattern); emela_runtime_fp_context_checks++;
   CHECK(irq_accepted == accepted && emela_runtime_fp_irq == 1.75f && emela_runtime_fp_main == 1.25f);
   CHECK(before == produced + released + success_produced + success_released);
 }
