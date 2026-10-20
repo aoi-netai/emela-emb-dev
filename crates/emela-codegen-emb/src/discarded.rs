@@ -51,6 +51,7 @@ fn result_type(
     value: &Value,
 ) -> Option<TypeId> {
     match value {
+        Value::Handler { effect, .. } => Some(core.handler(*effect)),
         Value::List { elems, tail } => {
             if let Some(tail) = tail {
                 let ty = operand_type(function, tail);

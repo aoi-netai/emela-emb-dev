@@ -154,3 +154,8 @@ int main(void) { emela_export_work_1((EmelaString){"abc",3,NULL}); return 1; }
 "#,
     );
 }
+
+#[test]
+fn discarded_handlers_are_allocated_and_released_before_the_next_statement() {
+    run_constructor("handler");
+}
