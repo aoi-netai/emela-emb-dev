@@ -432,6 +432,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             options,
             has_tasks,
             layouts.has_resumes,
+            layouts.has_unwind,
             layouts.has_scopes,
             layouts.deferred_pool,
         );
@@ -473,6 +474,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     if layouts.has_resumes {
         suspend::emit_resume_runtime(&layouts, &mut source);
+    }
+    if layouts.has_unwind {
+        source.line(include_str!("runtime/unwind.c"));
     }
     if layouts.has_scopes {
         if layouts.has_child_waits() {
@@ -8321,6 +8325,7 @@ struct TypeLayouts<'a> {
     handler_layout_ids: HashMap<EffectId, usize>,
     resume_types: Vec<TypeId>,
     has_resumes: bool,
+    has_unwind: bool,
     has_scopes: bool,
     deferred_pool: bool,
     deferred_complete_types: Vec<TypeId>,
@@ -8405,6 +8410,8 @@ impl<'a> TypeLayouts<'a> {
             handler_layout_ids: HashMap::new(),
             resume_types: Vec::new(),
             has_resumes: suspend::has_operations(flow, emitted)
+                || crate::fiber::has_scopes(flow, emitted),
+            has_unwind: suspend::has_operations(flow, emitted)
                 || crate::fiber::has_scopes(flow, emitted),
             has_scopes: crate::fiber::has_scopes(flow, emitted),
             deferred_pool,

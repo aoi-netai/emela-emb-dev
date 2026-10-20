@@ -60,26 +60,6 @@ static void emela_child_after_step(emela_fiber *fiber) {
   }
   emela_heap_release(scope);
 }
-static void emela_scope_sweep(void) {
-  int progress;
-  do {
-    progress = 0;
-    for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
-      emela_fiber *fiber = &emela_fibers[slot];
-      if (fiber->state == EMELA_FIBER_FREE || !fiber->cancelled || fiber->active != 0) continue;
-      if (fiber->state == EMELA_FIBER_READY) emela_ready_remove(fiber);
-#ifdef EMELA_TASK_CAPACITY
-      emela_task_abandon((EmelaFiber){slot, fiber->generation});
-#endif
-      while (fiber->top != NULL) emela_frame_return(fiber);
-      fiber->state = EMELA_FIBER_DONE;
-      if (fiber->child != NULL) emela_child_after_step(fiber);
-      else if (fiber->perform != NULL) emela_resume_after_step(fiber);
-      else emela_scheduler_invalid();
-      progress = 1;
-    }
-  } while (progress);
-}
 typedef struct {
   emela_frame base;
   emela_scope *scope;
@@ -102,11 +82,23 @@ static void emela_scope_step(emela_fiber *fiber, emela_frame *base) {
   emela_scope_finish(scope);
   emela_frame_return(fiber);
 }
+static int emela_scope_unwind(emela_fiber *fiber, emela_frame *base) {
+  emela_scope *scope = ((emela_scope_frame *)base)->scope;
+  int newly_closed = !scope->closed;
+  emela_scope_close(scope, (EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation});
+  if (scope->running != 0) {
+    fiber->state = EMELA_FIBER_WAITING;
+    return newly_closed ? 2 : 3;
+  }
+  emela_scope_finish(scope);
+  return 0;
+}
 static inline emela_scope *emela_scope_begin(emela_fiber *fiber) {
   emela_scope *scope = (emela_scope *)emela_heap_allocate(sizeof(emela_scope), EMELA_SCOPE_KIND);
   *scope = (emela_scope){.closer = {EMELA_SLOT_NONE, 0}};
   emela_scope_frame *frame = (emela_scope_frame *)emela_frame_push(fiber, sizeof(*frame), emela_scope_step);
   frame->base.drop = emela_scope_drop;
+  frame->base.unwind = emela_scope_unwind;
   frame->scope = scope;
   return scope;
 }

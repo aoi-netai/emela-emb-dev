@@ -43,7 +43,7 @@ static EmelaTask emela_task_begin(emela_fiber *fiber, void *result, uint32_t kin
   task->state = EMELA_TASK_PENDING;
   fiber->state = EMELA_FIBER_WAITING;
   EmelaTask handle = {slot, task->generation};
-#ifdef EMELA_RESUME_RUNTIME
+#ifdef EMELA_UNWIND_RUNTIME
   fiber->pending_task = handle;
 #endif
   emela_board_event_unlock(irq_state);
@@ -115,7 +115,7 @@ static int emela_task_dispatch_one(void) {
   emela_board_event_unlock(irq_state);
 
   emela_fiber *fiber = emela_fiber_get(owner);
-#ifdef EMELA_RESUME_RUNTIME
+#ifdef EMELA_UNWIND_RUNTIME
   fiber->pending_task = (EmelaTask){EMELA_SLOT_NONE, 0};
 #endif
   if (fiber->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();
@@ -132,7 +132,7 @@ static int emela_task_dispatch_one(void) {
   return 1;
 }
 
-#ifdef EMELA_RESUME_RUNTIME
+#ifdef EMELA_UNWIND_RUNTIME
 static void emela_task_abandon(EmelaFiber owner) {
   emela_fiber *fiber = emela_fiber_get(owner);
   EmelaTask handle = fiber->pending_task;

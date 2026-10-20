@@ -180,6 +180,7 @@ pub(super) fn emit_runtime(
     options: &Options,
     tasks: bool,
     resumes: bool,
+    unwind: bool,
     scopes: bool,
     deferred: bool,
 ) {
@@ -194,6 +195,9 @@ pub(super) fn emit_runtime(
     }
     if resumes {
         writer.line("#define EMELA_RESUME_RUNTIME 1");
+    }
+    if unwind {
+        writer.line("#define EMELA_UNWIND_RUNTIME 1");
     }
     writer.line(&format!(
         "#define EMELA_FIBER_CAPACITY {}",
@@ -595,7 +599,7 @@ pub(super) fn emit_function(
     }
     writer.begin_block("for (;;)");
     if layouts.has_resumes {
-        writer.line("if (fiber->perform != NULL && emela_resume_over(fiber->root)) return;");
+        writer.line("if (fiber->cancelled && fiber->holds == 0) return;");
     }
     writer.begin_block("switch (frame->base.pc)");
     let mut next_temp = 0;
@@ -1355,8 +1359,10 @@ pub(super) fn emit_sync_operation(
     writer.begin_block("if (sync_caller->state != EMELA_FIBER_READY)");
     writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"immediate operation did not resume\", UINT16_C(34));");
     writer.end_block();
-    writer.line("emela_ready_remove(sync_caller); sync_caller->state = EMELA_FIBER_DONE;");
-    writer.line("emela_resume_sweep(); emela_fiber_release(sync_handle);");
+    writer.line("emela_ready_remove(sync_caller); sync_caller->finishing = 1; sync_caller->state = EMELA_FIBER_WAITING;");
+    writer.line("emela_unwind_sweep();");
+    writer.line("if (sync_caller->state != EMELA_FIBER_DONE) emela_scheduler_invalid();");
+    writer.line("emela_fiber_release(sync_handle);");
     writer.end_block();
     Ok(())
 }
