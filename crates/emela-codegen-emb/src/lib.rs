@@ -255,6 +255,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
     })?;
 
     const_origins::attach(&mut flow, &prepared_consts.groups);
+    const_origins::attach_function_groups(&mut flow, &prepared_consts.function_groups);
     fiber::normalize_infallible_cause_raise(&mut flow);
     verify_flow(&flow)?;
     Ok(flow)

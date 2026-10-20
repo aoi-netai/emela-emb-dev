@@ -8,6 +8,7 @@ use emela_lir::{FnBuilder, FnId, Module, Operand, Stmt, Term, Value};
 use crate::{Error, ErrorKind};
 
 const PREFIX: &str = "$emb_const_origins$v1$";
+const FUNCTION_PREFIX: &str = "$emb_fn_origins$v1$";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Group {
@@ -18,6 +19,7 @@ pub(crate) struct Group {
 pub(crate) struct Prepared {
     pub(crate) module: emela_core::Module,
     pub(crate) groups: Vec<Group>,
+    pub(crate) function_groups: Vec<Vec<FnId>>,
 }
 
 pub(crate) fn monomorphize(core: &emela_core::Module) -> Prepared {
@@ -44,6 +46,7 @@ pub(crate) fn monomorphize(core: &emela_core::Module) -> Prepared {
         return Prepared {
             module: first.module,
             groups: vec![],
+            function_groups: vec![],
         };
     }
     let all_roots: Vec<_> = roots
@@ -70,9 +73,24 @@ pub(crate) fn monomorphize(core: &emela_core::Module) -> Prepared {
             }
         })
         .collect();
+    let mut ordinary: HashMap<_, Vec<FnId>> = HashMap::new();
+    for (id, &origin) in mono.origins.iter() {
+        if !core.functions[origin].constant && core.functions[origin].type_params != 0 {
+            ordinary
+                .entry(origin)
+                .or_default()
+                .push(FnId::from_raw(id.into_raw()));
+        }
+    }
+    let mut ordinary: Vec<_> = ordinary
+        .into_iter()
+        .filter(|(_, ids)| ids.len() > 1)
+        .collect();
+    ordinary.sort_by_key(|(origin, _)| u32::from(origin.into_raw()));
     Prepared {
         module: mono.module,
         groups,
+        function_groups: ordinary.into_iter().map(|(_, ids)| ids).collect(),
     }
 }
 
@@ -112,13 +130,64 @@ pub(crate) fn attach(flow: &mut Module, groups: &[Group]) {
     }
 }
 
+pub(crate) fn attach_function_groups(flow: &mut Module, groups: &[Vec<FnId>]) {
+    for (index, ids) in groups.iter().enumerate() {
+        let types: Vec<_> = ids
+            .iter()
+            .map(|&id| {
+                let core_id = emela_core::FnId::from_raw(id.into_raw());
+                let f = &flow.core.functions[core_id];
+                let ev = flow.core.takes_ev(core_id);
+                let declared = &f.params[..f.params.len() - usize::from(ev)];
+                flow.core.types.intern(Type::Fn(FnType {
+                    params: declared.iter().map(|&p| flow.core.locals[p].ty).collect(),
+                    ret: f.ret,
+                    fails: f.fails,
+                    suspends: f.suspends,
+                    ev,
+                    sets: None,
+                }))
+            })
+            .collect();
+        let mut name = format!("{FUNCTION_PREFIX}{index}");
+        while flow.functions.iter().any(|(_, f)| f.name == name) {
+            name.push('$');
+        }
+        let mut b = FnBuilder::new(&flow.core, &name);
+        b.set_constant();
+        for (&id, ty) in ids.iter().zip(types) {
+            b.assign("specialization", ty, Value::FnRef(id));
+        }
+        b.term(Term::Return(None));
+        flow.add(b.finish());
+    }
+}
+
 pub(crate) fn groups(flow: &Module) -> Result<Vec<Group>, Vec<Error>> {
+    Ok(read_markers(flow, PREFIX, true)?
+        .into_iter()
+        .map(|ids| Group {
+            canonical: ids[0],
+            specializations: ids[1..].to_vec(),
+        })
+        .collect())
+}
+
+pub(crate) fn function_groups(flow: &Module) -> Result<Vec<Vec<FnId>>, Vec<Error>> {
+    read_markers(flow, FUNCTION_PREFIX, false)
+}
+
+fn read_markers(
+    flow: &Module,
+    prefix: &str,
+    constant_targets: bool,
+) -> Result<Vec<Vec<FnId>>, Vec<Error>> {
     let mut result = Vec::new();
     let mut members = HashSet::new();
     for (_, marker) in flow
         .functions
         .iter()
-        .filter(|(_, f)| f.name.starts_with(PREFIX))
+        .filter(|(_, f)| f.name.starts_with(prefix))
     {
         let invalid = || {
             vec![Error {
@@ -126,7 +195,7 @@ pub(crate) fn groups(flow: &Module) -> Result<Vec<Group>, Vec<Error>> {
                 message: format!("invalid embedded const origin marker `{}`", marker.name),
             }]
         };
-        if marker.name[PREFIX.len()..]
+        if marker.name[prefix.len()..]
             .trim_end_matches('$')
             .parse::<usize>()
             .is_err()
@@ -172,11 +241,13 @@ pub(crate) fn groups(flow: &Module) -> Result<Vec<Group>, Vec<Error>> {
                 return Err(invalid());
             }
             let target_function = &flow.functions[target];
-            if !target_function.constant
-                || !target_function.params.is_empty()
-                || target_function.fails
-                || target_function.suspends
-                || target_function.external.is_some()
+            if (constant_targets
+                && (!target_function.constant
+                    || !target_function.params.is_empty()
+                    || target_function.fails
+                    || target_function.suspends
+                    || target_function.external.is_some()))
+                || (!constant_targets && target_function.constant)
                 || !members.insert(target)
             {
                 return Err(invalid());
@@ -184,21 +255,34 @@ pub(crate) fn groups(flow: &Module) -> Result<Vec<Group>, Vec<Error>> {
             let Type::Fn(ft) = &flow.core.types[marker.vars[dst].ty] else {
                 return Err(invalid());
             };
-            if !ft.params.is_empty()
+            let ev = target_function
+                .params
+                .last()
+                .is_some_and(|&p| target_function.vars[p].ty == TypeId::EVIDENCE);
+            let expected: Vec<_> = target_function
+                .params
+                .iter()
+                .map(|&p| target_function.vars[p].ty)
+                .filter(|&t| t != TypeId::EVIDENCE)
+                .collect();
+            let actual: Vec<_> = ft
+                .params
+                .iter()
+                .copied()
+                .filter(|&t| emela_lir::repr_of(&flow.core, t) != emela_lir::Repr::Void)
+                .collect();
+            if actual != expected
                 || ft.ret != target_function.ret
-                || ft.fails
-                || ft.ev
-                || ft.suspends
+                || ft.fails != target_function.fails
+                || ft.ev != ev
+                || ft.suspends != target_function.suspends
                 || ft.sets.is_some()
             {
                 return Err(invalid());
             }
             ids.push(target);
         }
-        result.push(Group {
-            canonical: ids[0],
-            specializations: ids[1..].to_vec(),
-        });
+        result.push(ids);
     }
     Ok(result)
 }

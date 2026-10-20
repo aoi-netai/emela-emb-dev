@@ -676,3 +676,53 @@ int main(void) {{ for (int i=0;i<1000;i++) if(emela_export_VALUE_1()!=42 || emel
         ),
     );
 }
+
+#[test]
+fn generic_function_references_returned_by_consts_keep_their_source_family() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+fn identity[A](value: A, unit: ()) -> A { value }
+const IDENTITY = identity
+pub fn integer() -> Int { IDENTITY(42, ()) }
+pub fn text() -> String { IDENTITY("42", ()) }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    let (_, marker) = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.starts_with("$emb_fn_origins$v1$"))
+        .expect("ordinary FnRef specializations retain their source origin");
+    assert_eq!(marker.stmts.len(), 3);
+    for (_, stmt) in marker.stmts.iter() {
+        let emela_lir::Stmt::Let {
+            value: Value::FnRef(target),
+            ..
+        } = stmt
+        else {
+            panic!("family is a list of FnRef values")
+        };
+        assert!(flow.functions[*target].name.starts_with("identity["));
+        assert!(!flow.functions[*target].constant);
+    }
+    compile_flow(&flow, &Options::default())
+        .expect("well-shaped function family markers are unreachable metadata");
+    let mut malformed = flow.clone();
+    let (id, _) = malformed
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.starts_with("$emb_fn_origins$v1$"))
+        .unwrap();
+    malformed.functions[id].exported = true;
+    let errors = compile_flow(&malformed, &Options::default()).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.kind == ErrorKind::InvalidFlowIr && e.message.contains("origin marker"))
+    );
+}
