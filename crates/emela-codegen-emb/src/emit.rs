@@ -75,7 +75,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             .map(|(_, var)| var.ty)
             .chain(std::iter::once(function.ret))
         {
-            if !matches!(layouts.types[ty], Type::String | Type::Any)
+            if !matches!(layouts.types[ty], Type::String | Type::Any | Type::List(_))
+                && layouts.error_enum(ty).is_none()
                 && type_contains_string(&layouts, ty, &mut HashSet::new())
             {
                 return Err(unsupported(
@@ -111,6 +112,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 ));
             }
             if !matches!(layouts.types[capture.ty], Type::String)
+                && layouts.error_enum(capture.ty).is_none()
                 && closure_capture_contains_string(
                     &layouts,
                     &mut layouts.types.clone(),
@@ -462,9 +464,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         layouts.emit_list_node_declarations(&mut source);
         crate::heap::emit_runtime(&mut source, options.heap_bytes());
         emit_closure_string_copy_helper(&layouts, &mut source);
-        error_runtime::emit_ownership(&layouts, &mut source);
+        error_runtime::emit_ownership_declarations(&layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
         owned::emit_helpers(&layouts, &mut source);
+        error_runtime::emit_ownership(&layouts, true, &mut source);
         if layouts.deferred_pool {
             source.line(&format!(
                 "#define EMELA_DEFERRED_KIND UINT32_C({})",
@@ -481,7 +484,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
-        error_runtime::emit_ownership(&layouts, &mut source);
+        error_runtime::emit_ownership(&layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
     }
@@ -839,9 +842,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             takes_string_output,
         );
         if !string_buffers.declarations.is_empty()
-            && ((layouts.has_inline_string(function.ret)
-                && !layouts.owned_string_returns.contains(&function.name))
-                || failure_value_contains_string(&layouts, function))
+            && layouts.has_inline_string(function.ret)
+            && !layouts.owned_string_returns.contains(&function.name)
             && !takes_string_output
         {
             return Err(unsupported(
@@ -1076,6 +1078,7 @@ fn emit_closure_environment_declarations(
 fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     let kind = layouts.string_owner_kind();
     writer.begin_block("static inline EmelaString emela_heap_copy_string(EmelaString value)");
+    writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line(&format!(
         "char *bytes = (char *)emela_heap_allocate((size_t)value.length, UINT32_C({kind}));"
     ));
@@ -1916,21 +1919,6 @@ fn closure_capture_contains_string(
         Type::Fn(_) => false,
         _ => false,
     }
-}
-
-fn failure_value_contains_string(layouts: &TypeLayouts<'_>, function: &Function) -> bool {
-    function.seqs.iter().any(|(_, sequence)| {
-        let Term::Fail(operand) = &sequence.term else {
-            return false;
-        };
-        match operand {
-            Operand::Var(variable) => {
-                type_contains_string(layouts, function.vars[*variable].ty, &mut HashSet::new())
-            }
-            Operand::Const(Const::String(_)) => true,
-            Operand::Const(_) => false,
-        }
-    })
 }
 
 fn validate_local_cells(
@@ -2924,7 +2912,8 @@ fn function_needs_heap(
     });
     let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
-    statement_needs_heap
+    (function.fails && layouts.managed_error_payloads)
+        || statement_needs_heap
         || (function.suspends
             && (matches!(layouts.types[function.ret], Type::String)
                 || function
@@ -4991,7 +4980,11 @@ fn emit_statement(
     let retain_result = match statement {
         Stmt::Let {
             value:
-                Value::ListHead(_) | Value::ListTail(_) | Value::Field { .. } | Value::TupleGet { .. },
+                Value::ListHead(_)
+                | Value::ListTail(_)
+                | Value::Field { .. }
+                | Value::TupleGet { .. }
+                | Value::AsError { .. },
             ..
         } => true,
         Stmt::Let {
@@ -5427,30 +5420,13 @@ fn emit_statement_inner(
                             if layouts.type_repr(capture.ty) == Repr::Void {
                                 continue;
                             }
-                            if matches!(layouts.types[capture.ty], Type::String) {
-                                writer.assign(
-                                    &format!(
-                                        "((emela_closure_env_{environment} *){destination}.env)->c{capture_index}"
-                                    ),
-                                    &format!(
-                                        "emela_heap_own_string({})",
-                                        variable_name(capture.source)
-                                    ),
-                                );
-                                continue;
-                            }
-                            if layouts.is_managed_value(capture.ty) {
-                                layouts.emit_retain_value_expression(
-                                    capture.ty,
-                                    &variable_name(capture.source),
-                                    writer,
-                                );
-                            }
-                            writer.assign(
+                            layouts.emit_owned_value_store(
+                                capture.ty,
+                                &variable_name(capture.source),
                                 &format!(
                                     "((emela_closure_env_{environment} *){destination}.env)->c{capture_index}"
                                 ),
-                                &variable_name(capture.source),
+                                writer,
                             );
                         }
                     } else {
@@ -6569,6 +6545,9 @@ fn emit_compound_sequence(
                 let expression = operand_expression(value)
                     .map_err(|variant| unsupported(&function.name, variant))?;
                 writer.assign(&variable_name(dst), &expression);
+                if layouts.is_managed_value(function.vars[dst].ty) {
+                    writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+                }
             }
             (Some(_), None) => {
                 return Err(invalid_flow_ir(
@@ -6592,10 +6571,28 @@ fn emit_compound_sequence(
             let protect_depth = blocks[target_index].protect_depth;
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
-                    emit_retain_operand(layouts, function, value, writer);
-                    let expression = operand_expression(value)
-                        .map_err(|variant| unsupported(&function.name, variant))?;
-                    writer.assign(&variable_name(dst), &expression);
+                    if function.vars[dst].ty == TypeId::ANY
+                        && operand_type(function, value)
+                            .is_some_and(|ty| layouts.error_enum(ty).is_some())
+                    {
+                        emit_release_if_owned(layouts, function, dst, writer);
+                        emit_error_assignment(
+                            layouts,
+                            function,
+                            value,
+                            &variable_name(dst),
+                            writer,
+                        )?;
+                    } else {
+                        emit_retain_operand(layouts, function, value, writer);
+                        emit_release_if_owned(layouts, function, dst, writer);
+                        let expression = operand_expression(value)
+                            .map_err(|variant| unsupported(&function.name, variant))?;
+                        writer.assign(&variable_name(dst), &expression);
+                    }
+                    if layouts.is_managed_value(function.vars[dst].ty) {
+                        writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+                    }
                 }
                 (Some(_), None) => {
                     return Err(invalid_flow_ir(
@@ -6644,6 +6641,7 @@ fn emit_compound_sequence(
                     "Fail appears in a function without a failure channel",
                 ));
             }
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_pending_cleanups(
                 layouts,
                 function,
@@ -6657,7 +6655,6 @@ fn emit_compound_sequence(
                 next_temp,
                 next_label,
             )?;
-            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
         }
         Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
@@ -6861,9 +6858,11 @@ fn emit_error_assignment(
         &format!("{object}.tag"),
         &format!("UINT32_C({})", enum_index(enum_id) + 1),
     );
-    writer.assign(
-        &format!("{object}.payload.e{}", enum_index(enum_id)),
+    layouts.emit_owned_value_store(
+        ty,
         &variable_name(*variable),
+        &format!("{object}.payload.e{}", enum_index(enum_id)),
+        writer,
     );
     Ok(())
 }
@@ -8511,6 +8510,13 @@ fn emit_function_coerce_adapter(
         writer.line("if (frame->error.tag != 0) emela_board_defect(EMELA_DEFECT_ASSERT, \"failure in infallible coercion\", UINT16_C(30));");
         writer.line("emela_frame_return(fiber);");
         writer.end_block();
+        writer.begin_block(&format!(
+            "static void emela_coerce_check_drop_{index}(emela_frame *base)"
+        ));
+        writer.line(&format!(
+            "emela_error_clear(&((emela_coerce_check_{index} *)base)->error);"
+        ));
+        writer.end_block();
     }
     writer.begin_block(&function_ref_adapter_signature(
         layouts,
@@ -8544,6 +8550,9 @@ fn emit_function_coerce_adapter(
         if source_type.suspends {
             writer.line(&format!("emela_coerce_check_{index} *check = (emela_coerce_check_{index} *)emela_frame_push(fiber, sizeof(*check), emela_coerce_check_step_{index});"));
             writer.line("check->error = (EmelaError){0};");
+            writer.line(&format!(
+                "check->base.drop = emela_coerce_check_drop_{index};"
+            ));
             args.push("&check->error".into());
         } else {
             writer.line("EmelaError checked_error = {0};");
@@ -8701,6 +8710,7 @@ struct TypeLayouts<'a> {
     error_types: Vec<(EnumId, TypeId)>,
     error_shows: Vec<(EnumId, FnId)>,
     has_error_abi: bool,
+    managed_error_payloads: bool,
 }
 
 struct HandlerLayout {
@@ -8844,6 +8854,7 @@ impl<'a> TypeLayouts<'a> {
             any_box_ids: HashMap::new(),
             error_types: Vec::new(),
             error_shows: flow.error_shows.clone(),
+            managed_error_payloads: false,
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
                     && (function.fails
@@ -9177,21 +9188,10 @@ impl<'a> TypeLayouts<'a> {
                 }
             }
         }
-        for (_, ty) in &layouts.error_types {
-            if layouts.is_managed_value(*ty) {
-                return Err(unsupported(
-                    "EmelaError",
-                    &format!(
-                        "error enum `{}` values containing a heap reference",
-                        layouts.core.enums[match layouts.types[*ty] {
-                            Type::Enum(id, _) => id,
-                            _ => unreachable!(),
-                        }]
-                        .name
-                    ),
-                ));
-            }
-        }
+        layouts.managed_error_payloads = layouts
+            .error_types
+            .iter()
+            .any(|&(_, ty)| layouts.is_managed_value(ty));
         for (id, function) in flow.functions.iter() {
             if !emitted.contains(&id) {
                 continue;
@@ -9213,12 +9213,6 @@ impl<'a> TypeLayouts<'a> {
                     Type::Handler(_) | Type::Evidence | Type::FiberScope => {}
                     Type::Fn(_) => {}
                     Type::Any => {}
-                    Type::Enum(enum_id, _) if layouts.core.enums[enum_id].error => {
-                        return Err(unsupported(
-                            &function.name,
-                            "error enum values that contain a heap reference",
-                        ));
-                    }
                     Type::Tuple(_) | Type::Enum(_, _) => {}
                     _ => {
                         return Err(unsupported(
@@ -9543,7 +9537,8 @@ impl<'a> TypeLayouts<'a> {
         if self.is_runtime_handle(ty) {
             return true;
         }
-        if (self.any_box_required || self.has_error_notes()) && matches!(self.types[ty], Type::Any)
+        if (self.any_box_required || self.has_error_ownership())
+            && matches!(self.types[ty], Type::Any)
         {
             return true;
         }
@@ -9583,7 +9578,8 @@ impl<'a> TypeLayouts<'a> {
         if self.is_runtime_handle(ty) {
             return true;
         }
-        if (self.any_box_required || self.has_error_notes()) && matches!(self.types[ty], Type::Any)
+        if (self.any_box_required || self.has_error_ownership())
+            && matches!(self.types[ty], Type::Any)
         {
             return true;
         }
@@ -9666,7 +9662,7 @@ impl<'a> TypeLayouts<'a> {
             if self.any_box_required {
                 writer.line(&format!("if (({expression}).tag == 0) emela_heap_retain(({expression}).payload.any_box);"));
             }
-            if self.has_error_notes() {
+            if self.has_error_ownership() {
                 writer.line(&format!(
                     "if (({expression}).tag != 0) emela_error_retain({expression});"
                 ));
@@ -9704,8 +9700,8 @@ impl<'a> TypeLayouts<'a> {
             if self.any_box_required {
                 writer.line(&format!("if (({expression}).tag == 0) emela_heap_enqueue(({expression}).payload.any_box, {pending}, {tail});"));
             }
-            if self.has_error_notes() {
-                writer.line(&format!("if (({expression}).tag != 0) emela_heap_enqueue(({expression}).notes, {pending}, {tail});"));
+            if self.has_error_ownership() {
+                writer.line(&format!("if (({expression}).tag != 0) emela_error_enqueue({expression}, {pending}, {tail});"));
             }
         } else if matches!(self.types[ty], Type::String) {
             writer.line(&format!(
@@ -9735,7 +9731,7 @@ impl<'a> TypeLayouts<'a> {
             if self.any_box_required {
                 writer.line(&format!("if (({expression}).tag == 0) emela_heap_release(({expression}).payload.any_box);"));
             }
-            if self.has_error_notes() {
+            if self.has_error_ownership() {
                 writer.line(&format!(
                     "if (({expression}).tag != 0) emela_error_release({expression});"
                 ));
@@ -9965,10 +9961,10 @@ impl<'a> TypeLayouts<'a> {
         }
         if self.has_causes {
             writer.line(&format!("case UINT32_C({}): {{", self.cause_kind()));
-            if self.has_error_notes() {
+            if self.has_error_ownership() {
                 writer.line("emela_cause *cause = (emela_cause *)value;");
                 writer.line(
-                    "if (cause->kind == 0) emela_heap_enqueue(cause->error.notes, pending, tail);",
+                    "if (cause->kind == 0) emela_error_enqueue(cause->error, pending, tail);",
                 );
             }
             writer.line("break; }");
@@ -9979,17 +9975,17 @@ impl<'a> TypeLayouts<'a> {
         }
         if self.has_scopes {
             writer.line(&format!("case UINT32_C({}): {{", self.scope_kind()));
-            if self.has_error_notes() {
+            if self.has_error_ownership() {
                 writer.line(
-                    "emela_heap_enqueue(((emela_scope *)value)->first_error.notes, pending, tail);",
+                    "emela_error_enqueue(((emela_scope *)value)->first_error, pending, tail);",
                 );
             }
             writer.line("break; }");
             writer.line(&format!("case UINT32_C({}): {{", self.child_kind()));
             writer.line("emela_child *child = (emela_child *)value;");
             writer.line("emela_heap_enqueue(child->scope, pending, tail);");
-            if self.has_error_notes() {
-                writer.line("emela_heap_enqueue(child->error.notes, pending, tail);");
+            if self.has_error_ownership() {
+                writer.line("emela_error_enqueue(child->error, pending, tail);");
             }
             writer.line("if (child->result.tag == 0) emela_heap_enqueue(child->result.payload.any_box, pending, tail);");
             writer.line("break; }");

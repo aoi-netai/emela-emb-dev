@@ -1122,6 +1122,20 @@ pub(super) fn emit_function(
             Node::Assign(values, next) => {
                 // Recur is a parallel assignment: read every old value before overwriting any.
                 for (index, (dst, value)) in values.iter().enumerate() {
+                    if function.vars[*dst].ty == TypeId::ANY
+                        && operand_type(function, value)
+                            .is_some_and(|ty| layouts.error_enum(ty).is_some())
+                    {
+                        writer.decl("EmelaAny", &format!("next_{index}"), Some("{0}"));
+                        emit_error_assignment(
+                            layouts,
+                            function,
+                            value,
+                            &format!("next_{index}"),
+                            writer,
+                        )?;
+                        continue;
+                    }
                     writer.decl(
                         &layouts.c_type(function.vars[*dst].ty),
                         &format!("next_{index}"),
@@ -1421,8 +1435,8 @@ pub(super) fn retain_frame_value(
     value: &str,
     writer: &mut Writer,
 ) {
-    if matches!(layouts.types[ty], Type::String) {
-        writer.line(&format!("{value} = emela_heap_own_string({value});"));
+    if matches!(layouts.types[ty], Type::String) || layouts.error_enum(ty).is_some() {
+        layouts.emit_own_value_in_place(ty, value, writer);
     } else if layouts.is_managed_value(ty) {
         layouts.emit_retain_value_expression(ty, value, writer);
     }
@@ -1435,12 +1449,10 @@ fn freeze_statement_result(
     writer: &mut Writer,
 ) {
     if let Some(dst) = statement.dst()
-        && matches!(layouts.types[function.vars[dst].ty], Type::String)
+        && (matches!(layouts.types[function.vars[dst].ty], Type::String)
+            || layouts.error_enum(function.vars[dst].ty).is_some())
     {
-        let value = variable_name(dst);
-        writer.begin_block(&format!("if ({value}.owner == NULL)"));
-        writer.assign(&value, &format!("emela_heap_copy_string({value})"));
-        writer.end_block();
+        layouts.emit_freeze_value_in_place(function.vars[dst].ty, &variable_name(dst), writer);
     }
 }
 

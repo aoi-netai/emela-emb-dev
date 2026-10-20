@@ -1,9 +1,13 @@
-//! Ownership of failure metadata, separate from ordinary error enum values.
+//! Ownership of error payloads and shared failure metadata.
 use super::*;
 
 impl TypeLayouts<'_> {
     pub(super) fn has_error_notes(&self) -> bool {
         self.has_scopes && self.has_error_abi
+    }
+
+    pub(super) fn has_error_ownership(&self) -> bool {
+        self.has_error_notes() || self.managed_error_payloads
     }
 
     pub(super) fn error_notes_kind(&self) -> u32 {
@@ -24,20 +28,44 @@ pub(super) fn emit_types(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     }
 }
 
-pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+pub(super) fn emit_ownership_declarations(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    if !layouts.has_error_abi {
+        return;
+    }
+    writer.line("static inline void emela_error_retain(EmelaError error);");
+    writer.line("static inline void emela_error_release(EmelaError error);");
+    writer.line("static inline void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail);");
+}
+
+pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer) {
     if !layouts.has_error_abi {
         return;
     }
     writer.begin_block("static inline void emela_error_retain(EmelaError error)");
+    writer.line("(void)error;");
+    if layouts.managed_error_payloads {
+        emit_payloads(layouts, true, writer);
+    }
     if layouts.has_error_notes() {
         writer.line("emela_heap_retain(error.notes);");
-    } else {
-        writer.line("(void)error;");
     }
     writer.end_block();
+    if heap {
+        writer.begin_block("static inline void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.line("(void)error; (void)pending; (void)tail;");
+        if layouts.managed_error_payloads {
+            emit_payloads(layouts, false, writer);
+        }
+        if layouts.has_error_notes() {
+            writer.line("emela_heap_enqueue(error.notes, pending, tail);");
+        }
+        writer.end_block();
+    }
     writer.begin_block("static inline void emela_error_release(EmelaError error)");
-    if layouts.has_error_notes() {
-        writer.line("emela_heap_release(error.notes);");
+    if layouts.has_error_ownership() {
+        writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
+        writer.line("emela_error_enqueue(error, &pending, &tail);");
+        writer.line("emela_heap_drain(pending, tail);");
     } else {
         writer.line("(void)error;");
     }
@@ -53,6 +81,27 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     if layouts.has_resumes {
         writer.line("static _Noreturn void emela_operation_failed_after_resume(const char *duplicate_message, uint16_t duplicate_length, EmelaError error);");
     }
+}
+
+fn emit_payloads(layouts: &TypeLayouts<'_>, retain: bool, writer: &mut Writer) {
+    writer.begin_block("switch (error.tag)");
+    for &(id, ty) in &layouts.error_types {
+        if !layouts.is_managed_value(ty) {
+            continue;
+        }
+        writer.line(&format!("case UINT32_C({}):", enum_index(id) + 1));
+        writer.begin_block("");
+        let value = format!("error.payload.e{}", enum_index(id));
+        if retain {
+            layouts.emit_retain_value_expression(ty, &value, writer);
+        } else {
+            layouts.emit_enqueue_value_expression(ty, &value, "pending", "tail", writer);
+        }
+        writer.line("break;");
+        writer.end_block();
+    }
+    writer.line("default: break;");
+    writer.end_block();
 }
 
 pub(super) fn needs_display(layouts: &TypeLayouts<'_>) -> bool {

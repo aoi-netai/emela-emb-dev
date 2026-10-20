@@ -38,6 +38,53 @@ pub(super) fn emit_helpers(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
         }
         writer.end_block();
         writer.blank();
+        if layouts.has_inline_string(aggregate.ty) {
+            writer.begin_block(&format!(
+                "static inline void emela_heap_freeze_value_{index}({} *value)",
+                layouts.c_type(aggregate.ty)
+            ));
+            match &aggregate.kind {
+                AggregateKind::Tuple(fields) => {
+                    emit_freeze_fields(layouts, aggregate.ty, 0, fields, "value->", writer);
+                }
+                AggregateKind::Enum(variants) => {
+                    writer.begin_block("switch (value->tag)");
+                    for (variant, fields) in variants.iter().enumerate() {
+                        writer.line(&format!("case INT32_C({variant}):"));
+                        writer.begin_block("");
+                        emit_freeze_fields(
+                            layouts,
+                            aggregate.ty,
+                            variant,
+                            fields,
+                            &format!("value->payload.v{variant}."),
+                            writer,
+                        );
+                        writer.line("break;");
+                        writer.end_block();
+                    }
+                    writer.line("default: break;");
+                    writer.end_block();
+                }
+            }
+            writer.end_block();
+            writer.blank();
+        }
+    }
+}
+
+fn emit_freeze_fields(
+    layouts: &TypeLayouts<'_>,
+    owner: TypeId,
+    variant: usize,
+    fields: &[TypeId],
+    prefix: &str,
+    writer: &mut Writer,
+) {
+    for (index, &ty) in fields.iter().enumerate() {
+        if !layouts.is_recursive_box_field(owner, variant, index) {
+            layouts.emit_freeze_value_in_place(ty, &format!("{prefix}f{index}"), writer);
+        }
     }
 }
 
@@ -60,6 +107,19 @@ fn emit_fields(
 }
 
 impl TypeLayouts<'_> {
+    // The value already owns all existing references; only borrowed inline String views need
+    // backing. This is different from acquiring a second owning copy at a call boundary.
+    pub(super) fn emit_freeze_value_in_place(&self, ty: TypeId, value: &str, writer: &mut Writer) {
+        if matches!(self.types[ty], Type::String) {
+            writer.begin_block(&format!("if (({value}).owner == NULL)"));
+            writer.assign(value, &format!("emela_heap_copy_string({value})"));
+            writer.end_block();
+        } else if self.has_inline_string(ty) {
+            let index = self.aggregate_ids[&ty];
+            writer.line(&format!("emela_heap_freeze_value_{index}(&({value}));"));
+        }
+    }
+
     pub(super) fn has_inline_string(&self, ty: TypeId) -> bool {
         if matches!(self.types[ty], Type::String) {
             return true;

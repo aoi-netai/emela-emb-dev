@@ -8,6 +8,7 @@ mod interrupt;
 mod join;
 mod notes;
 mod overlap;
+mod payload;
 mod protect;
 
 fn options() -> Options {
