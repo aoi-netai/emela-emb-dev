@@ -182,6 +182,14 @@ fn evaluate_value(
 fn evaluate_builtin(op: Builtin, args: Vec<Const>) -> Result<Const, &'static str> {
     match (op, args.as_slice()) {
         (Builtin::StringAppend, [Const::String(left), Const::String(right)]) => {
+            // A few repeated doublings must not allocate exponentially in the compiler.
+            if left
+                .len()
+                .checked_add(right.len())
+                .is_none_or(|bytes| bytes > usize::from(u16::MAX))
+            {
+                return Err("static String evaluation byte budget exhausted");
+            }
             Ok(Const::String(format!("{left}{right}")))
         }
         (Builtin::IntToString, [Const::Int(value)]) => Ok(Const::String(value.to_string())),

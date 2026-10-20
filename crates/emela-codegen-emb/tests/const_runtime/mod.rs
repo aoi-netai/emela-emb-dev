@@ -1079,3 +1079,39 @@ int main(void){{for(unsigned i=0;i<1000;i++){{assert({integer}()==42);assert({te
         ),
     );
 }
+
+#[test]
+fn oversized_static_string_growth_falls_back_before_unbounded_compiler_allocation() {
+    let mut expression = "\"x\"".to_owned();
+    for _ in 0..17 {
+        expression = format!("double({expression})");
+    }
+    let source = format!(
+        "fn double(value: String) -> String {{ String.append(value,value) }}\nconst VALUE = {expression}\npub fn size() -> Int {{ String.byte_size(VALUE) }}"
+    );
+    let core = support::try_lower(&[("main.emel", &source)], Roots::Exported).unwrap();
+    let output = compile(
+        &core,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_string_capacity(32),
+    )
+    .expect("large static results use bounded runtime const evaluation");
+    let size = export(&output, "size");
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+_Noreturn void emela_board_defect(EmelaDefectKind kind,const char *message,uint16_t length) {{
+ static const char prefix[]="while evaluating const VALUE: ";
+ exit(kind==EMELA_DEFECT_STRING_CAPACITY && length>=sizeof prefix-1 && !memcmp(message,prefix,sizeof prefix-1)?0:2);
+}}
+int main(void) {{(void){size}();return 1;}}
+"#
+        ),
+    );
+}
