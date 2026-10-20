@@ -5,6 +5,7 @@
 
 mod const_eval;
 mod emit;
+mod fiber;
 mod float_parse;
 mod float_to_string;
 mod function_coerce;

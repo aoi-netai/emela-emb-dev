@@ -35,6 +35,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .module
         .take()
         .expect("closure lowering returns its Flow IR module");
+    crate::fiber::erase_inert_failures(&mut lowered_flow, &mut closures);
     let closure_functions: HashSet<_> = closures.functions.keys().copied().collect();
     crate::function_coerce::lower(&mut lowered_flow, &closure_functions);
     crate::static_handler::lower(&mut lowered_flow);
