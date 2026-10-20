@@ -191,3 +191,7 @@ int main(void) {{ for(unsigned i=0;i<1000;i++) {{ assert(emela_export_run_1({arg
 fn discarded_enum_fields_accept_represented_and_unit_fields() {
     run_discarded("field", 0);
 }
+#[test]
+fn discarded_tuple_projections_accept_represented_and_unit_fields() {
+    run_discarded("tuple_get", 0);
+}
