@@ -1,5 +1,6 @@
 use super::*;
 
+mod attempt;
 mod await_;
 mod failure;
 mod interrupt;

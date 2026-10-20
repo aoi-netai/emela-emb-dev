@@ -51,7 +51,8 @@ pub(super) fn validate(
                     } => {}
                     Value::Fiber {
                         op:
-                            emela_core::FiberOp::Complete
+                            emela_core::FiberOp::Attempt { .. }
+                            | emela_core::FiberOp::Complete
                             | emela_core::FiberOp::Poll
                             | emela_core::FiberOp::Join
                             | emela_core::FiberOp::Await { .. }
@@ -775,6 +776,21 @@ pub(super) fn emit_function(
                     dst,
                     value:
                         Value::Fiber {
+                            op: emela_core::FiberOp::Attempt { suspends: true, .. },
+                            args,
+                            ..
+                        },
+                    ..
+                } = statement
+                {
+                    prepare_result(layouts, function, *dst, writer);
+                    writer.line(&format!("base->pc = {next};"));
+                    cause::emit_attempt_call(layouts, function, *dst, args, writer)?;
+                    writer.line("return;");
+                } else if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Fiber {
                             op: emela_core::FiberOp::DeferredAwait,
                             args,
                             on_fail: None,
@@ -1270,7 +1286,12 @@ pub(super) fn emit_function(
     Ok(())
 }
 
-fn retain_frame_value(layouts: &TypeLayouts<'_>, ty: TypeId, value: &str, writer: &mut Writer) {
+pub(super) fn retain_frame_value(
+    layouts: &TypeLayouts<'_>,
+    ty: TypeId,
+    value: &str,
+    writer: &mut Writer,
+) {
     if matches!(layouts.types[ty], Type::String) {
         writer.line(&format!("{value} = emela_heap_own_string({value});"));
     } else if layouts.is_managed_value(ty) {
@@ -1441,6 +1462,9 @@ pub(super) fn emit_fiber_value(
     args: &[Operand],
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
+    if matches!(op, emela_core::FiberOp::Attempt { .. }) {
+        return cause::emit_attempt_call(layouts, function, dst, args, writer);
+    }
     if op == emela_core::FiberOp::Complete {
         return deferred::emit_complete(layouts, function, dst, args, writer);
     }

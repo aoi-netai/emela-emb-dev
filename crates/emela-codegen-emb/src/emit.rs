@@ -10,6 +10,8 @@ use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
+#[path = "cause.rs"]
+mod cause;
 #[path = "child.rs"]
 mod child;
 #[path = "deferred.rs"]
@@ -446,6 +448,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if layouts.deferred_pool {
         source.line(include_str!("runtime/deferred_types.c"));
     }
+    cause::emit_types(&layouts, &mut source);
     emit_closure_environment_declarations(&layouts, &closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
     if heap_required {
@@ -472,6 +475,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
     }
+    cause::emit_runtime(&layouts, &mut source);
     if layouts.has_resumes {
         suspend::emit_resume_runtime(&layouts, &mut source);
     }
@@ -485,6 +489,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }
         suspend::emit_scope_runtime(&layouts, &mut source)?;
     }
+    cause::emit_attempts(&layouts, &mut source)?;
     if layouts.deferred_pool {
         deferred::emit_runtime(&layouts, &mut source)?;
     }
@@ -8356,6 +8361,8 @@ struct TypeLayouts<'a> {
     child_join_types: Vec<TypeId>,
     child_await_types: Vec<TypeId>,
     child_interrupts: bool,
+    has_causes: bool,
+    attempt_types: Vec<(TypeId, TypeId)>,
     fork_types: Vec<TypeId>,
     evidence_nodes_required: bool,
     any_abi: bool,
@@ -8445,6 +8452,26 @@ impl<'a> TypeLayouts<'a> {
             child_join_types: Vec::new(),
             child_await_types: Vec::new(),
             child_interrupts: false,
+            has_causes: flow.functions.iter().any(|(id, f)| {
+                emitted.contains(&id)
+                    && f.stmts.iter().any(|(_, s)| {
+                        matches!(
+                            s,
+                            Stmt::Let {
+                                value: Value::Fiber {
+                                    op: emela_core::FiberOp::Attempt { .. }
+                                        | emela_core::FiberOp::Await { .. }
+                                        | emela_core::FiberOp::CauseKind { .. }
+                                        | emela_core::FiberOp::CauseToString
+                                        | emela_core::FiberOp::CauseRaise,
+                                    ..
+                                },
+                                ..
+                            }
+                        )
+                    })
+            }),
+            attempt_types: Vec::new(),
             fork_types: Vec::new(),
             evidence_nodes_required: false,
             any_abi: false,
@@ -8483,6 +8510,40 @@ impl<'a> TypeLayouts<'a> {
                     continue;
                 };
                 match value {
+                    Value::Fiber {
+                        op: emela_core::FiberOp::Attempt { exit, .. },
+                        args,
+                        ..
+                    } => {
+                        let [Operand::Var(body)] = args.as_slice() else {
+                            return Err(invalid_flow_ir(&function.name, "Attempt body"));
+                        };
+                        let body_ty = function.vars[*body].ty;
+                        let Type::Fn(ft) = layouts.types[body_ty].clone() else {
+                            return Err(invalid_flow_ir(&function.name, "Attempt function type"));
+                        };
+                        if ft.ev || !ft.params.is_empty() {
+                            return Err(unsupported(&function.name, "Attempt body ABI"));
+                        }
+                        let mut params = vec![TypeId::UNIT; layouts.core.enums[*exit].params];
+                        if params.is_empty() {
+                            return Err(invalid_flow_ir(
+                                &function.name,
+                                "Attempt Exit type parameters",
+                            ));
+                        }
+                        params[0] = ft.ret;
+                        let result = dst
+                            .map(|v| function.vars[v].ty)
+                            .unwrap_or_else(|| layouts.types.enum_type(*exit, params));
+                        layouts.collect(result, &function.name, &mut states)?;
+                        if child::success_type(&layouts, result) != Some(ft.ret) {
+                            return Err(invalid_flow_ir(&function.name, "Attempt result layout"));
+                        }
+                        if !layouts.attempt_types.contains(&(body_ty, result)) {
+                            layouts.attempt_types.push((body_ty, result));
+                        }
+                    }
                     Value::Fiber {
                         op: emela_core::FiberOp::Interrupt,
                         args,
@@ -9525,8 +9586,10 @@ impl<'a> TypeLayouts<'a> {
         if self.has_resumes {
             writer.line(&format!("case UINT32_C({}): break;", self.resume_kind()));
         }
-        if self.has_scopes {
+        if self.has_causes {
             writer.line(&format!("case UINT32_C({}): break;", self.cause_kind()));
+        }
+        if self.has_scopes {
             writer.line(&format!("case UINT32_C({}): break;", self.scope_kind()));
             writer.line(&format!("case UINT32_C({}): {{", self.child_kind()));
             writer.line("emela_child *child = (emela_child *)value;");
