@@ -39,12 +39,11 @@ static inline uint32_t emela_const_prefix_bytes(void) {
 
 /* Evaluation cannot resume after the board sink. Reset before a board longjmp as well. */
 static _Noreturn void emela_const_self_reference(EmelaDefectKind kind, const char *message, uint16_t length) {
-  emela_const_copy(emela_const_emergency, message, length);
   for (EmelaConstContext *context = emela_const_current; context != NULL; context = context->previous) {
     context->state->status = 0;
   }
   emela_const_current = NULL;
-  emela_const_defect_sink(kind, emela_const_emergency, length);
+  emela_const_defect_sink(kind, message, length);
 }
 
 static _Noreturn void emela_const_diagnostic_exhausted(uint32_t prefixes) {

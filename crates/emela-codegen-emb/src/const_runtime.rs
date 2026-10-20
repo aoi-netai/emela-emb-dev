@@ -38,14 +38,7 @@ pub(crate) fn emit_runtime(
         .iter()
         .map(|&id| "while evaluating const : ".len() + module.functions[id].name.len())
         .sum();
-    let self_bytes = runtime
-        .iter()
-        .map(|&id| {
-            "const  refers to itself while being evaluated".len() + module.functions[id].name.len()
-        })
-        .max()
-        .unwrap_or(0);
-    let emergency = (prefix_bytes + 64).max(self_bytes);
+    let emergency = prefix_bytes + 64;
     if emergency > usize::from(u16::MAX) || options.const_diagnostic_bytes == 0 {
         return Err(vec![Error {
             kind: ErrorKind::InvalidOptions,

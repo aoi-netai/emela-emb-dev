@@ -213,3 +213,84 @@ pub fn read() -> Int { V }
             .contains("EmelaConstState")
     );
 }
+
+#[test]
+fn folded_self_reference_with_long_name_does_not_copy_into_short_runtime_emergency_storage() {
+    let mut flow = external_const_flow();
+    let name = "LONG".repeat(1024);
+    let id = flow.declare(&name);
+    let mut b = FnBuilder::new(&flow.core, &name);
+    b.set_ret(TypeId::INT).set_constant().set_exported();
+    let value = b.assign(
+        "value",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(id),
+            args: vec![],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(Some(value.into())));
+    flow.define(id, b.finish());
+    let output = compile_flow(&flow, &Options::default()).unwrap();
+    let call = export(&output, &name);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int32_t fixture_seed(void) {{ return 42; }}
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *bytes, uint16_t length) {{
+  static const char expected[]="const {name} refers to itself while being evaluated";
+  exit(kind==EMELA_DEFECT_PANIC && length==sizeof expected-1 && !memcmp(bytes,expected,length) ? 0 : 1);
+}}
+int main(void) {{ (void){call}(); return 2; }}
+"#
+        ),
+    );
+}
+
+fn external_const_flow() -> Module {
+    let core = emela_core::Module::new();
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "seed");
+    b.set_ret(TypeId::INT);
+    let seed = flow.add(b.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".into(),
+            host: HostRef::Global("fixture_seed".into()),
+        }],
+    }));
+    let mut b = FnBuilder::new(&flow.core, "VALUE");
+    b.set_ret(TypeId::INT).set_constant().set_exported();
+    let result = b.assign(
+        "result",
+        TypeId::INT,
+        Value::Call {
+            callee: Callee::Direct(seed),
+            args: vec![],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(Some(result.into())));
+    let value = flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "discard");
+    b.set_exported();
+    b.let_(
+        None,
+        Value::Call {
+            callee: Callee::Direct(value),
+            args: vec![],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(None));
+    flow.add(b.finish());
+    flow
+}
