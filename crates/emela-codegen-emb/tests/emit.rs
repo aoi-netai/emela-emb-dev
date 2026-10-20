@@ -15,9 +15,9 @@ mod fiber;
 mod owned;
 mod string_append;
 mod string_comparison;
-mod value_audit;
 mod suspend;
 mod task_values;
+mod value_audit;
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
