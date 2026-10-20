@@ -66,6 +66,6 @@ bash crates/emela-codegen-emb/examples/renode-f446/run.sh
 
 CMSIS startupの `Reset_Handler` はCの `main()` を呼ぶ一方、embedded backendは `emela_embedded_start()` を生成する。そのためfixtureのboard Cは `main()` shimを持ち、そこから `emela_embedded_start()` を呼ぶ。このshimはアプリケーション統合側の役割である。
 
-fixture付属のlinker scriptはheapを512 byte、stackを4096 byte予約する。したがって `arm-none-eabi-size` のBSS欄にはこの予約分も含まれる。smokeの実行結果から任意のアプリケーションの最大stackやheap使用量を推定してはならない。
+以前のfixtureはC heapを512 byte、stackを4096 byte予約しており、過去の`arm-none-eabi-size`記録にはその予約分も含む。現在のlinker scriptは実MSPの領域をSRAM上端へ合わせ、測定用のstack 16384 byteとlow guard 256 byteをNOLOADで予約する。C library heapの暗黙予約は0、Emela固定heapは生成CのBSSへ別途含む。予約設定と観測した使用量を分けたSTM32F446資源検査を参照する。smokeの実行結果から任意のアプリケーションの最大stackやheap使用量を推定してはならない。
 
 Renodeで確認できるのはモデル上の実行結果であり、実チップの電気的動作、周辺回路の全挙動、割り込み遅延やWCETはこのprobeから判断しない。本計画のtarget統合確認はユーザー方針によりemulatorを実機の代替として扱う。生成Cのcompile/linkとRenode実行は、実際に行った範囲を分けて報告する。
