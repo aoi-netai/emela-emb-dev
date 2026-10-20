@@ -4,6 +4,7 @@
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
 mod const_eval;
+mod const_origins;
 mod const_runtime;
 mod discarded;
 mod emit;
@@ -231,7 +232,8 @@ pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Outpu
 /// The backend normalizes the conservative failure edge of an infallible CauseRaise before
 /// verifying Flow IR. This path does not call `emela_lir::to_heap`.
 pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Vec<Error>> {
-    let mono = emela_core::monomorphize(core);
+    let prepared_consts = const_origins::monomorphize(core);
+    let mono = prepared_consts.module;
     if let Err(errors) = emela_core::verify_monomorphic(&mono) {
         return Err(errors
             .into_iter()
@@ -252,6 +254,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect::<Vec<_>>()
     })?;
 
+    const_origins::attach(&mut flow, &prepared_consts.groups);
     fiber::normalize_infallible_cause_raise(&mut flow);
     verify_flow(&flow)?;
     Ok(flow)

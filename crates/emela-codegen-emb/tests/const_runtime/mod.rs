@@ -591,3 +591,88 @@ int main(void) {
 "#,
     );
 }
+
+#[test]
+fn source_polymorphic_const_origins_keep_a_canonical_value_and_typed_members_in_verified_flow() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            r#"
+const EMPTY = { dbg("once")
+ [] }
+fn ints(xs: List[Int]) -> Int { List.length(xs) }
+fn strings(xs: List[String]) -> Int { List.length(xs) }
+pub fn read() -> Int { ints(EMPTY) + strings(EMPTY) }
+"#,
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let flow = emela_codegen_emb::flow_from_core(&core).unwrap();
+    emela_lir::verify(&flow).unwrap();
+    let (_, marker) = flow
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.starts_with("$emb_const_origins$v1$"))
+        .expect("origin metadata survives the public Flow result");
+    assert!(marker.constant && !marker.exported && marker.params.is_empty());
+    let seq = &marker.seqs[marker.body.unwrap()];
+    let targets: Vec<_> = seq
+        .stmts
+        .iter()
+        .map(|&id| {
+            let emela_lir::Stmt::Let {
+                value: Value::FnRef(target),
+                ..
+            } = marker.stmts[id]
+            else {
+                panic!("origin marker contains only typed function references")
+            };
+            target
+        })
+        .collect();
+    assert_eq!(targets.len(), 3);
+    assert_eq!(flow.functions[targets[0]].name, "EMPTY");
+    assert!(matches!(
+        flow.core.types[flow.functions[targets[0]].ret],
+        Type::List(TypeId::ANY)
+    ));
+    for &target in &targets[1..] {
+        assert!(flow.functions[target].name.starts_with("EMPTY["));
+    }
+}
+
+#[test]
+fn malformed_reserved_const_origin_markers_are_invalid_flow() {
+    let mut flow = external_const_flow();
+    let mut b = FnBuilder::new(&flow.core, "$emb_const_origins$v1$0");
+    b.set_constant();
+    b.term(Term::Return(None));
+    flow.add(b.finish());
+    let errors = compile_flow(&flow, &Options::default()).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.kind == ErrorKind::InvalidFlowIr
+                && error.message.contains("const origin marker"))
+    );
+}
+
+#[test]
+fn distinct_direct_flow_const_ids_keep_independent_caches_without_source_markers() {
+    let mut flow = external_const_flow();
+    let mut second = flow.functions[emela_lir::FnId::from_raw(1.into())].clone();
+    second.name = "OTHER".into();
+    flow.add(second);
+    let output = compile_flow(&flow, &Options::default()).unwrap();
+    compile_and_run(
+        output,
+        &format!(
+            r#"{BOARD}
+static int calls;
+int32_t fixture_seed(void) {{ return ++calls + 41; }}
+int main(void) {{ for (int i=0;i<1000;i++) if(emela_export_VALUE_1()!=42 || emela_export_OTHER_3()!=43) return 1; return calls==2 ? 0 : 2; }}
+"#
+        ),
+    );
+}

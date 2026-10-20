@@ -42,6 +42,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // The input Flow IR was verified by compile_flow before backend lowering. Lifted closure
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
+    crate::const_origins::groups(flow)?;
     let mut prepared_flow = flow.clone();
     let runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
     crate::scope_abi::normalize(&mut prepared_flow)?;
