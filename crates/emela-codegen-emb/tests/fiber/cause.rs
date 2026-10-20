@@ -126,7 +126,7 @@ handler Inner implements Resource { fn read() { 0 }
 handler Outer implements Resource { fn read() { 0 }
  release { mark(2) }
 }
-fn bounce(c: Cause[Boom]) -> Int fails Boom { with Inner { Cause.raise(c) } }
+fn bounce(c: Cause[{}]) -> Int { with Inner { Cause.raise(c) } }
 pub fn make() -> Cause[{}] use Async {
  with Waiting {
   Fiber.scope(fn() {
@@ -140,7 +140,7 @@ pub fn make() -> Cause[{}] use Async {
   })
  }
 }
-pub fn raised(c: Cause[Boom], asynchronous: Bool) -> Int use Async {
+pub fn raised(c: Cause[{}], asynchronous: Bool) -> Int use Async {
  with Waiting { Fiber.scope(fn() {
      second = Fiber.fork(fn() { with Outer {
       if asynchronous { Fiber.attempt(fn() { (use Wait).get(3)
@@ -161,7 +161,7 @@ pub fn raised(c: Cause[Boom], asynchronous: Bool) -> Int use Async {
      }
  }) }
 }
-pub fn show(c: Cause[Boom]) -> String { Cause.to_string(c) }
+pub fn show(c: Cause[{}]) -> String { Cause.to_string(c) }
 "#;
     let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
     compile_and_run(
@@ -204,4 +204,35 @@ int main(void) {
 }
 "#,
     );
+}
+
+#[test]
+fn compile_flow_keeps_rejecting_a_cause_failure_without_a_channel() {
+    let mut core = emela_core::Module::new();
+    let cause = core.add_enum(EnumDef {
+        name: "Std.Cause.Cause".into(),
+        params: 1,
+        variants: vec![],
+        error: false,
+        external: true,
+    });
+    let cause = core.enum_type(cause, vec![TypeId::UNIT]);
+    let mut b = FnBuilder::new(&core, "invalid");
+    b.set_exported();
+    let c = b.param("cause", cause);
+    b.let_(
+        None,
+        Value::Fiber {
+            op: emela_core::FiberOp::CauseRaise,
+            args: vec![c.into()],
+            on_fail: Some(OnFail::Propagate),
+        },
+    );
+    b.term(Term::Unreachable);
+    let function = b.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+    let errors = compile_flow(&flow, &options()).unwrap_err();
+    assert!(errors.iter().any(|e| e.kind == ErrorKind::InvalidFlowIr
+        && e.message.contains("fails a body that cannot fail")));
 }

@@ -8745,7 +8745,9 @@ impl<'a> TypeLayouts<'a> {
                             .any(|(_, sequence)| matches!(sequence.term, Term::Fail(_)))
                         || function.stmts.iter().any(|(_, statement)| match statement {
                             Stmt::Let { value, .. } => match value {
-                                Value::Call { on_fail, .. } => on_fail.is_some(),
+                                Value::Call { on_fail, .. } | Value::Fiber { on_fail, .. } => {
+                                    on_fail.is_some()
+                                }
                                 Value::IsError { .. } | Value::AsError { .. } => true,
                                 _ => false,
                             },

@@ -504,6 +504,105 @@ fn remap(types: &mut TypeTable, ty: TypeId, map: &mut HashMap<TypeId, TypeId>) -
     mapped
 }
 
+// CauseRaise has a conservative failure bit even when the monomorphic error set is empty.
+// Keep compile_flow strict; adapt only Core output after Core's own monomorphic verification.
+pub(crate) fn normalize_infallible_cause_raise(module: &mut Module) {
+    fn visit(types: &TypeTable, f: &mut emela_lir::Function, seq: emela_lir::SeqId, fails: bool) {
+        let statements = f.seqs[seq].stmts.clone();
+        for (position, id) in statements.into_iter().enumerate() {
+            let stmt = f.stmts[id].clone();
+            match stmt {
+                Stmt::Let {
+                    dst,
+                    value: Value::Closure(closure),
+                    ..
+                } => {
+                    let Some(dst) = dst else {
+                        continue;
+                    };
+                    let Type::Fn(ft) = &types[f.vars[dst].ty] else {
+                        continue;
+                    };
+                    visit(types, f, closure.body, ft.fails);
+                }
+                Stmt::Let {
+                    dst: None,
+                    value:
+                        Value::Fiber {
+                            op: FiberOp::CauseRaise,
+                            on_fail: Some(emela_lir::OnFail::Propagate),
+                            ..
+                        },
+                    ..
+                } if !fails => {
+                    let error = f.vars.alloc(emela_lir::VarData {
+                        hint: "empty_cause_failure".into(),
+                        ty: TypeId::ANY,
+                        repr: emela_lir::Repr::Ref,
+                    });
+                    let label = f.labels.alloc(emela_lir::LabelData {
+                        hint: "empty_cause_failure".into(),
+                    });
+                    if let Stmt::Let {
+                        value: Value::Fiber { on_fail, .. },
+                        ..
+                    } = &mut f.stmts[id]
+                    {
+                        *on_fail = Some(emela_lir::OnFail::Break(label));
+                    }
+                    let body = f.seqs.alloc(emela_lir::Seq {
+                        stmts: vec![id],
+                        term: Term::Unreachable,
+                    });
+                    let block = f.stmts.alloc(Stmt::Block {
+                        dst: Some(error),
+                        label,
+                        body,
+                    });
+                    let body = f.seqs.alloc(emela_lir::Seq {
+                        stmts: vec![block],
+                        term: Term::Defect(
+                            emela_lir::Const::String("unexpected failure from empty Cause".into())
+                                .into(),
+                        ),
+                    });
+                    let label = f.labels.alloc(emela_lir::LabelData {
+                        hint: "raise_empty_cause".into(),
+                    });
+                    f.seqs[seq].stmts[position] = f.stmts.alloc(Stmt::Block {
+                        dst: None,
+                        label,
+                        body,
+                    });
+                }
+                Stmt::If { then, else_, .. } => {
+                    visit(types, f, then, fails);
+                    visit(types, f, else_, fails);
+                }
+                Stmt::Switch { cases, default, .. } => {
+                    for case in cases {
+                        visit(types, f, case.body, fails);
+                    }
+                    if let Some(seq) = default {
+                        visit(types, f, seq, fails);
+                    }
+                }
+                Stmt::Block { body, .. } | Stmt::Loop { body, .. } => visit(types, f, body, fails),
+                Stmt::Protect { body, cleanup, .. } => {
+                    visit(types, f, body, fails);
+                    visit(types, f, cleanup, false);
+                }
+                _ => {}
+            }
+        }
+    }
+    for (_, f) in module.functions.iter_mut() {
+        if let Some(body) = f.body {
+            visit(&module.core.types, f, body, f.fails);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -208,7 +208,8 @@ pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Outpu
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
 ///
-/// This path deliberately stops at Flow IR. It does not call `emela_lir::to_heap`.
+/// The backend normalizes the conservative failure edge of an infallible CauseRaise before
+/// verifying Flow IR. This path does not call `emela_lir::to_heap`.
 pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Vec<Error>> {
     let mono = emela_core::monomorphize(core);
     if let Err(errors) = emela_core::verify_monomorphic(&mono) {
@@ -221,7 +222,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect());
     }
 
-    let flow = emela_lir::from_core(mono).map_err(|errors| {
+    let mut flow = emela_lir::from_core(mono).map_err(|errors| {
         errors
             .into_iter()
             .map(|error| Error {
@@ -231,6 +232,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect::<Vec<_>>()
     })?;
 
+    fiber::normalize_infallible_cause_raise(&mut flow);
     verify_flow(&flow)?;
     Ok(flow)
 }
