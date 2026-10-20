@@ -341,3 +341,48 @@ int main(void){for(int i=0;i<1000;i++){assert(emela_export_cycle_0()==42);assert
 "#,
     );
 }
+
+#[test]
+fn shared_const_growing_enum_and_sync_external_abi_work_together_across_suspend() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            include_str!("../../examples/support/completion_2_4.emel"),
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let options = Options::default()
+        .with_heap_bytes(8192)
+        .with_frame_bytes(512)
+        .with_external_adapter(
+            "host_text",
+            emela_codegen_emb::ExternalAdapter::new(
+                "board_text",
+                emela_codegen_emb::ExternalResult::Borrowed,
+            ),
+        )
+        .with_task_adapter("host_wait", "board_wait_start");
+    let mut output = compile(&core, &options).unwrap();
+    let work = export_name(&output, "work");
+    add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);static char scratch[2];static EmelaTask pending;static unsigned initializations;
+EmelaString board_text(int32_t n){{assert(n==42);scratch[0]='4';scratch[1]='2';return(EmelaString){{.data=scratch,.length=2}};}}
+void emela_board_debug(const char*s,uint16_t n){{(void)s;(void)n;++initializations;}}
+uint32_t emela_board_event_lock(void){{return 0;}}void emela_board_event_unlock(uint32_t p){{(void)p;}}
+void board_wait_start(EmelaTask task,int32_t n){{assert(n==42);pending=task;}}
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*s,uint16_t n){{(void)k;(void)s;(void)n;abort();}}
+int main(void){{for(unsigned i=0;i<1000;i++){{int32_t result=-1;EmelaFiber f={work}(i%2,&result);while(emela_scheduler_run(1)){{}}assert(result==-1);memset(scratch,'x',2);assert(emela_task_complete_int(pending,0));while(!emela_fiber_done(f))assert(emela_scheduler_run(1));assert(result==42);emela_fiber_release(f);assert(test_heap_empty());}}assert(initializations==1);return 0;}}
+"#
+        ),
+    );
+}
