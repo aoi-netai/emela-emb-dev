@@ -45,9 +45,9 @@
 - Listノードと再帰型の再帰する辺は固定領域のheapに置く。tupleやrecordなど固定レイアウトの値そのものは、heap参照を含んでいてもinline値にする。`heap_bytes = 0` はheapを使わないプロファイルであり、heapが必要なプログラムはheap容量を指定すればサポートする。正の容量を指定した場合は、`malloc`を使わない固定heapを出力する。heap箱は型ごとの構造体と参照カウントを持ち、サイズ別の空きリストで再利用する。Flow IRには `Dup` / `Drop` がないため、所有権解析とretain/releaseの挿入は `emela-codegen-emb` 内で行う。inline値に含まれるheap参照も所有権解析の対象とする。最後の参照の解放は再帰せず、解放待ちリストを使う。容量不足はdefectにする。
 - Runtimeの固定領域はList・再帰値だけでなく、動的closure/evidence/handler、escapeしたString backing、Fiber・Deferred・suspend継続にも使う。用途別poolと上限を設定できるようにし、pool不足はdefectにする。フェーズ7のfiber/frame/task/event poolは固定heapと別領域とし、scalarだけのsuspend経路ではheapを必要としない。ISRからこれらの確保・解放を行わない。ISRが使う完了通知APIは、確保済みtaskに対応する固定event queueへ値をcopyする操作に限定する。
 - ISRから到達する関数ではheap確保・解放・参照管理、再帰、suspend関数を禁止する。ISRから呼ぶ外部C関数は `Options` でISR安全と明示されたものに限る。ISRのスタック総量は初期版では見積もらない。
-- `@external type` は不透明な `void *` として値で保持する。`Any` は型消去された一般値の箱として扱い、失敗値を運ぶ `EmError` とは別の表現にする。`Any` への変換では、値型・外部handleをbackend独自の型記述付きboxに入れ、取り出し時は静的に既知の型へ戻す。heap参照型はその参照を保持し、動的関数・handler・evidenceも含めて所有権を管理する。
+- `@external type` は不透明な `void *` として値で保持する。`Any`と`EmelaError`はタグ付きdescriptorを共有し、tag 0の一般値boxと正のtagのerror payloadを区別する。`Any`への変換では、値型・外部handleをbackend独自の型記述付きboxに入れ、取り出し時は静的に既知の型へ戻す。heap参照型はその参照を保持し、動的関数・handler・evidenceも含めて所有権を管理する。
 - `Function`, `Handler`, `Evidence` は静的特殊化できる場合は静的に処理し、動的値として残る場合は固定heap上のclosure・handler・evidence表として保持する。動的dispatchと解放後のhandler検査は生成runtimeが行う。
-- `Cell` は `State.run` 内のローカル状態に限り、値型のローカル変数へ特殊化する。Stateを呼び出し間やISRとの間で共有する `@static` 相当の機能は初期版では提供しない。
+- `Cell`は固定heapのtyped contentを所有参照で共有し、creator frameから独立した寿命を持つ。sourceのcapability制約は維持し、そこで許されないescapeをheap化だけで許可しない。明示所有参照によるCell/closureの寿命延長と、Stateを自動global保存したりISRと共有したりする`@static`相当のAPIは区別する。後者は提供しない。
 
 ## Flow IR `Value` の対応表
 
@@ -101,7 +101,7 @@
 | `FloatFloor`, `FloatCeil`, `FloatRound`, `FloatTruncate` | Floatの整数丸め | 対応 | 静的に対応可能（libmまたは同等helper） | toolchainのlibmをlinkするか、同じ規則のhelperを出力する。 |
 | `Panic`, `Todo` | defectを発生させる | Flow IRでは不正 | Flow IR対象外 | 正常なFlow IRでは `Term::Defect` になる。 |
 | `Dbg` | 値をdebug出力して返す | Flow IRでは不正 | Flow IR対象外 | 正常なFlow IRでは `RuntimeOp::DebugPrint` になる。 |
-| `CellNew`, `CellGet`, `CellSet` | State.run用のCellを生成・読取・更新 | 対応 | 静的に対応可能（State.run内で特殊化） | `State.run`のローカル状態をbackend内で可変ローカル値にlowerする。 |
+| `CellNew`, `CellGet`, `CellSet` | State.run用のCellを生成・読取・更新 | 対応 | ヒープで対応可能（共有Cell） | 固定heap上のtyped Cellを所有参照で共有し、Stringのsnapshot、capture、suspend、引数・結果を扱う。cycleが作れる型を含むmoduleだけに回収処理を生成する。局所Cellの静的特殊化は将来の最適化候補。 |
 
 ## Flow IR `Stmt` の対応表
 
@@ -148,16 +148,16 @@
 
 ## 外部C・ボード境界
 
-- 外部関数は既存Coreにある `@external(c, ...)` bindingを使う。callback引数・callback戻り値は、C側がcallbackを保持する期間と呼出し元が未指定だと安全なclosure thunkを作れないため、この計画では未対応とする。
-- suspend外部関数用に `EmelaTask` と完了通知ABIを `emela_embedded.h` に宣言する。C側は完了時に結果または失敗をtaskへ通知し、schedulerはmain側で継続を再開する。ISRはEmela callbackを直接実行せず、固定長event queueを介してmain側へ通知する。
-- 埋め込みABIとホストC ABIが異なるString外部関数は、`Options`のsymbol/ABI overrideが指定された場合だけ対応する。overrideなしのString externalは拒否し、ホストC向け関数との誤リンクを防ぐ。
+- 外部関数は既存Coreにある `@external(c, ...)` bindingを使う。Emelaの関数値をC callback引数・戻り値へ自動変換するthunkは、保持期間と呼出し元の契約が未指定のため、この計画では未対応とする。boardが実装するtyped task producer/releaseはmainから呼ぶ明示的なC callback契約であり、Emela関数値の自動thunkとは別である。
+- suspend外部関数用に`EmelaTask`と完了通知ABIを`emela_embedded.h`に宣言する。scalarは値通知、String/tuple/enum/List/Any等は型付きproducer/context leaseを使う。署名へEmela関数値やruntime capabilityを直接含む形は診断する。C側は完了時に結果または失敗をtaskへ通知し、schedulerはmain側で所有権を取得して継続を再開する。ISRは固定長event queueへ通知するだけでproducerもEmela callbackも直接実行しない。source externalの非fails契約は維持する。
+- 同期String externalには、ホストC向け関数との誤linkを防ぐsymbol/借用・所有/出力bufferのoverride設計が必要で、現状は診断する。suspendのString externalは`Options::with_task_adapter`による明示mappingとtyped task producer ABIで扱う。
 - `Options`にはboard name、ISRとして扱う公開関数、外部関数override（symbol、String ABI、ISR安全指定、suspend task adapter）、`heap_bytes`、`string_capacity`、Fiber/frame/eventの各pool上限を渡せるようにする。TOML読み込みとCLIからの選択はcodegen外の後続フェーズとする。
 - 生成する `emela_embedded.h` は公開Emela入口、外部関数ABI、`EmelaTask`の完了通知ABIを宣言する。`emela_board.h` は必要なhookだけ宣言する。
 - 必須hookは `_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length)`。kindは `EMELA_DEFECT_PANIC`、`EMELA_DEFECT_TODO`、`EMELA_DEFECT_DIVISION_BY_ZERO`、`EMELA_DEFECT_NO_MATCH`、`EMELA_DEFECT_FLOAT_TO_INT`、`EMELA_DEFECT_NEGATIVE_SHIFT`、`EMELA_DEFECT_HEAP_EXHAUSTED`、`EMELA_DEFECT_STRING_CAPACITY`、`EMELA_DEFECT_UNSUPPORTED_UNICODE`、`EMELA_DEFECT_UNHANDLED_ERROR`、`EMELA_DEFECT_ASSERT`を区別する。messageはUTF-8 byte列で、NUL終端を保証せず、hook呼び出し中だけ有効とする。hookはISRから呼ばれる場合もあるため、ISR安全でなければならない。
 - `main`を出力する場合は `void emela_board_init(void)` を起動時に呼び、Emelaのmain終了後は `void emela_board_idle(void)` を繰り返す。`DebugPrint`を使う場合は `void emela_board_debug(const char *bytes, uint16_t length)` を要求する。Consoleなどのproject effectは個別の外部C関数として解決し、標準のboard hookには含めない。
 - `emela_board_debug`にはNUL終端しないUTF-8 byte列とbyte長を渡す。hookは戻る前に読み切るか自分の領域へcopyし、改行を付けて一行を出力する。ISRから到達する場合はISR安全に実装する。
 - 初期版はSTM32 HALの自動adapterを出力しない。GPIO/UART/I2C/SPIなどの操作は、プロジェクトのeffect定義とC外部関数を通じてボード側が実装する。HAL adapterとboard TOMLの自動生成は後続の拡張とする。
-- 初期版はEmelaソースの新しい標準module、`@external(embedded, ...)`、`@static`を追加しない。割り込みをまたぐ永続Stateも対象外とし、`State.run`の呼び出し内状態だけ扱う。
+- 初期版はEmelaソースの新しい標準module、`@external(embedded, ...)`、`@static`を追加しない。Cellやclosureの寿命は明示的な所有参照で延長できるが、ISRからの利用や自動global State保存APIは追加しない。
 
 ## `RuntimeOp` のFlow段階対応
 
@@ -175,10 +175,10 @@
 
 - `heap_bytes = 0`で、実行時heap確保が必要なList・再帰値・closure・Fiber等が残る。この場合はheapを有効にする構成を選ぶ。
 - ISRからheap値、String external、blocking/suspend関数、再帰関数に到達する。
-- callbackを外部C関数との境界で受け渡す。
+- Emela関数値をC関数pointerへ自動変換して外部C関数との境界で受け渡す。
 - `@static`相当の入口間で共有する永続Stateを要求する。
 
-外部C callbackと入口間で共有する永続Stateは別のABI・保存領域設計が必要なため、この対応表の初期対応には含めない。Flow IRでは表せるが外部ABI制約に該当する項目は利用者向け診断にする。一方、Heap IR専用variantが `Stage::Flow` に現れた場合だけ内部エラーにする。
+外部C callbackの自動thunkと、入口間のStateを自動保存するAPIは、この対応表の初期対応には含めない。利用者が所有参照を保持するCell/closureの共有とは区別する。Flow IRでは表せるが外部ABI制約に該当する項目は利用者向け診断にする。一方、Heap IR専用variantが `Stage::Flow` に現れた場合だけ内部エラーにする。
 
 ## フェーズ0の完了条件
 
@@ -187,6 +187,6 @@
 - 型の値表現・heap表現、割り込み制約、失敗とdefect、外部C境界の契約が定まっている。
 - 未対応項目は、backendの診断として拒否する方針が定まっている。
 
-この分類では、正常なFlow IRに現れる全variantを「対応」とする。`MakeClosure`、`EnvGet`、`Dup`、`Drop`、`Unwind`などHeap IR専用variantは、引き続きFlow IRでは不正とする。外部C callbackと入口間共有の永続Stateは、Flow IR variantの対応範囲とは別のABI・保存領域の拡張項目である。
+この分類では、正常なFlow IRに現れる全variantを「対応」とする。`MakeClosure`、`EnvGet`、`Dup`、`Drop`、`Unwind`などHeap IR専用variantは、引き続きFlow IRでは不正とする。外部C callbackの自動thunkとStateの自動global保存は、Flow IR variantの対応範囲とは別のABI・保存領域の拡張項目である。
 
 本表を実装時の対応表とし、新しいFlow IR variantが増えたときは、対応表の更新とそのvariantのテストケース追加を同じ変更で行う。
