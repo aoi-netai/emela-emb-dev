@@ -3837,7 +3837,7 @@ fn dynamic_float_formatting_uses_a_bounded_runtime_and_float_parse_uses_the_boun
         let significand = (index as u64)
             .wrapping_mul(7_919_287_331)
             .wrapping_add(1_234_567);
-        let exponent = (index % 641) as i32 - 340;
+        let exponent = index % 641 - 340;
         let text = format!(
             "{}{}e{exponent}",
             if index % 2 == 0 { "-" } else { "" },

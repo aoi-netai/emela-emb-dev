@@ -470,7 +470,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
                 ConstOutcome::Value(value) => {
-                    let expression = constant_expression(&value).map_err(|kind| {
+                    let expression = constant_expression(value).map_err(|kind| {
                         unsupported(&function.name, &format!("{kind} in a const value"))
                     })?;
                     let Some(expression) = expression else {
@@ -992,7 +992,7 @@ impl StringBufferPlan {
                 .body
                 .map(|body| &function.seqs[body].term)
                 .and_then(|term| match term {
-                    Term::Return(Some(Operand::Var(variable))) => roots.get(&variable).copied(),
+                    Term::Return(Some(Operand::Var(variable))) => roots.get(variable).copied(),
                     _ => None,
                 })
         } else {
@@ -2049,12 +2049,11 @@ fn emit_runtime(
 
     let expression = match &args[0] {
         Operand::Const(Const::String(value)) => {
-            let shown = constant_expression(&Const::String(show_string(value)))
+            constant_expression(&Const::String(show_string(value)))
                 .map_err(|variant| unsupported(&function.name, variant))?
                 .ok_or_else(|| {
                     invalid_flow_ir(&function.name, "RuntimeOp::ShowString has no C expression")
-                })?;
-            shown
+                })?
         }
         operand => {
             let input = operand_expression(operand)
