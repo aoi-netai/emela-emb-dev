@@ -125,6 +125,7 @@ pub fn resolve(
             ModuleItems {
                 name: data.name.clone(),
                 items: Vec::new(),
+                is_core: modules.is_core(module),
             },
         );
         if let Some(file) = files.get(module) {
@@ -466,7 +467,7 @@ impl<'a> Resolver<'a> {
             };
             let name = ModuleName::new(segments.iter().map(|t| SmolStr::from(t.text())));
             // The import graph has already reported undefined modules.
-            let Some(target) = self.modules.lookup(&name) else {
+            let Some(target) = self.modules.lookup_from(module, &name) else {
                 continue;
             };
             // Each path prefix points to the module of that name (the `Http` of
@@ -474,7 +475,7 @@ impl<'a> Resolver<'a> {
             for (i, segment) in segments.iter().enumerate() {
                 let prefix =
                     ModuleName::new(segments[..=i].iter().map(|t| SmolStr::from(t.text())));
-                if let Some(m) = self.modules.lookup(&prefix) {
+                if let Some(m) = self.modules.lookup_from(module, &prefix) {
                     self.refer(module, segment.text_range(), RefTarget::Module(m));
                 }
             }

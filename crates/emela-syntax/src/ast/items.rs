@@ -198,6 +198,9 @@ impl ErrorDecl {
     pub fn field_list(&self) -> Option<FieldList> {
         child(&self.0)
     }
+    pub fn derive(&self) -> Option<DeriveClause> {
+        child(&self.0)
+    }
 }
 
 ast_node!(
@@ -379,7 +382,7 @@ impl OpSig {
 }
 
 ast_node!(
-    /// `handler PostgresUsers(conn: Connection) implements Users { ... }`
+    /// `handler PostgresUsers(conn: Connection): Users { ... }`
     HandlerDecl,
     HANDLER_DECL
 );
@@ -391,15 +394,16 @@ impl HandlerDecl {
     pub fn field_list(&self) -> Option<FieldList> {
         child(&self.0)
     }
-    /// The effect after `implements`.
+    /// The effect after `:`.
     pub fn effect(&self) -> Option<Path> {
-        child(&self.0.children().find(|n| n.kind() == IMPLEMENTS_CLAUSE)?)
+        child(&self.0.children().find(|n| n.kind() == HANDLER_EFFECT)?)
     }
-    /// The type argument list of the implemented effect (`[Int]` in `implements State[Int]`, spec 8.1).
+    /// The type argument list of the implemented effect (`[Int]` in `handler H: State[Int]`,
+    /// spec 8.1).
     pub fn effect_type_args(&self) -> Option<SyntaxNode> {
         self.0
             .children()
-            .find(|n| n.kind() == IMPLEMENTS_CLAUSE)?
+            .find(|n| n.kind() == HANDLER_EFFECT)?
             .children()
             .find(|n| n.kind() == TYPE_ARG_LIST)
     }
@@ -450,20 +454,29 @@ impl TraitDecl {
 }
 
 ast_node!(
-    /// `impl Show for User { ... }`
+    /// `impl User: Show { ... }`
     ImplDecl,
     IMPL_DECL
 );
 
 impl ImplDecl {
+    /// The trait after `:`.
     pub fn trait_ref(&self) -> Option<Path> {
         child(&self.0)
     }
-    /// The type node after `for`.
+    /// The IMPL_TYPE before `:`, with its type parameters (`Map[K: Eq, V: Eq]`).
     pub fn self_ty(&self) -> Option<SyntaxNode> {
-        self.0
+        self.0.children().find(|n| n.kind() == IMPL_TYPE)
+    }
+    /// The type name of [`Self::self_ty`] (`Map`).
+    pub fn self_path(&self) -> Option<Path> {
+        child(&self.self_ty()?)
+    }
+    /// The type parameters of [`Self::self_ty`] (`[K: Eq, V: Eq]`).
+    pub fn type_params(&self) -> Option<SyntaxNode> {
+        self.self_ty()?
             .children()
-            .find(|n| !matches!(n.kind(), PATH | ITEM_LIST | ANNOTATION))
+            .find(|n| n.kind() == TYPE_PARAM_LIST)
     }
     pub fn fns(&self) -> impl Iterator<Item = FnDecl> {
         items(&self.0)
@@ -529,7 +542,7 @@ mod tests {
     #[test]
     fn データの宣言() {
         let items = items(
-            "pub opaque type User(id: Int, name: String)\n  derive Eq, Show\nenum Shape {\n  Circle(radius: Float)\n  Rect(Float, Float)\n  Empty\n}\nerror NotFound(id: Int)\nconst MAX: Int = 3",
+            "pub opaque type User(id: Int, name: String)\n  derive Eq, Show\nenum Shape {\n  Circle(radius: Float)\n  Rect(Float, Float)\n  Empty\n}\nerror NotFound(id: Int) derive Eq, Show\nconst MAX: Int = 3",
         );
         let Item::Type(user) = &items[0] else {
             panic!("expected `type`")
@@ -554,6 +567,7 @@ mod tests {
             panic!("expected `error`")
         };
         assert_eq!(text(not_found.name()), "NotFound");
+        assert_eq!(not_found.derive().unwrap().traits().count(), 2);
 
         let Item::Const(max) = &items[3] else {
             panic!("expected `const`")
@@ -566,7 +580,7 @@ mod tests {
     #[test]
     fn derive_の前のドキュメントコメントは型に付かない() {
         let items = items(
-            "## 利用者\ntype User(id: Int)\n  # 比較\n\n  ## 導出\n  derive Eq, Show\nenum Color {\n  Red\n}\n  # 表示\n  derive Show",
+            "## 利用者\ntype User(id: Int)\n  # 比較\n\n  ## 導出\n  derive Eq, Show\nenum Color {\n  Red\n}\n  # 表示\n  derive Show\nerror Down(message: String)\n  derive Show",
         );
         let Item::Type(user) = &items[0] else {
             panic!("expected `type`")
@@ -579,12 +593,17 @@ mod tests {
             panic!("expected `enum`")
         };
         assert_eq!(e.derive().unwrap().traits().count(), 1);
+
+        let Item::Error(down) = &items[2] else {
+            panic!("expected `error`")
+        };
+        assert_eq!(down.derive().unwrap().traits().count(), 1);
     }
 
     #[test]
     fn 効果とハンドラ() {
         let items = items(
-            "effect Clock {\n  suspend fn sleep(ms: Int) -> ()\n  fn now() -> Instant\n}\nhandler Pg(conn: Conn) implements Users {\n  init { Pg(conn: open()) }\n  release { close(self.conn) }\n  fn find(id) { 1 }\n}\nlayer App { Env, Pg }",
+            "effect Clock {\n  suspend fn sleep(ms: Int) -> ()\n  fn now() -> Instant\n}\nhandler Pg(conn: Conn): Users {\n  init { Pg(conn: open()) }\n  release { close(self.conn) }\n  fn find(id) { 1 }\n}\nlayer App { Env, Pg }",
         );
         let Item::Effect(clock) = &items[0] else {
             panic!("expected `effect`")
@@ -609,7 +628,7 @@ mod tests {
     #[test]
     fn トレイトと実装() {
         let items = items(
-            "trait Ord: Eq + Show {\n  fn compare(self, other: Self) -> Ordering\n  fn max(self, other: Self) -> Self { self }\n}\nimpl Show for List[Int] {\n  fn show(self) { \"\" }\n}",
+            "trait Ord: Eq + Show {\n  fn compare(self, other: Self) -> Ordering\n  fn max(self, other: Self) -> Self { self }\n}\nimpl List[A]: Show {\n  fn show(self) { \"\" }\n}",
         );
         let Item::Trait(ord) = &items[0] else {
             panic!("expected `trait`")
@@ -625,7 +644,7 @@ mod tests {
             show.trait_ref().unwrap().syntax().text().to_string(),
             "Show"
         );
-        assert_eq!(show.self_ty().unwrap().text().to_string(), "List[Int]");
+        assert_eq!(show.self_ty().unwrap().text().to_string(), "List[A]");
         assert_eq!(show.fns().count(), 1);
     }
 }

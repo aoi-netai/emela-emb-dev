@@ -54,7 +54,7 @@ pub fn build_import_graph(
     for (id, module) in modules.iter() {
         let mut resolved = Vec::new();
         for import in imports.get(id).into_iter().flatten() {
-            match modules.lookup(&import.path) {
+            match modules.lookup_from(id, &import.path) {
                 Some(target) => resolved.push(ImportEdge {
                     target,
                     range: import.range,
@@ -62,8 +62,14 @@ pub fn build_import_graph(
                 None => diagnostics.push(Diagnostic {
                     file: module.file.clone(),
                     range: Some(import.range),
-                    kind: DiagnosticKind::UndefinedModule {
-                        name: import.path.clone(),
+                    kind: if modules.is_test_only(id, &import.path) {
+                        DiagnosticKind::TestOnlyModule {
+                            name: import.path.clone(),
+                        }
+                    } else {
+                        DiagnosticKind::UndefinedModule {
+                            name: import.path.clone(),
+                        }
                     },
                 }),
             }

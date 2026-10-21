@@ -31,8 +31,11 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `Ordering` | `enum Ordering { Less, Equal, Greater }` | Emela | 比較の結果 |
 | `panic` | `panic(message: String) -> Never` | intrinsic | defect を起こす |
 | `todo` | `todo() -> Never` | intrinsic | `not yet implemented` の defect |
-| `dbg` | `dbg[A: Show](value: A) -> A` | intrinsic | 表示を標準エラーに出して値を返す |
-| `ParseError` | `error ParseError(input: String)` | Emela | `Int.parse` と `Float.parse` の形の誤り．`input` は入力の全体 |
+| `dbg` | `dbg[A](value: A) -> A` | intrinsic | デバッグ用の表示を標準エラーに出して値を返す．Show を求めない．Show を満たす型は `inspect` と同じ，満たさない型は構築の形（中の Show を満たす値は Show，関数は `<fn>`） |
+| `inspect` | `inspect[A: Show](value: A) -> String` | intrinsic | デバッグ用の表示．Show の実装の結果で，String は最上位でも `"` で囲む |
+| `ParseError` | `error ParseError(input: String)` | Emela | `Int.parse`，`Float.parse`，`Bool.parse` の形の誤り．`input` は入力の全体 |
+
+impl（10.5）: ParseError は `derive Show`（main やテストまで達したときに中身を出す．14.3）．
 
 ## List（`core/list.emel`）
 
@@ -55,6 +58,18 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `find` | `find[A](xs: List[A], f: fn(A) -> Bool) -> Option[A]` | Emela | True になる最初の要素 |
 | `range` | `range(from: Int, to: Int) -> List[Int]` | Emela | `from` 以上 `to` 未満 |
 | `zip` | `zip[A, B](xs: List[A], ys: List[B]) -> List[(A, B)]` | Emela | 同じ位置の要素の組．短い方に合わせる |
+| `unzip` | `unzip[A, B](xys: List[(A, B)]) -> (List[A], List[B])` | Emela | 組の1つ目と2つ目の並び |
+| `enumerate` | `enumerate[A](xs: List[A]) -> List[(Int, A)]` | Emela | 0 からの添字との組 |
+| `take` | `take[A](xs: List[A], n: Int) -> List[A]` | Emela | 先頭の `n` 個．足りなければ全部，`n` が正でなければ空 |
+| `drop` | `drop[A](xs: List[A], n: Int) -> List[A]` | Emela | 先頭の `n` 個を除いた残り．`n` が正でなければ全部 |
+| `last` | `last[A](xs: List[A]) -> Option[A]` | Emela | 最後の要素 |
+| `find_index` | `find_index[A](xs: List[A], f: fn(A) -> Bool) -> Option[Int]` | Emela | True になる最初の要素の添字 |
+| `flat_map` | `flat_map[A, B](xs: List[A], f: fn(A) -> List[B]) -> List[B]` | Emela | 各要素の `f` の結果を順につなぐ |
+| `filter_map` | `filter_map[A, B](xs: List[A], f: fn(A) -> Option[B]) -> List[B]` | Emela | `f` が Some を返したものの値 |
+| `sort_by` | `sort_by[A](xs: List[A], f: fn(A, A) -> Ordering) -> List[A]` | Emela | `f` の順に並べる．マージソートで安定 |
+| `sort` | `sort[A: Ord](xs: List[A]) -> List[A]` | Emela | Ord の順に並べる（`sort_by(xs, Ord.compare)`）．安定 |
+
+impl（10.6）: `impl List[A: Eq]: Eq`，`impl List[A: Ord]: Ord`，`impl List[A: Show]: Show`．Ord は辞書式（前が同じなら短い方が小さい），Show は `[1, 2, 3]`．基本型とタプルの impl はコンパイラが持つ．
 
 ## Option（`core/option.emel`）
 
@@ -66,6 +81,8 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `is_some` | `is_some[A](opt: Option[A]) -> Bool` | Emela | `Some` か |
 | `is_none` | `is_none[A](opt: Option[A]) -> Bool` | Emela | `None` か |
 | `or_fail` | `or_fail[A, E](opt: Option[A], err: E) -> A fails E` | Emela | 中身か，`None` なら `err` で fail（7.2） |
+
+impl（10.6）: `impl Option[A: Eq]: Eq`，`impl Option[A: Ord]: Ord`，`impl Option[A: Show]: Show`．Ord は `None < Some(_)`，Show は `Some(1)`，`None`．
 
 ## String（`core/string.emel`）
 
@@ -84,6 +101,16 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `trim` | `trim(s: String) -> String` | intrinsic | 前後の White_Space を取り除く |
 | `code_points` | `code_points(s: String) -> List[Int]` | intrinsic | コードポイントの値のリスト |
 | `from_code_point` | `from_code_point(n: Int) -> Option[String]` | intrinsic | スカラー値でなければ `None` |
+| `to_ascii_lowercase` | `to_ascii_lowercase(s: String) -> String` | Emela | A〜Z だけを a〜z にする |
+| `to_ascii_uppercase` | `to_ascii_uppercase(s: String) -> String` | Emela | a〜z だけを A〜Z にする |
+| `show_nested` | `show_nested[A: Show](value: A) -> String` | intrinsic | `@internal`．値の中に置いた値の表示（10.6）．String は `"` で囲み，それ以外は `Show.show`．core の Show の impl が使う |
+
+## Bool（`core/bool.emel`）
+
+| 関数 | シグネチャ | 実装 | 説明 |
+|---|---|---|---|
+| `to_string` | `to_string(b: Bool) -> String` | Emela | Show と同じ `"True"` / `"False"` |
+| `parse` | `parse(s: String) -> Bool fails ParseError` | Emela | `"True"` / `"False"` だけを受理．大小文字の違い，空白，`0` / `1` は `ParseError` |
 
 ## Int（`core/int.emel`）
 
@@ -99,6 +126,9 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `shift_left` | `shift_left(n: Int, by: Int) -> Int` | intrinsic | 左シフト．`by` が 32 以上で 0，負で defect |
 | `shift_right` | `shift_right(n: Int, by: Int) -> Int` | intrinsic | 算術右シフト．32 以上で 0 か -1 |
 | `shift_right_unsigned` | `shift_right_unsigned(n: Int, by: Int) -> Int` | intrinsic | 論理右シフト．32 以上で 0 |
+| `compare` | `compare(a: Int, b: Int) -> Ordering` | Emela | Less / Equal / Greater |
+| `min` / `max` | `(a: Int, b: Int) -> Int` | Emela | 小さい方 / 大きい方 |
+| `abs` | `abs(n: Int) -> Int` | Emela | 絶対値．最小値は巻き戻って同じ値 |
 
 ## Int64（`core/int64.emel`）
 
@@ -112,6 +142,9 @@ C のターゲット（12.1）も同じ手順で，`lib/std/x.c` を書いて `H
 | `shift_left` | `shift_left(n: Int64, by: Int) -> Int64` | intrinsic | 左シフト．`by` が 64 以上で 0，負で defect |
 | `shift_right` | `shift_right(n: Int64, by: Int) -> Int64` | intrinsic | 算術右シフト．64 以上で 0 か -1 |
 | `shift_right_unsigned` | `shift_right_unsigned(n: Int64, by: Int) -> Int64` | intrinsic | 論理右シフト．64 以上で 0 |
+| `compare` | `compare(a: Int64, b: Int64) -> Ordering` | Emela | Less / Equal / Greater |
+| `min` / `max` | `(a: Int64, b: Int64) -> Int64` | Emela | Equal なら第1引数 |
+| `abs` | `abs(n: Int64) -> Int64` | Emela | 最小値は巻き戻って自分自身 |
 
 ## Float（`core/float.emel`）
 
@@ -126,6 +159,10 @@ Int への変換は，結果が Int の範囲外か NaN，±Infinity なら defe
 | `ceil` | `ceil(x: Float) -> Int` | intrinsic | 正の無限大の方向へ丸める |
 | `round` | `round(x: Float) -> Int` | intrinsic | 最も近い整数．0.5 は 0 から遠い方へ |
 | `truncate` | `truncate(x: Float) -> Int` | intrinsic | 0 の方向へ丸める |
+| `is_nan` | `is_nan(x: Float) -> Bool` | Emela | NaN か |
+| `compare` | `compare(a: Float, b: Float) -> Ordering` | Emela | NaN はほかの値より大きく，NaN 同士と ±0.0 同士は Equal |
+| `min` / `max` | `(a: Float, b: Float) -> Float` | Emela | compare に従って選ぶ．Equal なら第1引数．片方が NaN なら min は他方，max は NaN |
+| `abs` | `abs(x: Float) -> Float` | Emela | 絶対値．-0.0 は +0.0 にし，NaN はそのまま |
 
 # std
 
@@ -146,6 +183,8 @@ Int への変換は，結果が Int の範囲外か NaN，±Infinity なら defe
 | `compare` | `compare(d: Duration, other: Duration) -> Ordering` | Emela | 比べる |
 | `to_string` | `to_string(d: Duration) -> String` | Emela | `1500ms` |
 
+impl（10.5，10.6）: `derive Eq, Ord`．Show の impl は `to_string` と同じ `1500ms`．
+
 ## Std.Instant（`std/instant.emel`）
 
 ある時点．中身は Unix エポックからのミリ秒の Int64 の opaque な型（15.2）．現在の時点は Clock のエフェクトが返す（このモジュールでは取れない）．
@@ -159,6 +198,50 @@ Int への変換は，結果が Int の範囲外か NaN，±Infinity なら defe
 | `since` | `since(t: Instant, earlier: Instant) -> Duration` | Emela | `earlier` から `t` までの長さ |
 | `compare` | `compare(t: Instant, other: Instant) -> Ordering` | Emela | 早い方が小さい |
 | `to_string` | `to_string(t: Instant) -> String` | Emela | UTC の ISO 8601（`2025-10-12T03:04:05.678Z`） |
+
+impl（10.5，10.6）: `derive Eq, Ord`．Show の impl は `to_string` と同じ．
+
+## Std.Map（`std/map.emel`）
+
+キーから値への対応．不変で，キーの順（Ord の順）に並ぶ（15.2，18.1 #36）．中身は重み平衡木の opaque な型．
+
+| 関数 | シグネチャ | 実装 | 説明 |
+|---|---|---|---|
+| `empty` | `empty[K, V]() -> Map[K, V]` | Emela | 空の Map |
+| `from_list` | `from_list[K: Ord, V](pairs: List[(K, V)]) -> Map[K, V]` | Emela | 同じキーは後の値 |
+| `insert` | `insert[K: Ord, V](m: Map[K, V], key: K, value: V) -> Map[K, V]` | Emela | あれば置き換える |
+| `remove` | `remove[K: Ord, V](m: Map[K, V], key: K) -> Map[K, V]` | Emela | なければそのまま |
+| `update` | `update[K: Ord, V](m: Map[K, V], key: K, f: fn(Option[V]) -> Option[V]) -> Map[K, V]` | Emela | 今の値を `f` に渡す．None なら除く |
+| `get` | `get[K: Ord, V](m: Map[K, V], key: K) -> Option[V]` | Emela | キーの値 |
+| `contains` | `contains[K: Ord, V](m: Map[K, V], key: K) -> Bool` | Emela | キーがあるか |
+| `size` | `size[K, V](m: Map[K, V]) -> Int` | Emela | キーの数 |
+| `is_empty` | `is_empty[K, V](m: Map[K, V]) -> Bool` | Emela | 空か |
+| `fold` | `fold[K, V, B](m: Map[K, V], from: B, f: fn(B, K, V) -> B) -> B` | Emela | キーの順に畳み込む |
+| `to_list` | `to_list[K, V](m: Map[K, V]) -> List[(K, V)]` | Emela | キーの順の組 |
+| `keys` / `values` | `(m: Map[K, V]) -> List[K]` / `List[V]` | Emela | キーの順 |
+| `map_values` | `map_values[K, V, W](m: Map[K, V], f: fn(V) -> W) -> Map[K, W]` | Emela | 値に `f` を当てる |
+| `filter` | `filter[K, V](m: Map[K, V], f: fn(K, V) -> Bool) -> Map[K, V]` | Emela | `f` が True の組 |
+| `union` | `union[K: Ord, V](a: Map[K, V], b: Map[K, V]) -> Map[K, V]` | Emela | 両方にあるキーは `a` の値 |
+
+impl（10.6）: `impl Map[K: Eq, V: Eq]: Eq`（中身で比べる），`impl Map[K: Show, V: Show]: Show`（`Map.from_list([(1, "a")])`）．
+
+## Std.Set（`std/set.emel`）
+
+値の集まり．不変で，Ord の順に並ぶ．中身は `Map[A, ()]`．
+
+| 関数 | シグネチャ | 実装 | 説明 |
+|---|---|---|---|
+| `empty` | `empty[A]() -> Set[A]` | Emela | 空の Set |
+| `from_list` | `from_list[A: Ord](xs: List[A]) -> Set[A]` | Emela | 重なりは1つにする |
+| `insert` / `remove` | `(s: Set[A], x: A) -> Set[A]`（`A: Ord`） | Emela | 足す / 除く |
+| `contains` | `contains[A: Ord](s: Set[A], x: A) -> Bool` | Emela | 含むか |
+| `size` / `is_empty` | `(s: Set[A]) -> Int` / `Bool` | Emela | 数 / 空か |
+| `fold` | `fold[A, B](s: Set[A], from: B, f: fn(B, A) -> B) -> B` | Emela | 順に畳み込む |
+| `to_list` | `to_list[A](s: Set[A]) -> List[A]` | Emela | 順に並べる |
+| `filter` | `filter[A](s: Set[A], f: fn(A) -> Bool) -> Set[A]` | Emela | `f` が True のもの |
+| `union` | `union[A: Ord](a: Set[A], b: Set[A]) -> Set[A]` | Emela | 和 |
+
+impl（10.6）: `impl Set[A: Eq]: Eq`，`impl Set[A: Show]: Show`（`Set.from_list([1, 2])`）．
 
 ## Std.State（`std/state.emel`）
 
@@ -190,8 +273,8 @@ platform 層と test 層（15.2）．
 | 宣言 | 内容 | 説明 |
 |---|---|---|
 | `Console` | `effect Console { fn print_line(text: String) -> (); fn print_error_line(text: String) -> () }` | 標準出力と標準エラーに1行ずつ書く．失敗しない |
-| `SystemConsole` | `handler SystemConsole implements Console` | ホストの標準出力と標準エラー（JS の `console.log` と `console.error`，C の `stdout` と `stderr`）．状態を持たない |
-| `TestConsole` | `handler TestConsole implements Console` | `print_line` の行を `State[List[String]]` に書いた順に足す．`print_error_line` は捨てる．`State.run` の中で使う |
+| `SystemConsole` | `handler SystemConsole: Console` | ホストの標準出力と標準エラー（JS の `console.log` と `console.error`，C の `stdout` と `stderr`）．状態を持たない |
+| `TestConsole` | `handler TestConsole: Console` | `print_line` の行を `State[List[String]]` に書いた順に足す．`print_error_line` は捨てる．`State.run` の中で使う |
 
 ```emel
 import Std.Console.{Console, SystemConsole}
@@ -208,22 +291,22 @@ fn main() {
 | 宣言 | 内容 | 説明 |
 |---|---|---|
 | `Clock` | `effect Clock { suspend fn sleep(ms: Int) -> (); fn now() -> Instant }` | 待つ（負なら 0 と同じ）．現在の時点 |
-| `SystemClock` | `handler SystemClock implements Clock` | `sleep` は `setTimeout` を `@external suspend fn` で待つ（中断でタイマーを消す，12.2），`now` は `Date.now()`（C では `timespec_get`）．C の `sleep` はランタイムのイベントループのタイマー（`em_after`）で待ち，中断されたらすぐ完了してタイマーを消す（12.6）．状態を持たない．Async に依存する（8.7） |
-| `TestClock` | `handler TestClock implements Clock` | 時刻は `State[Instant]` の仮の時刻（8.8）．`sleep(ms)` は本当に待ち，どの fiber も進めずホストの処理もないときに，一番早い予定の時刻まで進めて起こす（同じ時刻なら呼んだ順，負なら 0）．`now` はその時刻．Async に依存する．待つ外部関数 `when_stalled` は JS も C もランタイムが持つ（C は `em_when_stalled`） |
+| `SystemClock` | `handler SystemClock: Clock` | `sleep` は `setTimeout` を `@external suspend fn` で待つ（中断でタイマーを消す，12.2），`now` は `Date.now()`（C では `timespec_get`）．C の `sleep` はランタイムのイベントループのタイマー（`em_after`）で待ち，中断されたらすぐ完了してタイマーを消す（12.6）．状態を持たない．Async に依存する（8.7） |
+| `TestClock` | `handler TestClock: Clock` | 時刻は `State[Instant]` の仮の時刻（8.8）．`sleep(ms)` は本当に待ち，どの fiber も進めずホストの処理もないときに，一番早い予定の時刻まで進めて起こす（同じ時刻なら呼んだ順，負なら 0）．`now` はその時刻．Async に依存する．待つ外部関数 `when_stalled` は JS も C もランタイムが持つ（C は `em_when_stalled`） |
 
 ## Std.Random（`std/random.emel`，`std/random.mjs`，`std/random.c`）
 
 | 宣言 | 内容 | 説明 |
 |---|---|---|
 | `Random` | `effect Random { fn int() -> Int; fn float() -> Float }` | Int の全域で一様な値．0 以上 1 未満で一様な値 |
-| `SystemRandom` | `handler SystemRandom implements Random` | JS の `crypto.getRandomValues`，C の `arc4random_buf`（macOS）か `getrandom`（Linux）で引く．状態を持たない |
+| `SystemRandom` | `handler SystemRandom: Random` | JS の `crypto.getRandomValues`，C の `arc4random_buf`（macOS）か `getrandom`（Linux）で引く．状態を持たない |
 
 ## Std.Env（`std/env.emel`，`std/env.mjs`，`std/env.c`）
 
 | 宣言 | 内容 | 説明 |
 |---|---|---|
 | `Env` | `effect Env { fn get(name: String) -> Option[String] }` | 環境変数の値．設定されていなければ `None`．空の値は `Some("")` |
-| `SystemEnv` | `handler SystemEnv implements Env` | JS の `process.env`，C の `getenv` を読む．状態を持たない |
+| `SystemEnv` | `handler SystemEnv: Env` | JS の `process.env`，C の `getenv` を読む．状態を持たない |
 
 ## Std.Fiber（`std/fiber.emel`）
 
@@ -257,6 +340,8 @@ fn main() {
 | `to_string` | `to_string[E](c: Cause[E]) -> String` | intrinsic | `error: …`，`defect: …`，`interrupted` |
 | `raise` | `raise[A, E](c: Cause[E]) -> A fails E` | intrinsic | 起こし直す．Fail は fail，Die は defect，Interrupt は中断の巻き戻し |
 
+impl（10.5）: CauseKind は `derive Eq, Show`．Cause は関数を持つので Eq，Ord，Show を満たさない（表示は `to_string` か dbg）．同じ理由で Std.Fiber の Exit も満たさない．
+
 ## Std.Deferred（`std/deferred.emel`）
 
 | 宣言 | シグネチャ | 実装 | 説明 |
@@ -289,9 +374,11 @@ fn main() {
 | `encode_query` | `encode_query(pairs: List[(String, String)]) -> String` | `encodeURIComponent` でつないだクエリ（`q=%E6%9D%B1&page=2`） |
 | `require_ok` | `require_ok(res: Response) -> Response fails UnexpectedStatus` | 2xx 以外を失敗にする |
 | `response` | `response(status: Int, body: String) -> Response` | ヘッダなしの応答 |
-| `SystemHttp` | `handler SystemHttp implements Http` | JS の `fetch`．リダイレクトを辿り，Cookie を覚えない．Async に依存する |
+| `SystemHttp` | `handler SystemHttp: Http` | JS の `fetch`．リダイレクトを辿り，Cookie を覚えない．Async に依存する |
 | `TestServer` | `type TestServer(respond: fn(Request, Int) -> Option[Response], sent: List[Request])` | TestHttp の相手．`respond` は要求と何回目か（0 から）を受ける |
-| `TestHttp` | `handler TestHttp implements Http` | 状態は `State[TestServer]`．`sent` に要求を足し，`respond` の応答でその場で再開する．`None` なら ConnectionFailed |
+| `TestHttp` | `handler TestHttp: Http` | 状態は `State[TestServer]`．`sent` に要求を足し，`respond` の応答でその場で再開する．`None` なら ConnectionFailed |
+
+impl（10.5）: Method，Request，Response は `derive Eq, Show`．InvalidUrl，ConnectionFailed，ResponseNotText，UnexpectedStatus は `derive Show`（main やテストまで達したときに中身を出す．14.3）．
 
 ```emel
 import Std.Http.{Http, Request, Response, TestServer, TestHttp}
@@ -321,9 +408,11 @@ platform 層と test 層（15.2）．テキスト（UTF-8）だけを扱う．�
 | `list_directory` | `suspend fn list_directory(path: String) -> List[String] fails FileNotFound \| FileAccessDenied \| NotADirectory \| FileSystemFailure` | 名前だけを名前の順（コードポイントの辞書順）に並べる |
 | `create_directory` | `suspend fn create_directory(path: String) -> () fails FileAccessDenied \| NotADirectory \| FileSystemFailure` | 親もまとめて作る．既にあれば何もしない．そのパスか途中にファイルがあれば NotADirectory |
 | `remove` | `suspend fn remove(path: String) -> () fails FileNotFound \| FileAccessDenied \| DirectoryNotEmpty \| FileSystemFailure` | ファイルか空のディレクトリを消す |
-| `SystemFileSystem` | `handler SystemFileSystem implements FileSystem` | JS の `node:fs/promises`．C は POSIX の関数を外部関数の中で同期に呼び，その場で完了する（読み書きの間はほかの fiber も止まる）．状態を持たない |
+| `SystemFileSystem` | `handler SystemFileSystem: FileSystem` | JS の `node:fs/promises`．C は POSIX の関数を外部関数の中で同期に呼び，その場で完了する（読み書きの間はほかの fiber も止まる）．状態を持たない |
 | `TestFiles` | `type TestFiles(files: List[(String, String)], directories: List[String])` | TestFileSystem の状態．files はパスの順．ファイルとディレクトリの祖先もディレクトリとみなす |
-| `TestFileSystem` | `handler TestFileSystem implements FileSystem` | `State[TestFiles]` に置き，その場で再開する．エラーは SystemFileSystem と同じ規則．FileAccessDenied，InvalidText，FileSystemFailure は起こさない |
+| `TestFileSystem` | `handler TestFileSystem: FileSystem` | `State[TestFiles]` に置き，その場で再開する．エラーは SystemFileSystem と同じ規則．FileAccessDenied，InvalidText，FileSystemFailure は起こさない |
+
+impl（10.5）: TestFiles は `derive Eq, Show`．error はどれも `derive Show`（main やテストまで達したときに中身を出す．14.3）．
 
 ```emel
 import Std.FileSystem.{FileSystem, FileNotFound}
@@ -474,7 +563,7 @@ fn waits() {
 - `List.tail([])` は `[]` を返す（仕様 17.5 の例 `[x, ..List.tail(xs)]` に合わせた）．`head` と `get` は Option
 - 高階関数の引数名はすべて `f`．`List.filter(xs, keep: …)` のような意味のある名前にする案もある
 - シフト量が負なら defect，幅以上は全部のビットを押し出した値．JS や WASM のように幅で剰余を取る方式は採らなかった
-- 数値の `min` / `max` / `abs` / `compare` はまだ入れていない
+- `Int` と `Float` に `min` / `max` / `abs` / `compare`，`Float` に `is_nan` を用意した
 - Console の操作は `print_line` と `print_error_line` の2つにした．改行なしの `print` や，入力の読み取りはまだ入れていない
 - Instant と Duration の単位はミリ秒にした（JS の `Date.now()` に合わせた）．ナノ秒にすると Int64 で ±292 年になる
 - `Instant.from_unix_milliseconds` は公開した．テストの固定の時刻や，利用者の書く Clock のハンドラが Instant を作れるように．現在の時点を取れるのは Clock だけ

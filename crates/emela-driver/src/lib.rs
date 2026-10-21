@@ -7,29 +7,35 @@ mod actions;
 mod c;
 pub mod code;
 mod complete;
+mod dependencies;
+pub use dependencies::check_dependency_targets;
 mod diagnostic;
 mod doc;
 mod embedded;
 mod embedded_board;
+mod documentation;
 mod fmt;
 mod frontend;
 mod hints;
+mod host_files;
 mod hover;
 mod internal;
 mod js;
 mod nav;
 mod output;
 mod pipeline;
+mod pome;
 mod render;
 mod run;
 mod signature;
 mod source;
+mod structure;
 mod target;
 mod testing;
 mod tokens;
 mod wasm;
 
-pub use actions::CodeAction;
+pub use actions::{CodeAction, CodeActionKind};
 pub use c::{C_ENTRY_FILE, C_EXECUTABLE, CC_ENV, CoreC, build_executable, cc_command, run_native};
 pub use complete::{Completion, CompletionKind};
 pub use diagnostic::{Diagnostic, HELP_PREFIX, Label, Location, Severity, Span, error_count};
@@ -47,13 +53,17 @@ pub use frontend::{Lower, ParseOnly, Resolve, Typecheck, TypedProgram};
 pub use hints::{HintKind, InlayHint};
 pub use hover::HoverInfo;
 pub use js::{CoreJs, JS_ENTRY_FILE};
-pub use nav::{DocumentSymbol, NavTarget, RenameError, SymbolKind, document_symbols};
+pub use nav::{
+    DocumentSymbol, NavTarget, RenameError, SymbolKind, WorkspaceSymbol, document_symbols,
+    workspace_symbols,
+};
 pub use output::{BuildOutput, OutputFile, write_files, write_output};
 pub use pipeline::{
-    Analysis, Backend, C_EMBEDDED_OUT_DIR, C_OUT_DIR, CORE_DIR, Checked, CoreSource, DOC_OUT_DIR,
-    ENTRY_FILE, Frontend, Input, JS_OUT_DIR, LexOnly, NoJsBackend, Parsed, RunOptions, Runner,
-    SOURCE_DIR, WASM_OUT_DIR, build, check, run,
+    Analysis, Backend, C_EMBEDDED_OUT_DIR, C_OUT_DIR, CORE_DIR, Checked, CoreSource, DOC_OUT_DIR, Dependencies,
+    DependencyPome, DependencyRef, ENTRY_FILE, Frontend, Input, JS_OUT_DIR, LexOnly, NoJsBackend,
+    Parsed, RunOptions, Runner, SOURCE_DIR, TEST_DIR, WASM_OUT_DIR, build, check, run,
 };
+pub use pome::project_dependencies;
 pub use render::{render, render_one, summary};
 pub use run::{
     DEFECT_EXIT_CODE, DEFECT_NAME, ERROR_EXIT_CODE, FAIL_KEY, INTERRUPTED_EXIT_CODE, NODE_ENV,
@@ -61,6 +71,7 @@ pub use run::{
 };
 pub use signature::SignatureInfo;
 pub use source::{FileId, FileSystem, MemoryFiles, SourceDb, SourceFile};
+pub use structure::{FoldKind, FoldRange, folding_ranges, selection_ranges};
 pub use target::{Target, project_target};
 pub use testing::{
     C_EMBEDDED_TEST_OUT_DIR, C_TEST_OUT_DIR, JS_TEST_ENTRY_FILE, JS_TEST_OUT_DIR, LowerTests,

@@ -144,7 +144,7 @@ effect Greet {
   fn hello(name: String) -> String
 }
 
-handler Hi implements Greet {
+handler Hi: Greet {
   fn hello(name) { "hi #{name}" }
 }
 
@@ -264,7 +264,7 @@ effect Counter {
   fn add() -> ()
 }
 
-handler CounterHandler implements Counter {
+handler CounterHandler: Counter {
   fn add() { (use State[List[String]]).update(fn(lines) { List.append(lines, ["a"]) }) }
 }
 
@@ -318,5 +318,42 @@ fn options_from_builtins() {
     assert_eq!(
         out,
         "Some(3)\nNone\nNone\nSome(\"A\")\nSome(\"\u{20AC}\")\nNone\n42\n"
+    );
+}
+
+#[test]
+fn the_scratch_area_does_not_overlap_the_static_data() {
+    // Regression: the runtime's scratch buffers used to overlap the static data (the digits of
+    // `Int64.to_string` wrote over the list-cell descriptor `String.split` uses), so dropping the
+    // split result read a corrupted descriptor and trapped. Every runtime buffer that writes to
+    // the scratch area goes first, then the operations that read the descriptors back.
+    let Some(out) = stderr(
+        "scratch-overlap",
+        "fn main() {\n  big = Int64.from_int(2147483647)\n  dbg(Int64.to_string(big * big))\n  dbg(Int.to_string(0 - 2147483647 - 1))\n  dbg(String.from_code_point(65))\n  dbg(String.split(\"a,b,c\", \",\"))\n  dbg(String.code_points(\"AB\"))\n}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out,
+        "\"4611686014132420609\"\n\"-2147483648\"\nSome(\"A\")\n\
+         [\"a\", \"b\", \"c\"]\n[65, 66]\n"
+    );
+}
+
+#[test]
+fn all_scratch_buffers_are_stepped_in_one_program() {
+    // 1 つのプログラムでスクラッチの全バッファ（WASI の iovec / 書き込みバイト数，
+    // 整数の桁，改行，Int64 の桁，JSON escape，1 コードポイントの UTF-8）を触りつつ，
+    // 静的データ（記述子など）を読み戻す。重なりがあれば #257 のように trap する.
+    let Some(out) = stderr(
+        "scratch-all",
+        "fn main() {\n  dbg(42)\n  dbg(Int.to_string(-12345))\n  big = Int64.from_int(2147483647)\n  dbg(Int64.to_string(big * big))\n  dbg(String.from_code_point(65))\n  dbg(String.split(\"a,b,c\", \",\"))\n  dbg(String.code_points(\"AB\"))\n  dbg(String.trim(\"  hi  \"))\n}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out,
+        "42\n\"-12345\"\n\"4611686014132420609\"\nSome(\"A\")\n\
+         [\"a\", \"b\", \"c\"]\n[65, 66]\n\"hi\"\n"
     );
 }

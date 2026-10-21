@@ -1,27 +1,28 @@
 # Prelude (spec 15.1). Visible from every module without an import. Only pure items go here.
 #
 # Int, Int64, Float, String, Never and List are built into the compiler, so they are not declared
-# here. So are the traits Eq, Ord, Show and Hash (spec 10.6).
+# here. So are the traits Eq, Ord and Show (spec 10.6), and their impls for the primitive
+# types and tuples. List and Option have theirs in list.emel and option.emel.
 
 ## `False` comes first so that the derived Ord gives `False < True`.
 pub enum Bool {
   False
   True
 }
-  derive Eq, Ord, Show, Hash
+  derive Eq, Ord, Show
 
+## Eq, Ord and Show are in option.emel (spec 10.6).
 pub enum Option[A] {
   Some(A)
   None
 }
-  derive Eq, Ord, Show, Hash
 
 pub enum Ordering {
   Less
   Equal
   Greater
 }
-  derive Eq, Ord, Show, Hash
+  derive Eq, Ord, Show
 
 ## Raises a defect whose description is `message`.
 @intrinsic
@@ -31,9 +32,16 @@ pub fn panic(message: String) -> Never
 @intrinsic
 pub fn todo() -> Never
 
-## Prints the value's `Show` to stderr on one line and returns the value. For debugging.
+## Prints the debug display of `value` to stderr on one line and returns the value. For
+## debugging. Any value: a type that satisfies Show is shown like `inspect`, any other as it is
+## constructed in source (`Plain(name: <a>, f: <fn>)`), its parts that satisfy Show through Show.
 @intrinsic
-pub fn dbg[A: Show](value: A) -> A
+pub fn dbg[A](value: A) -> A
+
+## The debug display of a value: its Show, with a String quoted even at the top level
+## (`inspect("a")` is `"a"` with the quotes).
+@intrinsic
+pub fn inspect[A: Show](value: A) -> String
 
 ## The input of a `parse` was not in the expected form (spec 15.3). `input` is the whole input.
-pub error ParseError(input: String)
+pub error ParseError(input: String) derive Show

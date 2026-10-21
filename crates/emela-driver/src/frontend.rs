@@ -12,7 +12,7 @@ use crate::complete::Completion;
 use crate::diagnostic::{Diagnostic, Location, error_count};
 use crate::hints::InlayHint;
 use crate::hover::HoverInfo;
-use crate::internal::check_internal;
+use crate::internal::{check_external_in_dependencies, check_internal};
 use crate::nav::{NavTarget, RenameError};
 use crate::pipeline::{Analysis, Checked, CoreSource, Frontend, Parsed};
 use crate::signature::SignatureInfo;
@@ -243,6 +243,33 @@ impl<B: BuiltinModules> Frontend for Typecheck<B> {
         self.entry_main
     }
 
+    fn document_highlights(
+        program: &TypedProgram,
+        analysis: &Analysis,
+        file: FileId,
+        offset: line_index::TextSize,
+    ) -> Vec<line_index::TextRange> {
+        crate::nav::document_highlights(program, analysis, file, offset)
+    }
+
+    fn type_definition(
+        program: &TypedProgram,
+        analysis: &Analysis,
+        file: FileId,
+        offset: line_index::TextSize,
+    ) -> Option<NavTarget> {
+        crate::nav::type_definition(program, analysis, file, offset)
+    }
+
+    fn implementations(
+        program: &TypedProgram,
+        analysis: &Analysis,
+        file: FileId,
+        offset: line_index::TextSize,
+    ) -> Vec<NavTarget> {
+        crate::nav::implementations(program, analysis, file, offset)
+    }
+
     fn definition(
         program: &TypedProgram,
         analysis: &Analysis,
@@ -343,8 +370,15 @@ impl<B: BuiltinModules> Frontend for Typecheck<B> {
         test_diagnostics.extend(ref_diagnostics);
         // Placement of `@internal` (E0229) and references from outside core (E0228).
         test_diagnostics.extend(check_internal(analysis, &hir, |m| self.parse_of(m)));
+        test_diagnostics.extend(check_external_in_dependencies(analysis, |m| {
+            self.parse_of(m)
+        }));
         // The R of main and test functions must be empty (spec 8.3, 13.3).
-        let main = analysis.entry.and_then(|entry| entry_main(&hir, entry));
+        // A library's fn named `main` is an ordinary function, not an executable boundary.
+        let main = analysis
+            .entry
+            .filter(|_| !analysis.library_only)
+            .and_then(|entry| entry_main(&hir, entry));
         self.entry_main = analysis.entry.map(|_| main.is_some());
         let options = CheckOptions {
             main,
@@ -357,6 +391,11 @@ impl<B: BuiltinModules> Frontend for Typecheck<B> {
             .iter()
             .map(|d| Diagnostic::from_type(d, &types.ty_table.cons, &analysis.files))
             .chain(test_diagnostics)
+            .chain(crate::actions::incomplete_impl_diagnostics(
+                &hir,
+                analysis,
+                |m| self.parse_of(m),
+            ))
             .collect();
         type_diagnostics.sort_by_key(|d| match &d.location {
             Some(Location::Span(span)) => (Some(span.file), span.range.start()),
@@ -374,9 +413,10 @@ impl<B: BuiltinModules> Frontend for Typecheck<B> {
 /// `emela build` and `run`.
 ///
 /// Lowering is skipped if name resolution or type checking reported any error (lowering assumes
-/// an error-free program). Only fns reachable from the fns the entry module exports are lowered.
-/// Embedded C preserves polymorphic Core so its backend can track const origins before
-/// monomorphization; other targets receive monomorphized Core.
+/// an error-free program), or for library-only directory inputs (build is only a check). Only
+/// fns reachable from the fns the entry module exports are lowered. Embedded C preserves
+/// polymorphic Core so its backend can track const origins before monomorphization; other
+/// targets receive monomorphized Core.
 pub struct Lower<B = NoBuiltins> {
     typecheck: Typecheck<B>,
     target: Target,
@@ -426,6 +466,11 @@ impl<B: BuiltinModules> Frontend for Lower<B> {
         let checked = self.typecheck.check(analysis, order);
         let mut diagnostics = checked.diagnostics;
         let program = checked.program.and_then(|typed| {
+            // Library-only builds are checks, so do not lower exports or validate backend-
+            // specific external functions. `LowerTests` still lowers the selected test roots.
+            if analysis.library_only {
+                return None;
+            }
             lower_typed(
                 analysis,
                 &typed,
@@ -443,7 +488,8 @@ impl<B: BuiltinModules> Frontend for Lower<B> {
 }
 
 /// Lowers type checking results to Core IR. Returns `None` without calling lowering if
-/// `diagnostics` has any error or there is no entry. Lowering errors are added to `diagnostics`,
+/// `diagnostics` has any error, or if there is no entry outside the tests (a project without
+/// `main.emel` and `lib.emel` still runs its tests). Lowering errors are added to `diagnostics`,
 /// returning `None`.
 ///
 /// External functions are checked (spec 12.1) for `target`, except embedded C defers these
@@ -456,7 +502,10 @@ pub(crate) fn lower_typed(
     target: Target,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<emela_core::Lowered> {
-    let entry = analysis.entry?;
+    let entry = analysis.entry;
+    if entry.is_none() && !matches!(roots, emela_core::Roots::Tests) {
+        return None;
+    }
     if error_count(diagnostics) > 0 {
         return None;
     }

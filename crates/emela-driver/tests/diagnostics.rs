@@ -4,7 +4,8 @@ use std::path::Path;
 
 use emela_driver::{
     Analysis, Checked, CoreSource, Diagnostic, FileId, Frontend, Input, LexOnly, Location, Lower,
-    MemoryFiles, ParseOnly, Parsed, Resolve, SourceDb, SourceFile, Span, Typecheck, check, render,
+    LowerTests, MemoryFiles, ParseOnly, Parsed, Resolve, SourceDb, SourceFile, Span, Target,
+    Typecheck, check, render,
 };
 use emela_resolve::{Import, ModuleId, ModuleName};
 use emela_types::{InferCtx, Prim, Ty, TyCons};
@@ -510,18 +511,18 @@ effect Clock {
   fn now() -> Int
 }
 
-handler Half implements Logger {
+handler Half: Logger {
   fn info(msg) { () }
   fn info(msg) { () }
 }
 
-handler Stamped implements Logger {
+handler Stamped: Logger {
   fn info(a, b) { (use Clock).now()
   () }
   fn warn(msg) { () }
 }
 
-handler Ticking implements Clock {
+handler Ticking: Clock {
   fn now() { (use Logger).info("tick")
   0 }
 }
@@ -579,21 +580,21 @@ fn set_timeout(ms: Int, f: fn() -> ()) -> ()
 @external(js, "./ffi.mjs", "fetchText")
 suspend fn fetch_text(url: String) -> String
 
-handler SystemClock implements Clock {
+handler SystemClock: Clock {
   suspend fn sleep(ms, resume) {
     set_timeout(ms, fn() { resume(()) })
   }
   suspend fn now(resume) { resume(0) }
 }
 
-handler Runtime implements Async {
+handler Runtime: Async {
 }
 
 effect Http {
   fn get(url: String) -> String
 }
 
-handler JsHttp implements Http {
+handler JsHttp: Http {
   fn get(url) { fetch_text(url) }
 }
 
@@ -603,7 +604,7 @@ effect Ticks {
 
 fn stamp() -> Int use { Clock } { (use Clock).now() }
 
-handler Stamped implements Ticks {
+handler Stamped: Ticks {
   fn tick() { stamp() + (use Clock).now() }
 }
 
@@ -659,25 +660,25 @@ effect Pong {
 
 fn risky() -> () fails Boom { fail Boom }
 
-handler Counter(n: Int) implements Logger {
+handler Counter(n: Int): Logger {
   init { Counter(n: 0) }
   release { risky() }
   fn info(msg) { () }
 }
 
-handler NoInit(n: Int) implements Logger {
+handler NoInit(n: Int): Logger {
   fn info(msg) { () }
 }
 
-handler Quiet implements Logger {
+handler Quiet: Logger {
   fn info(msg) { () }
 }
 
-handler HPing implements Ping {
+handler HPing: Ping {
   fn ping() { (use Pong).pong() }
 }
 
-handler HPong implements Pong {
+handler HPong: Pong {
   fn pong() { (use Ping).ping() }
 }
 
@@ -721,11 +722,11 @@ effect Raise[E] {
   fn guard(f: fn() -> () fails E) -> ()
 }
 
-handler Generic implements Cell {
+handler Generic: Cell {
   fn get() { 0 }
 }
 
-handler Zero implements Cell[Int] {
+handler Zero: Cell[Int] {
   fn get() { 0 }
 }
 
@@ -733,11 +734,11 @@ fn omitted() { (use Cell).get() }
 
 fn too_many() { (use Cell[Int, Int]).get() }
 
-handler One implements Cell[Int] {
+handler One: Cell[Int] {
   fn get() { 1 }
 }
 
-handler Empty implements Cell[String] {
+handler Empty: Cell[String] {
   fn get() { "" }
 }
 
@@ -790,11 +791,11 @@ fn wasm_now() -> Int
 @external(wasm, "env", "unused")
 fn wasm_unused() -> Int
 
-handler WasmClock implements Clock {
+handler WasmClock: Clock {
   fn now() { wasm_now() }
 }
 
-handler UnusedClock implements Clock {
+handler UnusedClock: Clock {
   fn now() { wasm_unused() }
 }
 
@@ -815,6 +816,48 @@ fn reachable_external_without_target() {
     assert_eq!(render(&analysis.diagnostics, &analysis.sources, false), "");
 }
 
+/// An entry exporting fns with trait-bounded type parameters (appendix B). `label` and `pair` are
+/// reported; `same` too although it calls no trait function; `plain` (no bound) and `user_label`
+/// (concrete types) are exported.
+const CONSTRAINED_EXPORTS: &str = r#"type User(name: String)
+
+impl User: Show {
+  fn show(self) { "User(#{self.name})" }
+}
+
+pub fn label[A: Show](x: A) -> String { Show.show(x) }
+
+pub fn pair[A, B: Show + Eq](a: A, b: B) -> B { b }
+
+pub fn same[A: Show](x: A) -> A { x }
+
+pub fn plain[A](x: A) -> A { x }
+
+pub fn user_label(u: User) -> String { label(u) }
+
+fn hidden[A: Show](x: A) -> String { Show.show(x) }
+
+fn main() { dbg(hidden(User(name: "ann"))) }
+"#;
+
+#[test]
+fn constrained_export() {
+    // The JS build exports the entry's `pub` fns from main.mjs, so a trait bound is E0327.
+    let files = [("home/main.emel", CONSTRAINED_EXPORTS)];
+    let analysis = check_files(&files, "home/main.emel", &mut Lower::default());
+    insta::assert_snapshot!(render(&analysis.diagnostics, &analysis.sources, false));
+    // check and the LSP (up to type checking) choose no target, so they do not check.
+    let analysis = check_files(&files, "home/main.emel", &mut Typecheck::default());
+    assert_eq!(render(&analysis.diagnostics, &analysis.sources, false), "");
+    // C exports only main, so the bounded fns are not roots.
+    let mut c = Lower::default().with_target(Target::C);
+    let analysis = check_files(&files, "home/main.emel", &mut c);
+    assert_eq!(render(&analysis.diagnostics, &analysis.sources, false), "");
+    // `emela test` lowers from the test functions and exports nothing.
+    let analysis = check_files(&files, "home/main.emel", &mut LowerTests::default());
+    assert_eq!(render(&analysis.diagnostics, &analysis.sources, false), "");
+}
+
 /// A handler whose `sleep` has no JS `@external`. Only operations called somewhere reachable are
 /// checked (spec 12.1), so using only `now` builds, and calling `sleep` reports `wasm_sleep`.
 const PARTIAL_HANDLER: &str = r#"effect Clock {
@@ -828,7 +871,7 @@ fn js_now() -> Int
 @external(wasm, "env", "sleep")
 fn wasm_sleep(ms: Int) -> ()
 
-handler HostClock implements Clock {
+handler HostClock: Clock {
   fn now() { js_now() }
   fn sleep(ms) { wasm_sleep(ms) }
 }
@@ -870,11 +913,11 @@ fn js_log(s: String) -> ()
 @external(wasm, "env", "log_int")
 fn wasm_log_int(n: Int) -> ()
 
-handler IntStore implements Store[Int] {
+handler IntStore: Store[Int] {
   fn put(x) { wasm_log_int(x) }
 }
 
-handler StringStore implements Store[String] {
+handler StringStore: Store[String] {
   fn put(x) { js_log(x) }
 }
 

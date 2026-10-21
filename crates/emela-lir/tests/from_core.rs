@@ -274,7 +274,7 @@ effect Pool {
   fn get() -> Int
 }
 
-handler Counted(n: Int) implements Pool {
+handler Counted(n: Int): Pool {
   init { Counted(n: 1) }
   release { dbg(self.n) }
   fn get() { self.n }
@@ -303,7 +303,7 @@ effect Log {
   fn count() -> Int
 }
 
-handler Quiet implements Log {
+handler Quiet: Log {
   fn info(msg) { () }
   fn count() { 0 }
 }
@@ -332,7 +332,7 @@ effect Clock {
   suspend fn sleep(ms: Int) -> Int
 }
 
-handler InstantClock implements Clock {
+handler InstantClock: Clock {
   suspend fn sleep(ms, resume) { resume(ms) }
 }
 
@@ -382,7 +382,7 @@ effect Wait {
   suspend fn wait() -> ()
 }
 
-handler Later implements Wait {
+handler Later: Wait {
   init { Later }
   release { (use Wait).wait() }
   suspend fn wait(resume) { resume(()) }
@@ -431,6 +431,7 @@ enum Shape {
   Named(String, List[Option[Int]]),
   Empty,
 }
+  derive Show
 
 fn main() {
   s = Named(\"a\\\"b\", [Some(1), None])
@@ -446,12 +447,14 @@ fn main() {
 fn structural_equality() {
     let m = program(
         "\
-type Point(x: Int, y: Int)
+pub type Point(x: Int, y: Int)
+  derive Eq, Show
 
 enum Tree {
   Leaf,
   Node(Tree, Point, Tree),
 }
+  derive Eq
 
 fn same(a: Tree, b: Tree) -> Bool {
   a == b

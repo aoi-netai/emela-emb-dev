@@ -5,25 +5,15 @@
 //! `dbg` and the test output, `proc_exit`). It is written with `wasm-encoder` like the rest of
 //! the module, so the backend has no external toolchain.
 //!
-//! Memory layout (see `emit.rs`): a 16-byte object header (rc, aux, descriptor, padding) then
-//! 8-byte slots. Static data (descriptors, string literals, nullary constructors, capture-less
-//! closures) has `rc == 0` and is never counted.
+//! Memory layout (see `crate::emit::layout`): a 16-byte object header (rc, aux, descriptor,
+//! padding) then 8-byte slots. Static data (descriptors, string literals, nullary constructors,
+//! capture-less closures) has `rc == 0` and is never counted.
 
 use wasm_encoder::{BlockType, InstructionSink, ValType};
 
-use super::*;
+use super::layout::{CPBUF, DIGITS, DIGITS64, IOVEC, JSONBUF, NEWLINE, NWRITTEN, PAGE};
 
-/// The scratch area below the heap: the WASI iovec and `nwritten` at 0..12, the integer digit
-/// buffers at 64.., the newline byte at 88. `HEAP_BASE` (in `emit.rs`) is above it.
-const IOVEC: u32 = 0;
-const NWRITTEN: u32 = 8;
-const DIGITS: u32 = 64;
-const NEWLINE: u32 = 88;
-const DIGITS64: u32 = 96;
-/// A short buffer for the bytes of a JSON escape (up to 6).
-const JSONBUF: u32 = 128;
-/// A buffer for encoding one code point as UTF-8 (up to 4 bytes).
-const CPBUF: u32 = 160;
+use super::*;
 
 /// A runtime function: its name and wasm signature.
 type Sig = (&'static str, &'static [ValType], &'static [ValType]);

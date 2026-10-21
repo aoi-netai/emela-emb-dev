@@ -9,22 +9,25 @@ import Std.State.{State}
 
 ## The request methods. A method not in this list cannot be sent.
 pub enum Method { Get, Head, Post, Put, Patch, Delete, Options }
+  derive Eq, Show
 
 ## A request. `headers` are sent in the written order. The body is text, sent as UTF-8.
 pub type Request(method: Method, url: String, headers: List[(String, String)], body: String)
+  derive Eq, Show
 
 ## A response. Header names are lower case and sorted by name; values of the same name are joined
 ## with `, `, except that each `set-cookie` is its own pair.
 pub type Response(status: Int, headers: List[(String, String)], body: String)
+  derive Eq, Show
 
 ## The URL cannot be read as a URL.
-pub error InvalidUrl(url: String)
+pub error InvalidUrl(url: String) derive Show
 ## No response was received (name resolution, connection, TLS, too many redirects). `message` says why.
-pub error ConnectionFailed(url: String, message: String)
+pub error ConnectionFailed(url: String, message: String) derive Show
 ## The response body is not valid UTF-8.
-pub error ResponseNotText(url: String)
+pub error ResponseNotText(url: String) derive Show
 ## The status is not 2xx (`require_ok`).
-pub error UnexpectedStatus(status: Int, body: String)
+pub error UnexpectedStatus(status: Int, body: String) derive Show
 
 ## Sends requests. 4xx and 5xx are responses, not failures; fail only when no response is received.
 pub effect Http {
@@ -61,31 +64,16 @@ pub fn header(res: Response, name: String) -> Option[String] {
 
 ## All values of the header `name` in order, compared without case.
 pub fn headers(res: Response, name: String) -> List[String] {
-  key = ascii_lower(name)
+  key = String.to_ascii_lowercase(name)
   res.headers
-    |> List.filter(fn(pair) {
-      (n, _) = pair
-      ascii_lower(n) == key
-    })
-    |> List.map(fn(pair) {
-      (_, value) = pair
-      value
-    })
-}
-
-## `s` with A to Z changed to a to z. Header names are ASCII, so other letters are left as they are.
-fn ascii_lower(s: String) -> String {
-  lower = List.map(String.code_points(s), fn(c) {
-    Option.or(String.from_code_point(if c >= 65 && c <= 90 { c + 32 } else { c }), "")
-  })
-  String.concat(lower)
+    |> List.filter(fn((n, _)) { String.to_ascii_lowercase(n) == key })
+    |> List.map(fn((_, value)) { value })
 }
 
 ## The query string of `pairs`, each part percent-encoded (`q=%E6%9D%B1&page=2`).
 pub fn encode_query(pairs: List[(String, String)]) -> String {
   pairs
-    |> List.map(fn(pair) {
-      (name, value) = pair
+    |> List.map(fn((name, value)) {
       "#{encode_uri_component(name)}=#{encode_uri_component(value)}"
     })
     |> String.join("&")
@@ -163,11 +151,10 @@ fn method_name(method: Method) -> String {
 ## The host's HTTP client (JS `fetch`). It follows redirects, keeps no cookies and ignores the
 ## proxy environment variables. Interrupting the fiber waiting on `send` aborts the request
 ## (spec 12.2).
-pub handler SystemHttp implements Http {
+pub handler SystemHttp: Http {
   suspend fn send(request, resume) {
     start = host_request(method_name(request.method), request.url, request.body)
-    req = List.fold(request.headers, from: start, f: fn(req, pair) {
-      (name, value) = pair
+    req = List.fold(request.headers, from: start, f: fn(req, (name, value)) {
       host_with_header(req, name, value)
     })
     res = host_send(req)
@@ -199,7 +186,7 @@ pub type TestServer(respond: fn(Request, Int) -> Option[Response], sent: List[Re
 ##
 ## `send` adds the request to `sent` and resumes at once. It never fails with InvalidUrl or
 ## ResponseNotText.
-pub handler TestHttp implements Http {
+pub handler TestHttp: Http {
   suspend fn send(request, resume) {
     st = use State[TestServer]
     server = st.get()

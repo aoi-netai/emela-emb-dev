@@ -108,15 +108,230 @@ pub struct ModuleData {
 #[derive(Debug, Default, Clone)]
 pub struct ModuleMap {
     modules: Arena<ModuleData>,
+    /// By the internal name: a dependency's modules are under a root name unique in the map.
     by_name: FxHashMap<ModuleName, ModuleId>,
     /// Core modules bundled with the compiler ([`ModuleMap::add_core`]).
     core: Vec<ModuleId>,
+    /// Pomes the project depends on, directly or not ([`ModuleMap::add_package`]).
+    packages: Vec<Package>,
+    package_of: FxHashMap<ModuleId, PackageId>,
+    /// The root names the project's `[dependencies]` give their Pomes.
+    project_dependencies: FxHashMap<SmolStr, PackageId>,
+    /// The root names the project's `[dev-dependencies]` give their Pomes. Only the test root
+    /// sees them (spec 4.7).
+    project_dev_dependencies: FxHashMap<SmolStr, PackageId>,
+    /// The project's modules under the test root ([`ModuleMap::add_test_root`]).
+    tests: Vec<ModuleId>,
 }
 
+/// Index of a dependency in [`ModuleMap`].
+pub type PackageId = usize;
+
+/// A Pome the project depends on (spec 4.7). Its modules import each other by their names inside
+/// the Pome (`Router`), and import their own dependencies by the root names they chose.
+#[derive(Debug, Clone)]
+pub struct Package {
+    /// The source path, for diagnostics.
+    pub name: SmolStr,
+    /// The root of the internal names of its modules (`Quince`, `Quince.Router`).
+    pub root: SmolStr,
+    /// Module names inside the Pome (`Router`, `Lib`) → modules.
+    local: FxHashMap<ModuleName, ModuleId>,
+    /// `src/lib.emel`: the module the root name itself names.
+    lib: Option<ModuleId>,
+    dependencies: FxHashMap<SmolStr, PackageId>,
+    /// Whether the project allows its `@external` (`[external] allow`, spec 4.7).
+    pub external_allowed: bool,
+}
+
+impl Package {
+    /// The names of its modules inside the Pome (`Router`, `Lib`).
+    pub fn local_names(&self) -> impl Iterator<Item = &ModuleName> {
+        self.local.keys()
+    }
+}
+
+/// The library root of a Pome (`src/lib.emel`) and its entry (`src/main.emel`), by their names
+/// inside the Pome.
+const LIB: &str = "Lib";
+const MAIN: &str = "Main";
+
 impl ModuleMap {
-    /// Looks up a module by its import path.
+    /// Looks up a module by its internal name. Import paths go through [`ModuleMap::lookup_from`].
     pub fn lookup(&self, name: &ModuleName) -> Option<ModuleId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Looks up the module an import path in `importer` names (spec 4.7): a module of the
+    /// importer's own Pome, else a module of one of its dependencies under the root name it gave
+    /// them, else a bundled core module. Dependencies of dependencies are not visible.
+    ///
+    /// The project's test root modules and `[dev-dependencies]` are visible only from the test
+    /// root (spec 13.1); [`ModuleMap::is_test_only`] tells such an import apart.
+    pub fn lookup_from(&self, importer: ModuleId, name: &ModuleName) -> Option<ModuleId> {
+        let package = self.package_of.get(&importer).map(|&p| &self.packages[p]);
+        let from_tests = self.is_test(importer);
+        let own = match package {
+            Some(p) => p.local.get(name).copied(),
+            None => self
+                .lookup(name)
+                .filter(|&id| !self.package_of.contains_key(&id))
+                .filter(|&id| from_tests || !self.is_test(id)),
+        };
+        if own.is_some() {
+            return own;
+        }
+        let (first, rest) = name.segments().split_first()?;
+        let dependency = match package {
+            Some(p) => p.dependencies.get(first),
+            None => self.project_dependencies.get(first).or_else(|| {
+                from_tests
+                    .then(|| self.project_dev_dependencies.get(first))
+                    .flatten()
+            }),
+        };
+        if let Some(&dependency) = dependency {
+            let dependency = &self.packages[dependency];
+            return match rest {
+                [] => dependency.lib,
+                [only] if only == LIB || only == MAIN => None,
+                _ => dependency
+                    .local
+                    .get(&ModuleName::new(rest.iter().cloned()))
+                    .copied(),
+            };
+        }
+        self.lookup(name).filter(|&id| self.is_core(id))
+    }
+
+    /// Whether an import that [`ModuleMap::lookup_from`] does not find names a module only the
+    /// test root may import: a module of the test root, or a `[dev-dependencies]` Pome (E0239).
+    pub fn is_test_only(&self, importer: ModuleId, name: &ModuleName) -> bool {
+        if self.package_of.contains_key(&importer) || self.is_test(importer) {
+            return false;
+        }
+        self.lookup(name).is_some_and(|id| self.is_test(id))
+            || name
+                .segments()
+                .first()
+                .is_some_and(|first| self.project_dev_dependencies.contains_key(first))
+    }
+
+    /// Whether a module is one of the project's modules under the test root.
+    pub fn is_test(&self, id: ModuleId) -> bool {
+        self.tests.contains(&id)
+    }
+
+    /// Adds the project's modules under the test root `root` (spec 4.1). They share the module
+    /// names with the source root: a name in both is a duplicate, and `main.emel` and `lib.emel`
+    /// are reserved at the top.
+    pub fn add_test_root(&mut self, fs: &dyn SourceFs, root: &Path) -> Vec<Diagnostic> {
+        let mut collector = Collector {
+            fs,
+            map: std::mem::take(self),
+            diagnostics: Vec::new(),
+            by_lowercase: FxHashMap::default(),
+            test_root: true,
+            inserted: Vec::new(),
+        };
+        collector.walk(root, &mut Vec::new());
+        *self = collector.map;
+        self.tests.extend(collector.inserted);
+        collector.diagnostics
+    }
+
+    /// The dependency a module belongs to; `None` for the project's and core modules.
+    pub fn package_of(&self, id: ModuleId) -> Option<&Package> {
+        self.package_of.get(&id).map(|&p| &self.packages[p])
+    }
+
+    pub fn package(&self, id: PackageId) -> &Package {
+        &self.packages[id]
+    }
+
+    /// Allows the `@external` of a dependency (`[external] allow`, spec 4.7).
+    pub fn allow_external(&mut self, id: PackageId) {
+        self.packages[id].external_allowed = true;
+    }
+
+    /// Whether a module belongs to a dependency, not to the project or core.
+    pub fn is_dependency(&self, id: ModuleId) -> bool {
+        self.package_of.contains_key(&id)
+    }
+
+    /// Adds the modules of a dependency whose source root is `root` (its `src`). Their internal
+    /// names are under `preferred`, or under `preferred` with a number when another module already
+    /// starts with that name. `src/main.emel` is not used (spec 4.7).
+    pub fn add_package(
+        &mut self,
+        fs: &dyn SourceFs,
+        name: SmolStr,
+        preferred: SmolStr,
+        root: &Path,
+    ) -> (PackageId, Vec<Diagnostic>) {
+        let (collected, diagnostics) = collect_modules(fs, root);
+        let taken = |map: &ModuleMap, r: &str| map.by_name.keys().any(|n| n.segments()[0] == r);
+        let mut internal = preferred.clone();
+        let mut n = 2;
+        while taken(self, &internal) {
+            internal = SmolStr::new(format!("{preferred}{n}"));
+            n += 1;
+        }
+        let id = self.packages.len();
+        let mut package = Package {
+            name,
+            root: internal.clone(),
+            local: FxHashMap::default(),
+            lib: None,
+            dependencies: FxHashMap::default(),
+            external_allowed: false,
+        };
+        for (_, data) in collected.modules.iter() {
+            let local = data.name.clone();
+            let is_lib = local.segments() == [SmolStr::new(LIB)];
+            if local.segments() == [SmolStr::new(MAIN)] {
+                continue;
+            }
+            let internal_name = if is_lib {
+                ModuleName::new([internal.clone()])
+            } else {
+                ModuleName::new(
+                    std::iter::once(internal.clone()).chain(local.segments().iter().cloned()),
+                )
+            };
+            let module = self.insert(ModuleData {
+                name: internal_name,
+                file: data.file.clone(),
+            });
+            self.package_of.insert(module, id);
+            package.local.insert(local, module);
+            if is_lib {
+                package.lib = Some(module);
+            }
+        }
+        self.packages.push(package);
+        (id, diagnostics)
+    }
+
+    /// The root names a Pome (`None` for the project) gives its dependencies.
+    pub fn set_dependencies(
+        &mut self,
+        package: Option<PackageId>,
+        dependencies: impl IntoIterator<Item = (SmolStr, PackageId)>,
+    ) {
+        let table = match package {
+            Some(p) => &mut self.packages[p].dependencies,
+            None => &mut self.project_dependencies,
+        };
+        table.extend(dependencies);
+    }
+
+    /// The root names the project's `[dev-dependencies]` give their Pomes.
+    pub fn set_dev_dependencies(
+        &mut self,
+        dependencies: impl IntoIterator<Item = (SmolStr, PackageId)>,
+    ) {
+        self.project_dev_dependencies.extend(dependencies);
     }
 
     pub fn len(&self) -> usize {
@@ -175,6 +390,8 @@ pub fn collect_modules(fs: &dyn SourceFs, root: &Path) -> (ModuleMap, Vec<Diagno
         map: ModuleMap::default(),
         diagnostics: Vec::new(),
         by_lowercase: FxHashMap::default(),
+        test_root: false,
+        inserted: Vec::new(),
     };
     collector.walk(root, &mut Vec::new());
     (collector.map, collector.diagnostics)
@@ -186,6 +403,9 @@ struct Collector<'a> {
     diagnostics: Vec<Diagnostic>,
     /// Lowercased path → the first file seen. Finds files that differ only in case.
     by_lowercase: FxHashMap<String, PathBuf>,
+    /// Walking the test root: `main.emel` and `lib.emel` are reserved at the top.
+    test_root: bool,
+    inserted: Vec<ModuleId>,
 }
 
 impl Collector<'_> {
@@ -274,7 +494,9 @@ impl Collector<'_> {
         };
         let name = ModuleName::new(prefix.iter().cloned().chain([segment]));
 
-        if prefix.is_empty() && (name.last() == PRELUDE || name.last() == STD) {
+        let reserved_in_tests = self.test_root && (name.last() == MAIN || name.last() == LIB);
+        if prefix.is_empty() && (name.last() == PRELUDE || name.last() == STD || reserved_in_tests)
+        {
             self.error(&path, DiagnosticKind::ReservedModuleName { name });
             return;
         }
@@ -292,7 +514,8 @@ impl Collector<'_> {
                 },
             );
         }
-        self.map.insert(ModuleData { name, file: path });
+        let id = self.map.insert(ModuleData { name, file: path });
+        self.inserted.push(id);
     }
 
     fn error(&mut self, file: &Path, kind: DiagnosticKind) {
@@ -460,5 +683,115 @@ mod tests {
         assert_eq!(diagnostics, []);
         let names: Vec<_> = map.iter().map(|(_, m)| m.name.to_string()).collect();
         assert_eq!(names, ["Http.Client", "Main"]);
+    }
+
+    // The project depends on quince (as `Quince`); quince depends on http (as `Web`). Both have
+    // a module named `Util`.
+    fn packages() -> (ModuleMap, ModuleId, ModuleId, ModuleId) {
+        let fs = MemoryFs::new([
+            "src/main.emel",
+            "src/util.emel",
+            "q/src/lib.emel",
+            "q/src/main.emel",
+            "q/src/router.emel",
+            "q/src/util.emel",
+            "h/src/lib.emel",
+            "h/src/client.emel",
+        ]);
+        let (mut map, _) = collect_modules(&fs, Path::new("src"));
+        let (http, _) = map.add_package(
+            &fs,
+            "github.com/acme/http".into(),
+            "Util".into(),
+            Path::new("h/src"),
+        );
+        let (quince, _) = map.add_package(
+            &fs,
+            "github.com/acme/quince".into(),
+            "Quince".into(),
+            Path::new("q/src"),
+        );
+        map.set_dependencies(None, [(SmolStr::new("Quince"), quince)]);
+        map.set_dependencies(Some(quince), [(SmolStr::new("Web"), http)]);
+        let main = map.lookup(&ModuleName::parse("Main")).unwrap();
+        let router = map.lookup(&ModuleName::parse("Quince.Router")).unwrap();
+        let client = map.lookup(&ModuleName::parse("Util2.Client")).unwrap();
+        (map, main, router, client)
+    }
+
+    #[test]
+    fn looks_up_imports_from_the_importers_pome() {
+        let (map, main, router, client) = packages();
+        let file = |id: Option<ModuleId>| id.map(|id| map[id].file.display().to_string());
+        let from = |importer, name| file(map.lookup_from(importer, &ModuleName::parse(name)));
+        // The project sees its own modules and its dependency under the root name.
+        assert_eq!(from(main, "Util").as_deref(), Some("src/util.emel"));
+        assert_eq!(from(main, "Quince").as_deref(), Some("q/src/lib.emel"));
+        assert_eq!(
+            from(main, "Quince.Router").as_deref(),
+            Some("q/src/router.emel")
+        );
+        // Not quince's entry, its `Lib` by name, or the dependency of the dependency.
+        assert_eq!(from(main, "Quince.Main"), None);
+        assert_eq!(from(main, "Quince.Lib"), None);
+        assert_eq!(from(main, "Web.Client"), None);
+        assert_eq!(from(main, "Util2.Client"), None);
+        // Inside quince, `Util` is quince's own, and http is `Web`.
+        assert_eq!(from(router, "Util").as_deref(), Some("q/src/util.emel"));
+        assert_eq!(from(router, "Lib").as_deref(), Some("q/src/lib.emel"));
+        assert_eq!(
+            from(router, "Web.Client").as_deref(),
+            Some("h/src/client.emel")
+        );
+        assert_eq!(from(router, "Quince"), None);
+        // Inside http, its own modules.
+        assert_eq!(from(client, "Lib").as_deref(), Some("h/src/lib.emel"));
+        assert!(map.is_dependency(router) && !map.is_dependency(main));
+        assert_eq!(map.package_of(client).unwrap().root, "Util2");
+    }
+
+    #[test]
+    fn the_test_root_and_dev_dependencies_are_seen_only_from_tests() {
+        let fs = MemoryFs::new([
+            "src/main.emel",
+            "src/sort.emel",
+            "test/support.emel",
+            "test/sort_test.emel",
+            "test/sort.emel",
+            "test/lib.emel",
+            "b/src/lib.emel",
+            "b/src/gen.emel",
+        ]);
+        let (mut map, _) = collect_modules(&fs, Path::new("src"));
+        let found = map.add_test_root(&fs, Path::new("test"));
+        let found: Vec<String> = found
+            .iter()
+            .map(|d| format!("{}: {d}", d.file.display()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "test/lib.emel: module name `Lib` is reserved",
+                "test/sort.emel: duplicate module `Sort` (already defined by `src/sort.emel`)",
+            ]
+        );
+        let (brix, _) = map.add_package(
+            &fs,
+            "github.com/emela-lang/brix".into(),
+            "Brix".into(),
+            Path::new("b/src"),
+        );
+        map.set_dev_dependencies([(SmolStr::new("Brix"), brix)]);
+        let id = |name: &str| map.lookup(&ModuleName::parse(name)).unwrap();
+        let (main, test) = (id("Main"), id("SortTest"));
+        let sees = |importer, name: &str| {
+            map.lookup_from(importer, &ModuleName::parse(name))
+                .is_some()
+        };
+        assert!(sees(test, "Sort") && sees(test, "Support") && sees(test, "Brix.Gen"));
+        assert!(sees(main, "Sort") && !sees(main, "Support") && !sees(main, "Brix.Gen"));
+        let test_only = |name: &str| map.is_test_only(main, &ModuleName::parse(name));
+        assert!(test_only("Support") && test_only("Brix") && test_only("Brix.Gen"));
+        assert!(!test_only("Nothing") && !map.is_test_only(test, &ModuleName::parse("Nothing")));
     }
 }

@@ -127,9 +127,11 @@ pub fn from_core_with_deriver(
         let target = sh.fn_map[i];
         sh.functions[target] = f;
     }
-    // Every error enum that the functions construct and that can be shown gets its show
-    // function, for a failure reaching the entry (spec 14.3): errors of different enums arrive
-    // there, so the backend picks the function by the value's enum at run time.
+    // Every error enum that the functions construct gets its show function, for a failure
+    // reaching the entry (spec 14.3): errors of different enums arrive there, so the backend
+    // picks the function by the value's enum at run time. An error whose type satisfies Show is
+    // shown by it (`Module::error_display`: the structure, or the impl's function); any other
+    // by its name only.
     let mut error_shows = Vec::new();
     let mut made = FxHashSet::default();
     for body in &bodies {
@@ -145,13 +147,12 @@ pub fn from_core_with_deriver(
     error_enums.sort_by_key(|&id| ix(id));
     for id in error_enums {
         let ty = sh.core.enum_type(id, Vec::new());
-        if sh
-            .deriver
-            .showable(&sh.core, ty)
-            .unwrap_or_else(|| showable(&sh.core, ty, &mut Vec::new()))
-        {
-            error_shows.push((id, sh.derived(Derive::Show, ty)));
-        }
+        let f = match sh.core.error_display.get(&id) {
+            Some(emela_core::ErrorDisplay::Structure) => sh.derived(Derive::Show, ty),
+            Some(&emela_core::ErrorDisplay::Impl(f)) => sh.fn_map[ix(f)],
+            None => sh.derived(Derive::ErrorName, ty),
+        };
+        error_shows.push((id, f));
     }
     while let Some((kind, ty, id)) = sh.pending.pop() {
         let name = sh.functions[id].name.clone();
@@ -183,38 +184,6 @@ fn constructed(e: &Expr, out: &mut FxHashSet<emela_core::EnumId>) {
     e.for_each_child(&mut |c| constructed(c, out));
 }
 
-/// Whether values of `ty` can be shown (spec 10.6): not functions, handlers and the other values
-/// the language cannot show. `seen` holds the enum types being looked at (recursive enums).
-fn showable(core: &emela_core::Module, ty: TypeId, seen: &mut Vec<TypeId>) -> bool {
-    match core.ty(ty) {
-        Type::Int
-        | Type::Int64
-        | Type::Float
-        | Type::Bool
-        | Type::String
-        | Type::Unit
-        | Type::Never => true,
-        Type::List(elem) => showable(core, *elem, seen),
-        Type::Tuple(elems) => elems.iter().all(|&t| showable(core, t, seen)),
-        Type::Enum(id, args) => {
-            if seen.contains(&ty) {
-                return true;
-            }
-            seen.push(ty);
-            let def = &core.enums[*id];
-            let ok = def.variants.iter().all(|v| {
-                v.tys.iter().all(|&t| match core.ty(t) {
-                    Type::Param(i) => args.get(*i).is_some_and(|&a| showable(core, a, seen)),
-                    _ => showable(core, t, seen),
-                })
-            });
-            seen.pop();
-            ok
-        }
-        _ => false,
-    }
-}
-
 /// Whether evaluating `e` may suspend: a suspending call or concurrency operation outside
 /// lambdas (the same test as the JS backend's for a release, spec 11.4).
 fn may_suspend(e: &Expr) -> bool {
@@ -244,6 +213,9 @@ pub enum DeriveKind {
     Show,
     /// `eq$T(a: T, b: T) -> Bool`: structural equality.
     Eq,
+    /// `name$E(x: E) -> String`: the name of an error that has a function-typed field, shown in
+    /// place of its value at the entry (spec 14.3).
+    ErrorName,
 }
 
 type Derive = DeriveKind;
@@ -272,6 +244,7 @@ impl Shared {
         let prefix = match kind {
             Derive::Show => "show",
             Derive::Eq => "eq",
+            Derive::ErrorName => "name",
         };
         let base = format!("{prefix}${}", core_ty(&self.core, ty));
         let mut name = base.clone();
@@ -1044,6 +1017,30 @@ impl<'s> Lower<'s> {
                 );
                 Ok(v)
             }
+            Builtin::DebugPrint => {
+                let v = self.expr(&args[0])?;
+                let text = v.op.unwrap_or(Operand::Const(Const::String(String::new())));
+                self.let_(
+                    TMP,
+                    TypeId::UNIT,
+                    Value::Runtime {
+                        op: RuntimeOp::DebugPrint,
+                        args: vec![text],
+                    },
+                );
+                Ok(Val {
+                    op: None,
+                    ty: TypeId::UNIT,
+                })
+            }
+            Builtin::Inspect => {
+                let v = self.expr(&args[0])?;
+                let shown = self.show(ty_args[0], v.op);
+                Ok(Val {
+                    op: Some(shown),
+                    ty: TypeId::STRING,
+                })
+            }
             Builtin::Panic => {
                 let v = self.expr(&args[0])?;
                 let msg = v.op.unwrap_or(Operand::Const(Const::String(String::new())));
@@ -1056,6 +1053,12 @@ impl<'s> Lower<'s> {
                 ))));
                 Err(Div)
             }
+            Builtin::ShowString => {
+                let v = self.expr(&args[0])?;
+                let shown = self.show(TypeId::STRING, v.op);
+                self.val(Some(shown), TypeId::STRING)
+            }
+            Builtin::ShowNested => unreachable!("monomorphization replaces String.show_nested"),
             Builtin::CellNew | Builtin::CellGet | Builtin::CellSet => {
                 // A cell is a container: its `()` contents keep a slot.
                 let args = self.slots(args)?;
@@ -1395,29 +1398,21 @@ impl<'s> Lower<'s> {
                 let l = self.expr(lhs)?;
                 let r = self.expr(rhs)?;
                 let (test, _) = self.binop(*op, *op_ty, &l, &r);
-                let then = self.empty();
-                self.open();
-                let left = self.show(*ty, l.op.clone());
-                let right = self.show(*ty, r.op.clone());
-                let head = if a.text.is_empty() {
-                    format!("left {} right", op_text(*op))
-                } else {
-                    a.text.clone()
-                };
-                let msg = self.concat(vec![
-                    Piece::Text(format!("assertion failed: {head}\n  left: ")),
-                    Piece::Op(left),
-                    Piece::Text("\n right: ".into()),
-                    Piece::Op(right),
-                ]);
-                self.term(Term::Defect(msg));
-                let else_ = self.close();
-                self.push(Stmt::If {
-                    dst: None,
-                    cond: test,
-                    then,
-                    else_,
-                });
+                self.assert_compare(a, *op, *ty, test, l, r);
+            }
+            // The sides are variables bound before, so reading them after `cond` changes nothing.
+            AssertCond::Shown {
+                cond,
+                op,
+                ty,
+                lhs,
+                rhs,
+            } => {
+                let v = self.expr(cond)?;
+                let test = v.op.unwrap_or(Operand::Const(Const::Bool(false)));
+                let l = self.expr(lhs)?;
+                let r = self.expr(rhs)?;
+                self.assert_compare(a, *op, *ty, test, l, r);
             }
             AssertCond::Bool(c) => {
                 let v = self.expr(c)?;
@@ -1443,6 +1438,33 @@ impl<'s> Lower<'s> {
             op: None,
             ty: TypeId::UNIT,
         })
+    }
+
+    /// Unless `test`, a defect showing both sides `l` and `r` (spec 13.2).
+    fn assert_compare(&mut self, a: &Assert, op: BinOp, ty: TypeId, test: Operand, l: Val, r: Val) {
+        let then = self.empty();
+        self.open();
+        let left = self.show(ty, l.op);
+        let right = self.show(ty, r.op);
+        let head = if a.text.is_empty() {
+            format!("left {} right", op_text(op))
+        } else {
+            a.text.clone()
+        };
+        let msg = self.concat(vec![
+            Piece::Text(format!("assertion failed: {head}\n  left: ")),
+            Piece::Op(left),
+            Piece::Text("\n right: ".into()),
+            Piece::Op(right),
+        ]);
+        self.term(Term::Defect(msg));
+        let else_ = self.close();
+        self.push(Stmt::If {
+            dst: None,
+            cond: test,
+            then,
+            else_,
+        });
     }
 
     /// String interpolation: the values left to right, then the string. A String is embedded as

@@ -10,7 +10,7 @@
 
 use crate::sparse::SparseMap;
 use emela_resolve::hir::{
-    Arg, Arm, BinaryOp, Block, DefId, DefKind, DefModule, ExprId, ExprKind, FnItem, HandlerItem,
+    Arg, Arm, BinaryOp, Block, DefId, DefKind, DefModule, ExprId, ExprKind, FnSig, HandlerItem,
     Item, Label, ListRest, Literal, LocalId, Param, PatArg, PatId, PatKind, Program, Res, Span,
     Stmt, StrPart, TypeId, UnaryOp, int_literal_value,
 };
@@ -29,6 +29,7 @@ use crate::lower::{
 };
 use crate::row::{Row, RowElem, RowVar, Tag};
 use crate::signature::{FnParams, Signature, Signatures, param_labels};
+use crate::traits::Traits;
 use crate::ty::{ParamKind, Prim, Ty, TyParam, TyVar};
 
 mod capabilities;
@@ -125,6 +126,11 @@ pub(crate) struct BodyInfer<'a> {
     type_params: Vec<DefId>,
     /// Kinds of the fn's type parameters, in the same order as `type_params`.
     param_kinds: Vec<ParamKind>,
+    /// What `Self` stands for in the definition being inferred: the impl's type in an impl's
+    /// function, `Bound(0)` in a trait's default implementation.
+    self_ty: Option<Ty>,
+    /// Supertraits and impls.
+    traits: &'a Traits,
     ctx: InferCtx,
     /// Monomorphic types and type parameters (written and invisible set ones) of the group's
     /// definitions without declared types. Generalized once the group is inferred.
@@ -185,8 +191,50 @@ pub(crate) struct BodyInfer<'a> {
     with_handlers: SparseMap<ExprId, crate::layer::WithInfo>,
     /// Effect sets required to be `Immediate` (`body/suspend.rs`).
     immediates: Vec<ImmediateObligation>,
+    /// Types required to satisfy a trait by the constraints of instantiated type parameters,
+    /// checked once the group's types are settled ([`Self::check_traits`]).
+    trait_obligations: Vec<TraitObligation>,
+    /// The `Self` of referenced trait functions that only the result type determines, checked
+    /// to be known once the group's types are settled ([`Self::check_known_selves`]).
+    self_obligations: Vec<SelfObligation>,
     /// Set variables that get an `Immediate` bound when generalized.
     immediate_vars: rustc_hash::FxHashSet<RowVar>,
+}
+
+/// The parameters and body of a function definition: a top-level fn, a trait's function or an
+/// impl's function.
+pub(crate) struct FnParts<'p> {
+    pub(crate) params: &'p [Param],
+    pub(crate) body: Option<ExprId>,
+    /// The declaration the type comes from: the trait function's for an impl function. `None`
+    /// for the Prelude's traits, which have no source.
+    pub(crate) sig: Option<&'p FnSig>,
+}
+
+pub(crate) fn fn_parts(program: &Program, def: DefId) -> Option<FnParts<'_>> {
+    match program.item(def) {
+        Some(Item::Fn(item) | Item::TraitFn(item)) => Some(FnParts {
+            params: &item.sig.params,
+            body: item.body,
+            sig: Some(&item.sig),
+        }),
+        Some(_) => None,
+        None => {
+            let (_, f) = program.impl_fn(def)?;
+            let sig = match f.trait_fn {
+                Res::Def(t) => match program.item(t) {
+                    Some(Item::TraitFn(item)) => Some(&item.sig),
+                    _ => None,
+                },
+                _ => None,
+            };
+            Some(FnParts {
+                params: &f.params,
+                body: f.body,
+                sig,
+            })
+        }
+    }
 }
 
 impl<'a> BodyInfer<'a> {
@@ -197,6 +245,7 @@ impl<'a> BodyInfer<'a> {
         handler_facts: HandlerFacts<'a>,
         closed: &'a FxHashMap<DefId, EffectContext>,
         fibers: &'a Fibers,
+        traits: &'a Traits,
     ) -> Self {
         let mut ctx = InferCtx::new();
         ctx.set_error_tags(ty_table.error_tags());
@@ -211,6 +260,8 @@ impl<'a> BodyInfer<'a> {
             module: DefModule::Prelude,
             type_params: Vec::new(),
             param_kinds: Vec::new(),
+            self_ty: None,
+            traits,
             ctx,
             pending: Vec::new(),
             defs: Vec::new(),
@@ -240,6 +291,8 @@ impl<'a> BodyInfer<'a> {
             withs: Vec::new(),
             with_handlers: SparseMap::new(),
             immediates: Vec::new(),
+            trait_obligations: Vec::new(),
+            self_obligations: Vec::new(),
             immediate_vars: Default::default(),
         }
     }
@@ -248,12 +301,32 @@ impl<'a> BodyInfer<'a> {
     fn enter(&mut self, def: DefId) {
         self.current = Some(def);
         self.module = self.program.defs[def].module.clone();
+        self.self_ty = None;
         (self.type_params, self.param_kinds) = match self.program.item(def) {
             Some(Item::Fn(item)) => {
                 let params = FnParams::new(self.program, self.ty_table, item);
                 (params.defs, params.kinds)
             }
-            _ => (Vec::new(), Vec::new()),
+            Some(Item::TraitFn(item)) => {
+                let trait_def = self.program.defs[def].parent;
+                let params = FnParams::with_self(self.program, self.ty_table, item, trait_def);
+                self.self_ty = params.self_ty.clone();
+                (params.defs, params.kinds)
+            }
+            // The impl's type parameters can be named in its functions; the trait function's own
+            // cannot.
+            _ => match self.program.impl_fn(def) {
+                Some((impl_def, _)) => {
+                    let defs: Vec<DefId> = match self.program.item(impl_def) {
+                        Some(Item::Impl(i)) => i.type_params.iter().map(|tp| tp.def).collect(),
+                        _ => Vec::new(),
+                    };
+                    self.self_ty = self.traits.head(impl_def).map(|h| h.self_ty.clone());
+                    let kinds = vec![ParamKind::Type; defs.len()];
+                    (defs, kinds)
+                }
+                None => (Vec::new(), Vec::new()),
+            },
         };
     }
 
@@ -345,21 +418,35 @@ impl<'a> BodyInfer<'a> {
             },
         };
         match program.item(def) {
-            Some(Item::Fn(item)) => self.infer_fn(item, &declared),
             Some(Item::Const(item)) => self.check_expr(item.value, &declared),
-            _ => {}
+            _ => {
+                if let Some(parts) = fn_parts(program, def) {
+                    let in_impl = program.defs[def].kind == DefKind::ImplFn;
+                    self.infer_fn(parts.params, parts.body, &declared, in_impl);
+                }
+            }
         }
     }
 
-    /// `declared` is the fn's type.
-    fn infer_fn(&mut self, item: &FnItem, declared: &Ty) {
+    /// `declared` is the fn's type. An impl's function (`in_impl`) may write parameter types; they
+    /// must be the trait's (spec 10.2). A parameter beyond the declared ones has a broken type
+    /// (E0332 is reported with the impl).
+    fn infer_fn(&mut self, params: &[Param], body: Option<ExprId>, declared: &Ty, in_impl: bool) {
         let Ty::Fn(f) = declared else {
             return;
         };
-        for (p, ty) in item.sig.params.iter().zip(&f.params) {
-            self.set_local(p.local, ty.clone());
+        for (i, p) in params.iter().enumerate() {
+            let ty = f.params.get(i).cloned().unwrap_or(Ty::Error);
+            if in_impl && let Some(written) = p.ty {
+                let written_ty = self.lower_type(written);
+                let span = self.program.types[written]
+                    .span
+                    .unwrap_or(self.program.locals[p.local].span);
+                self.coerce_at(span, &ty, &written_ty);
+            }
+            self.set_local(p.local, ty);
         }
-        if let Some(body) = item.body {
+        if let Some(body) = body {
             self.check_expr(body, &f.ret);
         }
     }
@@ -491,7 +578,7 @@ impl<'a> BodyInfer<'a> {
                 });
             }
             let suspend = hop.is_suspend;
-            // Effect type parameters are replaced with the types written in `implements`
+            // Effect type parameters are replaced with the types written in the handler head
             // (spec 8.1).
             let f = match op
                 .and_then(|op| self.sigs.get(op))
@@ -687,6 +774,8 @@ impl<'a> BodyInfer<'a> {
             }
         }
         self.check_numbers();
+        self.check_known_selves();
+        self.check_traits();
         // Compute and solve the error and effect sets (`body/errors.rs`, `body/effects.rs`).
         self.infer_errors();
         self.infer_effects();
@@ -838,8 +927,9 @@ impl<'a> BodyInfer<'a> {
             ExprKind::Interpolated(parts) => {
                 for part in parts {
                     if let StrPart::Interp(expr) = part {
-                        // Whether it satisfies Show is checked in the trait stage.
-                        self.infer_expr(*expr);
+                        let ty = self.infer_expr(*expr);
+                        let span = program.exprs[*expr].span;
+                        self.require_prelude_trait(&ty, "Show", span);
                     }
                 }
                 Ty::STRING
@@ -896,6 +986,7 @@ impl<'a> BodyInfer<'a> {
                     kinds: &self.param_kinds,
                     omitted: Omitted::Empty,
                     sets: true,
+                    self_ty: self.self_ty.as_ref(),
                 };
                 match self.ty_table.effect_tag(
                     program,
@@ -1036,6 +1127,8 @@ impl<'a> BodyInfer<'a> {
         if let Some(sig) = sigs.get(def) {
             let (tys, rows) = self.ctx.fresh_args(&sig.scheme.params);
             self.require_immediate(def, &sig.scheme.params, &rows, span);
+            self.require_traits(&sig.scheme.params, &tys, span);
+            self.require_known_self(def, &sig.scheme, &tys, span);
             return (substitute(&sig.scheme.ty, &tys, &rows), tys, rows);
         }
         if let Some((ty, params)) = self.pending_ty(def) {
@@ -1050,6 +1143,7 @@ impl<'a> BodyInfer<'a> {
             let ty = self.ctx.resolve(&ty);
             let (args, rows) = self.ctx.fresh_args(&params);
             self.require_immediate(def, &params, &rows, span);
+            self.require_traits(&params, &args, span);
             let mut fresh = FxHashMap::default();
             let instance = self.freshen(&substitute(&ty, &args, &rows), &mut fresh);
             self.deferred.push(DeferredRef {
@@ -1061,7 +1155,7 @@ impl<'a> BodyInfer<'a> {
             });
             return (instance, args, rows);
         }
-        // Kinds of definitions not typed yet (trait functions, effect operations, ...).
+        // Kinds of definitions not typed yet (effect operations referred to by name, ...).
         self.diags.push(Diagnostic {
             span: Some(span),
             kind: DiagnosticKind::Unsupported {
@@ -1069,6 +1163,107 @@ impl<'a> BodyInfer<'a> {
             },
         });
         (Ty::Error, Vec::new(), Vec::new())
+    }
+
+    /// Remembers the trait constraints of the type parameters `params` instantiated with `tys`
+    /// at `span`, to check once types are settled.
+    fn require_traits(&mut self, params: &[TyParam], tys: &[Ty], span: Span) {
+        for (p, ty) in params.iter().zip(tys) {
+            for &trait_def in &p.traits {
+                self.trait_obligations.push(TraitObligation {
+                    ty: ty.clone(),
+                    trait_def,
+                    span,
+                    owner: self.current,
+                    float_ok: false,
+                });
+            }
+        }
+    }
+
+    /// Remembers that `ty` must satisfy the Prelude's trait `name` at `span`: the operand of
+    /// `==` (Eq) or a comparison (Ord, Float aside), or an interpolated value (Show) (spec 10.3).
+    fn require_prelude_trait(&mut self, ty: &Ty, name: &str, span: Span) {
+        let Some(trait_def) = self.program.prelude_def(name) else {
+            return;
+        };
+        self.trait_obligations.push(TraitObligation {
+            ty: ty.clone(),
+            trait_def,
+            span,
+            owner: self.current,
+            float_ok: name == "Ord",
+        });
+    }
+
+    /// Remembers the `Self` of a trait function whose parameters do not mention `Self`
+    /// (`Parse.parse`): only the result type picks the impl, so it must be known once the group is
+    /// inferred (E0333, spec 10.3).
+    fn require_known_self(&mut self, def: DefId, scheme: &crate::Scheme, tys: &[Ty], span: Span) {
+        let program = self.program;
+        if program.defs[def].kind != DefKind::TraitFn {
+            return;
+        }
+        let (Some(self_ty), Some(param), Ty::Fn(f)) =
+            (tys.first(), scheme.params.first(), &scheme.ty)
+        else {
+            return;
+        };
+        let Some(&trait_def) = param.traits.first() else {
+            return;
+        };
+        if f.params.iter().any(|p| mentions_bound(p, 0)) {
+            return;
+        }
+        self.self_obligations.push(SelfObligation {
+            ty: self_ty.clone(),
+            trait_def,
+            span,
+        });
+    }
+
+    /// Reports the `Self` of trait functions left undetermined (E0333, spec 10.3). No type is
+    /// chosen by default.
+    fn check_known_selves(&mut self) {
+        let program = self.program;
+        for o in std::mem::take(&mut self.self_obligations) {
+            if let Ty::Var(_) = self.ctx.resolve(&o.ty) {
+                self.diags.push(Diagnostic {
+                    span: Some(o.span),
+                    kind: DiagnosticKind::AmbiguousSelf {
+                        trait_name: program.defs[o.trait_def].name.clone(),
+                    },
+                });
+            }
+        }
+    }
+
+    /// Checks the trait constraints remembered at references (E0326, spec 10.3). A type
+    /// parameter of the definition with the reference satisfies what its own constraints imply,
+    /// supertraits included.
+    fn check_traits(&mut self) {
+        let program = self.program;
+        for o in std::mem::take(&mut self.trait_obligations) {
+            let ty = self.ctx.resolve(&o.ty);
+            if o.float_ok && ty == Ty::FLOAT {
+                continue;
+            }
+            let env = o.owner.map(|d| self.def_params(d)).unwrap_or_default();
+            if let Err(e) = self
+                .traits
+                .satisfies(program, self.ty_table, &ty, o.trait_def, &env)
+            {
+                // Unsolved sets (`fails ?e1`) of a function type say nothing here.
+                let e = crate::traits::Unsatisfied {
+                    ty: without_set_vars(&e.ty),
+                    ..e
+                };
+                self.diags.push(Diagnostic {
+                    span: Some(o.span),
+                    kind: crate::traits::not_implemented(program, self.ty_table, &e, &env),
+                });
+            }
+        }
     }
 
     /// Reorders the arguments by parameter position, then checks types (spec 6.2). `expr` is
@@ -1200,8 +1395,8 @@ impl<'a> BodyInfer<'a> {
                 self.require_numeric(&ty, span);
                 ty
             }
-            // Comparison: both sides have the same type. Eq and Ord are checked in the trait
-            // stage.
+            // Comparison: both sides have the same type, which satisfies Eq (`==`, `!=`) or Ord
+            // (spec 10.3). Float's ordering operators are built in (spec 10.6).
             BinaryOp::Eq
             | BinaryOp::Ne
             | BinaryOp::Lt
@@ -1210,6 +1405,12 @@ impl<'a> BodyInfer<'a> {
             | BinaryOp::Ge => {
                 let ty = self.infer_expr(lhs);
                 self.check_expr(rhs, &ty);
+                let name = if matches!(op, BinaryOp::Eq | BinaryOp::Ne) {
+                    "Eq"
+                } else {
+                    "Ord"
+                };
+                self.require_prelude_trait(&ty, name, span);
                 Ty::BOOL
             }
             // Logical: both sides are Bool.
@@ -1729,6 +1930,7 @@ impl<'a> BodyInfer<'a> {
             kinds: &self.param_kinds,
             omitted: Omitted::Fresh(&mut self.ctx),
             sets: true,
+            self_ty: self.self_ty.as_ref(),
         };
         self.ty_table
             .lower_in(self.program, &mut scope, ty, true, &mut self.diags)
@@ -2117,6 +2319,56 @@ struct ImmediateObligation {
     /// The referenced definition (`RowElem::Bound` in `row` refers to its type parameters).
     owner: Option<DefId>,
     source: crate::diagnostic::ImmediateSource,
+}
+
+/// A type that must satisfy a trait: the instantiation of a constrained type parameter at a
+/// reference (`[A: Ord]`, spec 10.3).
+/// `ty` with the set variables left out of its function types' E and R, for messages.
+fn without_set_vars(ty: &Ty) -> Ty {
+    let ty = ty.map_children(without_set_vars);
+    match ty {
+        Ty::Fn(mut f) => {
+            let keep = |e: &RowElem| match e {
+                RowElem::Var(_) => Row::empty(),
+                e => Row::from_elems([e.clone()]),
+            };
+            f.fails = f.fails.flat_map(keep);
+            f.uses = f.uses.flat_map(keep);
+            Ty::Fn(f)
+        }
+        ty => ty,
+    }
+}
+
+struct TraitObligation {
+    ty: Ty,
+    trait_def: DefId,
+    /// The span of the reference.
+    span: Span,
+    /// The definition whose body has the reference; `Ty::Bound(i)` in `ty` is its type
+    /// parameter.
+    owner: Option<DefId>,
+    /// A Float passes: the operand of a comparison, which is the built-in IEEE 754 operator on
+    /// Float rather than Ord (spec 10.6).
+    float_ok: bool,
+}
+
+/// The `Self` of a trait function determined only by its result type (E0333).
+struct SelfObligation {
+    ty: Ty,
+    trait_def: DefId,
+    /// The span of the reference.
+    span: Span,
+}
+
+/// Whether `ty` mentions the type parameter `Ty::Bound(index)`.
+fn mentions_bound(ty: &Ty, index: u32) -> bool {
+    if let Ty::Bound(i) = ty {
+        return *i == index;
+    }
+    let mut found = false;
+    ty.for_each_child(|child| found |= mentions_bound(child, index));
+    found
 }
 
 /// A reference within the group to a definition without a declared type but with written type

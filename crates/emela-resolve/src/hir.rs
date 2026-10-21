@@ -57,6 +57,8 @@ pub enum DefKind {
     /// A trait function.
     TraitFn,
     Impl,
+    /// A function of an impl ([`ImplFn`]).
+    ImplFn,
     /// An uppercase name (`A`) or a type name (`Item`).
     TypeParam,
     /// `Int`, `String`, `List`, ...
@@ -80,6 +82,7 @@ impl DefKind {
             DefKind::Trait => "trait",
             DefKind::TraitFn => "trait function",
             DefKind::Impl => "impl",
+            DefKind::ImplFn => "impl function",
             DefKind::TypeParam => "type parameter",
             DefKind::BuiltinType => "type",
         }
@@ -109,6 +112,10 @@ pub enum LocalKind {
     /// `self`. Written as a parameter in impls and traits; implicit in handlers.
     SelfParam,
     LambdaParam,
+    /// The parameter in place of a pattern of a lambda (`fn((a, b)) { ... }`, spec 6.1). It has
+    /// no name in scope; the body starts with a binding of the pattern to it. The name is the
+    /// pattern's text, for display.
+    PatParam,
     /// A binding `x = ...` and the variables in its pattern.
     Binding,
     /// Variables in the patterns of match and escape arms.
@@ -539,6 +546,8 @@ pub struct CtorItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorItem {
     pub fields: Fields,
+    /// `error DbError(message: String) derive Show` (spec 7.1, 10.5).
+    pub derives: Vec<(Res, Span)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -580,9 +589,9 @@ pub struct OpItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandlerItem {
-    /// The effect after `implements`.
+    /// The effect after `:`.
     pub effect: Res,
-    /// Its type arguments (the `Int` of `implements State[Int]`, spec 8.1).
+    /// Its type arguments (the `Int` of `handler H: State[Int]`, spec 8.1).
     pub effect_args: Vec<TypeId>,
     pub fields: Vec<FieldDef>,
     /// The constructor when there are fields, used in `init`.
@@ -622,13 +631,22 @@ pub struct TraitItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplItem {
     pub trait_ref: Res,
+    /// The type parameters in the head (`K` and `V` of `impl Map[K: Eq, V: Eq]: Eq`, spec 10.2).
+    pub type_params: Vec<TypeParam>,
+    /// The type before `:`, applied to the type parameters (`Map[K, V]`).
     pub self_ty: Option<TypeId>,
+    /// The head is not a type name with distinct type parameters (E0328, reported by name
+    /// resolution). Type checking skips the impl's head.
+    pub malformed_head: bool,
     pub fns: Vec<ImplFn>,
 }
 
 /// The signature comes from the trait declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplFn {
+    /// A [`DefKind::ImplFn`] whose parent is the impl. Not in any namespace: it is called through
+    /// the trait function (`Show.show`), and monomorphization picks it (spec 10.3).
+    pub def: DefId,
     pub name: Label,
     /// The trait function implemented.
     pub trait_fn: Res,
@@ -661,6 +679,9 @@ pub struct ModuleItems {
     pub name: ModuleName,
     /// In source order.
     pub items: Vec<DefId>,
+    /// A core module bundled with the compiler (`ModuleMap::is_core`). Its impls of the Prelude's
+    /// traits for the Prelude's types are the built-in impls (spec 10.6).
+    pub is_core: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -700,6 +721,18 @@ impl Program {
 
     pub fn item(&self, def: DefId) -> Option<&Item> {
         self.items.get(def)
+    }
+
+    /// The impl of a [`DefKind::ImplFn`] and the function. `None` for other definitions.
+    pub fn impl_fn(&self, def: DefId) -> Option<(DefId, &ImplFn)> {
+        if self.defs[def].kind != DefKind::ImplFn {
+            return None;
+        }
+        let parent = self.defs[def].parent?;
+        let Some(Item::Impl(item)) = self.item(parent) else {
+            return None;
+        };
+        item.fns.iter().find(|f| f.def == def).map(|f| (parent, f))
     }
 
     /// The effect a label stands for (`Console` for `effect AuditLog of Console`). `None` for

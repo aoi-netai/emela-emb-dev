@@ -394,6 +394,32 @@ fn run_source_in(name: &str, main: &str, frontend: &mut Lower, node: PathBuf) ->
 }
 
 #[test]
+fn const_self_reference_in_if_match_and_through_function_is_a_defect() {
+    let cases = [
+        (
+            "const-self-if",
+            "const A: Int = if True { A } else { 0 }\nfn main() { dbg(A) }\n",
+        ),
+        (
+            "const-self-match",
+            "const A: Int = True match {\n  True -> A\n  False -> 0\n}\nfn main() { dbg(A) }\n",
+        ),
+        (
+            "const-self-indirect",
+            "const A: Int = if True { value() } else { 0 }\nfn value() -> Int { A }\nfn main() { dbg(A) }\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let output = run_source(name, source);
+        assert_eq!(
+            text(&output.stderr),
+            "defect: const A refers to itself while being evaluated\n"
+        );
+        assert_eq!(output.code, DEFECT_EXIT_CODE);
+    }
+}
+
+#[test]
 fn run_without_main_stops_before_node() {
     // Without main in the entry, run stops with E0230 and does not start node (spec 8.3). Starting
     // it would add a "node not found" diagnostic, so a missing node is passed to check that.
@@ -576,7 +602,7 @@ fn unhandled_error_exits_with_1() {
     let output = run_source(
         "lower-fail",
         "\
-error NotFound(id: Int)
+error NotFound(id: Int) derive Show
 error Unauthorized
 
 fn find(id: Int) -> Int fails NotFound | Unauthorized {
@@ -610,15 +636,27 @@ fn main() {
 
 #[test]
 fn errors_are_values_and_escape_recovers() {
-    // Error values are ordinary values, shown by interpolation and dbg (spec 7.1, 10.6). An error
-    // caught by escape becomes a normal value, and an uncaught one propagates. Errors inside arms
-    // propagate too (spec 7.3, 14.3).
+    // Error values are ordinary values, shown by interpolation through Show and by dbg (spec 7.1,
+    // 10.6). An error caught by escape becomes a normal value, and an uncaught one propagates.
+    // Errors inside arms propagate too (spec 7.3, 14.3).
     let output = run_source(
         "lower-escape",
         "\
 error NotFound(id: Int)
 error DbError(message: String)
 error Unavailable(reason: String)
+
+impl NotFound: Show {
+  fn show(self) { \"NotFound(id: #{self.id})\" }
+}
+
+impl NotFound: Eq {
+  fn eq(self, other) { self.id == other.id }
+}
+
+impl DbError: Show {
+  fn show(self) { \"DbError(message: \\\"#{self.message}\\\")\" }
+}
 
 fn load(id: Int) -> String fails NotFound | DbError {
   if id < 0 { fail DbError(message: \"down\") } else if id == 0 { fail NotFound(id:) } else { \"user #{id}\" }
@@ -673,8 +711,8 @@ error: NotFound(id: 0)
 #[test]
 fn partial_escape_arms_propagate_unmatched_errors() {
     // An error missing arms that catch only some values (field values, guards) propagates as an
-    // error, not a defect (spec 7.3). Reaching main gives `error: ...` and exit code 1
-    // (spec 14.3).
+    // error, not a defect (spec 7.3). Reaching main gives `error: ...` and exit code 1, with only
+    // the name of an error without Show (spec 14.3).
     let source = |last: &str| {
         format!(
             "\
@@ -704,12 +742,12 @@ fn main() {{
     let output = run_source("lower-partial-escape-value", &source("by_value(2)"));
     assert_eq!(
         (output.code, text(&output.stdout), text(&output.stderr)),
-        (1, "", "10\n60\n102\nerror: NotFound(id: 2)\n")
+        (1, "", "10\n60\n102\nerror: NotFound\n")
     );
     let output = run_source("lower-partial-escape-guard", &source("by_guard(3)"));
     assert_eq!(
         (output.code, text(&output.stdout), text(&output.stderr)),
-        (1, "", "10\n60\n102\nerror: NotFound(id: 3)\n")
+        (1, "", "10\n60\n102\nerror: NotFound\n")
     );
 }
 
@@ -787,15 +825,15 @@ effect Wait {
   suspend fn forever() -> ()
 }
 
-handler EnvConfig implements Config {
+handler EnvConfig: Config {
   fn db_url() { "db://app" }
 }
 
-handler EmptyConfig implements Config {
+handler EmptyConfig: Config {
   fn db_url() { "" }
 }
 
-handler Pool(url: String, opened: Int) implements Users {
+handler Pool(url: String, opened: Int): Users {
   init {
     url = (use Config).db_url()
     if url == "" { fail DbDown }
@@ -810,7 +848,7 @@ handler Pool(url: String, opened: Int) implements Users {
   fn find(id) { "user #{id} via #{self.url}" }
 }
 
-handler Spare implements Users {
+handler Spare: Users {
   init {
     (use Console).print_line("open spare")
     Spare
@@ -821,12 +859,12 @@ handler Spare implements Users {
   fn find(id) { "spare #{id}" }
 }
 
-handler Fragile implements Wait {
+handler Fragile: Wait {
   release { panic("close failed") }
   suspend fn forever(resume) { resume(()) }
 }
 
-handler Stuck implements Wait {
+handler Stuck: Wait {
   suspend fn forever(resume) { () }
 }
 
@@ -874,7 +912,7 @@ fn failing_init_releases_what_was_initialized() {
     // released (spec 14.2). The `with` ends with that init error.
     let output = run_stateful(
         "stateful-init-fails",
-        r#"handler SpareFirst implements Config {
+        r#"handler SpareFirst: Config {
   init {
     (use Console).print_line("open config")
     SpareFirst
@@ -988,6 +1026,56 @@ fn interrupted_main_releases_first() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn lists_strings_and_int64_run_through_core() {
+    // take, drop, sort_by (stable) and sort; ASCII case changes only A to Z and a to z; Int64's
+    // compare, min, max and abs.
+    let output = run_source(
+        "core_additions",
+        r##"fn main() {
+  xs = [3, 1, 2]
+  dbg((List.take(xs, 2), List.drop(xs, 2), List.take(xs, -1), List.drop(xs, 5)))
+  none: List[Int] = []
+  dbg((List.last(xs), List.last(none), List.find_index(xs, fn(x) { x == 2 })))
+  dbg(List.flat_map(xs, fn(x) { [x, x] }))
+  dbg(List.filter_map(xs, fn(x) { if x > 1 { Some(x * 10) } else { None } }))
+  dbg(List.enumerate(["a", "b"]))
+  dbg(List.unzip([(1, "a"), (2, "b")]))
+  pairs = [(2, "a"), (1, "b"), (2, "c"), (1, "d")]
+  dbg(List.sort_by(pairs, fn(a, b) {
+    (x, _) = a
+    (y, _) = b
+    Ord.compare(x, y)
+  }))
+  dbg(List.sort([3, 1, 2, 1]))
+  dbg(List.sort([Some(2), None, Some(1)]))
+  dbg(String.to_ascii_lowercase("Hello, ÄB 東 @[`{"))
+  dbg(String.to_ascii_uppercase("Hello, äb 東 @[`{"))
+  big = Int64.from_int(2147483647) * Int64.from_int(4)
+  one = Int64.from_int(1)
+  dbg((Int64.compare(big, one), Int64.min(big, one), Int64.max(big, one), Int64.abs(-big)))
+}
+"##,
+    );
+    assert_eq!(output.code, 0);
+    assert_eq!(
+        text(&output.stderr),
+        r#"([3, 1], [2], [], [])
+(Some(2), None, Some(2))
+[3, 3, 1, 1, 2, 2]
+[30, 20]
+[(0, "a"), (1, "b")]
+([1, 2], ["a", "b"])
+[(1, "b"), (1, "d"), (2, "a"), (2, "c")]
+[1, 1, 2, 3]
+[None, Some(1), Some(2)]
+"hello, Äb 東 @[`{"
+"HELLO, äB 東 @[`{"
+(Greater, 1, 8589934588, 8589934588)
+"#
+    );
 }
 
 #[test]
@@ -1249,7 +1337,7 @@ fn show(name: String) -> String {
   }
 }
 
-handler FixedEnv implements Env {
+handler FixedEnv: Env {
   fn get(name) { Some("fixed") }
 }
 

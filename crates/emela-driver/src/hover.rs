@@ -5,7 +5,7 @@
 //! (spec 9.3).
 
 use emela_resolve::hir::{DefId, ExprKind, Item, RefTarget, Res};
-use emela_types::{Row, TyParam};
+use emela_types::{Row, Ty, TyParam};
 use line_index::{TextRange, TextSize};
 
 use crate::frontend::TypedProgram;
@@ -24,7 +24,7 @@ pub struct HoverInfo {
 /// - A definition name (fn, const, constructor): `name: type`, the declared type (generalized if
 ///   inferred). Suspend fns (effect operations and external functions) get `suspend` before the
 ///   type.
-/// - A handler name: `handler H(fields) implements E` (`E[Int]` with type arguments), plus
+/// - A handler name: `handler H(fields): E` (`E[Int]` with type arguments), plus
 ///   `init fails E` if init has an E, and `use R` if it has dependencies (shows whether Async
 ///   remains).
 /// - A layer name: `layer L { handlers in initialization order }`, plus `use R` for dependencies
@@ -36,6 +36,150 @@ pub struct HoverInfo {
 ///
 /// The innermost (shortest) one is chosen.
 pub(crate) fn hover(
+    program: &TypedProgram,
+    analysis: &Analysis,
+    file: FileId,
+    offset: TextSize,
+) -> Option<HoverInfo> {
+    let mut info = hover_type(program, analysis, file, offset);
+    let module = analysis.files.iter().find(|(_, f)| **f == file)?.0;
+    let hir = &program.hir;
+    let docs = crate::documentation::Documentation::default();
+    let target = hir
+        .refs
+        .iter()
+        .find_map(|r| match r.target {
+            RefTarget::Def(def) if r.span.module == module && r.span.range.contains(offset) => {
+                Some((def, r.span.range))
+            }
+            _ => None,
+        })
+        .or_else(|| {
+            hir.defs.iter().find_map(|(def, data)| {
+                let span = data.span?;
+                (span.module == module && span.range.contains(offset)).then_some((def, span.range))
+            })
+        });
+    let mut doc = None;
+    if let Some((def, range)) = target {
+        // Types and traits do not have value signatures. Supply a declaration when there
+        // is no existing type display (for example, on a type annotation).
+        let kind = match hir.item(def) {
+            Some(Item::Type(_)) => Some("type"),
+            Some(Item::Enum(_)) => Some("enum"),
+            Some(Item::Trait(_)) => Some("trait"),
+            Some(Item::Effect(_)) if label_text(program, def).is_none() => Some("effect"),
+            _ => None,
+        };
+        if info.is_none()
+            && let Some(kind) = kind
+        {
+            info = Some(HoverInfo {
+                range,
+                contents: code(&format!("{kind} {}", hir.defs[def].name)),
+            });
+        }
+        if matches!(hir.item(def), Some(Item::Fn(_) | Item::TraitFn(_)))
+            && program.types.sigs.get(def).is_none()
+            && let Some(span) = hir.defs[def].span
+            && let Some(text) = crate::documentation::written_signature(analysis, span)
+        {
+            info = Some(HoverInfo {
+                range,
+                contents: code(&text),
+            });
+        }
+        doc = docs.definition(program, analysis, def);
+    }
+    // Handler and trait implementations have name spans but no definition IDs of their own.
+    for (def, _) in hir.defs.iter() {
+        let span = match hir.item(def) {
+            Some(Item::Handler(h)) => h
+                .ops
+                .iter()
+                .map(|op| op.name.span)
+                .find(|s| s.module == module && s.range.contains(offset)),
+            Some(Item::Impl(i)) => i
+                .fns
+                .iter()
+                .map(|f| f.name.span)
+                .find(|s| s.module == module && s.range.contains(offset)),
+            _ => None,
+        };
+        if let Some(span) = span {
+            if let Some(text) = crate::documentation::written_signature(analysis, span) {
+                info = Some(HoverInfo {
+                    range: span.range,
+                    contents: code(&text),
+                });
+            }
+            doc = docs.at(analysis, span);
+            break;
+        }
+    }
+    // Field declarations have no definition ID.
+    for (def, _) in hir.defs.iter() {
+        let Some(fields) = hir.item(def).and_then(crate::documentation::fields) else {
+            continue;
+        };
+        if let Some(field) = fields
+            .iter()
+            .find(|f| f.span.module == module && f.span.range.contains(offset))
+        {
+            if let Some(span) = hir.types[field.ty].span
+                && let Some(&source) = analysis.files.get(span.module)
+                && let Some(ty) = analysis.sources[source]
+                    .text()
+                    .get(usize::from(span.range.start())..usize::from(span.range.end()))
+            {
+                info = Some(HoverInfo {
+                    range: field.span.range,
+                    contents: code(&format!("{}: {ty}", field.name)),
+                });
+            }
+            doc = docs.at(analysis, field.span);
+            break;
+        }
+    }
+    // Capability operations and record projections are resolved by the type checker.
+    if let Some((expr, _, base, name)) = hir
+        .exprs
+        .iter()
+        .filter_map(|(id, e)| {
+            let ExprKind::Field { base, name } = &e.kind else {
+                return None;
+            };
+            (name.span.module == module && name.span.range.contains(offset))
+                .then_some((id, e, *base, name))
+        })
+        .min_by_key(|(_, e, _, _)| e.span.range.len())
+    {
+        if let Some(&op) = program.types.ops.get(expr) {
+            doc = docs.definition(program, analysis, op);
+        } else if let Some(Ty::Named(con, _)) = program.types.exprs.get(base) {
+            let owner = program.types.ty_table.def(*con);
+            doc = docs.field(program, analysis, owner, &name.name);
+        }
+    }
+    if info.is_none()
+        && let Some((range, text, comment)) =
+            crate::documentation::unnamed_doc(analysis, module, offset)
+    {
+        info = Some(HoverInfo {
+            range,
+            contents: code(&text),
+        });
+        doc = Some(comment);
+    }
+    let mut info = info?;
+    if let Some(doc) = doc {
+        info.contents.push_str("\n\n---\n\n");
+        info.contents.push_str(&doc);
+    }
+    Some(info)
+}
+
+fn hover_type(
     program: &TypedProgram,
     analysis: &Analysis,
     file: FileId,
@@ -188,7 +332,7 @@ pub(crate) fn hover(
     }
 }
 
-/// `handler H(fields) implements E` (`E[Int]` with type arguments), plus `init fails E` if init
+/// `handler H(fields): E` (`E[Int]` with type arguments), plus `init fails E` if init
 /// has an E (part of the with's E, spec 9.4) and `use R` if it has dependencies (shows whether
 /// Async remains, spec 8.7). `None` if `def` is not a handler.
 pub(crate) fn handler_text(program: &TypedProgram, def: DefId) -> Option<String> {
@@ -212,18 +356,15 @@ pub(crate) fn handler_text(program: &TypedProgram, def: DefId) -> Option<String>
             .collect();
         text.push_str(&format!("({})", fields.join(", ")));
     }
-    // An effect with type arguments is shown as `implements State[Int]` (spec 8.1).
+    // An effect with type arguments is shown as `handler H: State[Int]` (spec 8.1).
     match types.sigs.handler_effect(def) {
         Some(tag) => {
             let effect = Row::of_tag(tag.clone());
-            text.push_str(&format!(
-                " implements {}",
-                effect.display_effects(cons, &[])
-            ));
+            text.push_str(&format!(": {}", effect.display_effects(cons, &[])));
         }
         None => {
             if let Res::Def(effect) = item.effect {
-                text.push_str(&format!(" implements {}", hir.defs[effect].name));
+                text.push_str(&format!(": {}", hir.defs[effect].name));
             }
         }
     }

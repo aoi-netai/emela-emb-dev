@@ -101,11 +101,10 @@ const PRELUDE_TRAITS: &[(&str, &[&str])] = &[
     ("Eq", &["eq"]),
     ("Ord", &["compare"]),
     ("Show", &["show"]),
-    ("Hash", &["hash"]),
     ("Immediate", &[]),
 ];
 /// The functions of spec 15.1.
-const PRELUDE_FNS: &[&str] = &["panic", "todo", "dbg"];
+const PRELUDE_FNS: &[&str] = &["panic", "todo", "dbg", "inspect"];
 /// Built-in effects (spec 8.7).
 const PRELUDE_EFFECTS: &[&str] = &["Async"];
 

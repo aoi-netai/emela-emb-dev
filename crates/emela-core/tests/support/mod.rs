@@ -91,7 +91,7 @@ pub fn try_lower_with(
         types: &types,
         modules: &modules,
         sources: texts.clone(),
-        entry,
+        entry: Some(entry),
         tests: Vec::new(),
         paths: Default::default(),
         bundled_files,
@@ -112,6 +112,9 @@ pub fn try_lower_with(
                     }
                     LowerError::MissingCoreFile { path, span } => {
                         (format!("missing core file {path}"), span)
+                    }
+                    LowerError::ConstrainedExport { name, param, span } => {
+                        (format!("constrained export {name} [{param}]"), span)
                     }
                 };
                 let Some(span) = span else {

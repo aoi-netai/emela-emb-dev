@@ -32,6 +32,7 @@ impl Plan {
                 && !f.exported
                 && crate::derived::showable(&flow.core, ty)
                 && match kind {
+                    DeriveKind::ErrorName => false,
                     DeriveKind::Show => f.params.len() == 1 && f.ret == TypeId::STRING,
                     DeriveKind::Eq => {
                         f.params.len() == 2 && f.vars[f.params[1]].ty == ty && f.ret == TypeId::BOOL

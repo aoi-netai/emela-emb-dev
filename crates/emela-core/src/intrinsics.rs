@@ -35,6 +35,10 @@ pub enum Builtin {
     StringCodePoints,
     /// `String.from_code_point`. `None` if not a Unicode scalar value.
     StringFromCodePoint,
+    /// `String.show_nested` (`@internal`): the Show of a value inside another value (spec 10.6),
+    /// for the Show impls in core. Monomorphization replaces it with [`Builtin::ShowString`] for a
+    /// String and with a call of `Show.show` for any other type, so backends never see it.
+    ShowNested,
 
     // Int.
     IntToString,
@@ -85,8 +89,13 @@ pub enum Builtin {
     Panic,
     /// `todo()`. Raises a `not yet implemented` defect.
     Todo,
-    /// `dbg(value)`. Prints the value's Show to stderr on one line and returns the value.
+    /// `dbg(value)`. Prints the debug display of the value to stderr on one line and returns the
+    /// value (spec 10.6). Takes no trait; what reaches a backend is shown by its structure
+    /// ([`crate::mono`] rewrites the rest).
     Dbg,
+    /// `inspect(value)`: the debug display of a value with Show (spec 10.6), a String quoted.
+    /// What reaches a backend is shown by its structure, which is its Show.
+    Inspect,
 
     // Internal builtins used only by lowering. Not in `ALL`, so sources cannot call them.
     /// Makes a cell holding one value (the state of `State.run`, spec 8.8).
@@ -94,6 +103,12 @@ pub enum Builtin {
     CellGet,
     /// Replaces the cell's contents. The value is `()`.
     CellSet,
+    /// A String shown inside another value: quoted and escaped (spec 10.6). What
+    /// [`Builtin::ShowNested`] becomes for a String, and what derived Show uses for a String field.
+    ShowString,
+    /// Prints the String as it is on one line to stderr. What `dbg` becomes for a value shown
+    /// through its Show impl (spec 10.6). The value is `()`.
+    DebugPrint,
 }
 
 /// `@intrinsic` declarations (module name, function name) that lowering maps as runtime handlers.
@@ -210,6 +225,7 @@ impl Builtin {
         Builtin::StringTrim,
         Builtin::StringCodePoints,
         Builtin::StringFromCodePoint,
+        Builtin::ShowNested,
         Builtin::IntToString,
         Builtin::IntParse,
         Builtin::IntCheckedAdd,
@@ -240,6 +256,7 @@ impl Builtin {
         Builtin::Panic,
         Builtin::Todo,
         Builtin::Dbg,
+        Builtin::Inspect,
     ];
 
     pub const fn info(self) -> BuiltinInfo {
@@ -258,6 +275,10 @@ impl Builtin {
             Builtin::StringTrim => info(S, "trim", &[String], String),
             Builtin::StringCodePoints => info(S, "code_points", &[String], List(&Int)),
             Builtin::StringFromCodePoint => info(S, "from_code_point", &[Int], Option(&String)),
+            Builtin::ShowNested => BuiltinInfo {
+                ty_params: 1,
+                ..info(S, "show_nested", &[Param(0)], String)
+            },
             Builtin::IntToString => info(I, "to_string", &[Int], String),
             Builtin::IntParse => info(I, "parse_or_none", &[String], Option(&Int)),
             Builtin::IntCheckedAdd => info(I, "checked_add", &[Int, Int], Option(&Int)),
@@ -293,6 +314,10 @@ impl Builtin {
                 ty_params: 1,
                 ..info(None, "dbg", &[Param(0)], Param(0))
             },
+            Builtin::Inspect => BuiltinInfo {
+                ty_params: 1,
+                ..info(None, "inspect", &[Param(0)], String)
+            },
             // A cell's type cannot be written as a `Sig`, so the content type `A` stands in for
             // `Cell[A]` (it is never passed to type inference). The type argument is the content
             // type: `new(A) -> Cell[A]`, `get(Cell[A]) -> A`, `set(Cell[A], A) -> ()`.
@@ -310,6 +335,11 @@ impl Builtin {
                 pure: false,
                 ty_params: 1,
                 ..info(Some("$Cell"), "set", &[Param(0), Param(0)], Unit)
+            },
+            Builtin::ShowString => info(Some("$Show"), "string", &[String], String),
+            Builtin::DebugPrint => BuiltinInfo {
+                pure: false,
+                ..info(Some("$Debug"), "print", &[String], Unit)
             },
         }
     }

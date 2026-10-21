@@ -90,6 +90,16 @@ pub trait TestBackend<P> {
 - （補）テスト関数を通常のコード（テスト関数でない fn と const の本体）から参照すると E0227（``test function `adds` can only be used from test functions``，注記 ``= note: test functions are removed from normal builds (13.1)``）．13.1 と付録 A に反映済み
 - （補）テストの表示名は，エントリのモジュールなら関数名だけ（`greet_returns_user`），ほかのモジュールならモジュール名を付ける（`Http.Client.gets`）．`cargo test` がクレートのルートだけ前置きを付けないのに合わせた．フィルタはこの表示名の部分一致（大文字小文字を区別する）
 - （補）単独ファイルでは，エントリから import でたどれるモジュールのテストだけを実行する（読むモジュールの規則と同じ）
+
+### テストのルートとテストの依存（4.1，4.7，13.1）
+
+- `Input::with_tests` がテストのルート（`<project>/test`，あるときだけ）を `Input::tests` に入れる．cli の `check` と `test`，LSP が呼び，`build`，`run`，`doc` は呼ばない．呼ばないときはテストのルートを読まないので，中のモジュールは通常のビルドに入らない
+- テストのルートのモジュールは `ModuleMap::add_test_root` でソースのルートと同じ対応表に入る．同じ名前は E0204，ルート直下の `main.emel` と `lib.emel` は E0203
+- `[dev-dependencies]` は `project_dependencies(.., tests)` が `tests` のときだけ読み，`Dependencies::dev` に入れる．ルート名は `[dependencies]` と合わせて検査する（同じ名前は E0204）
+- `ModuleMap::lookup_from` は，テストのルートのモジュールと `[dev-dependencies]` のルート名を，テストのルートのモジュールからだけ引く．ソースのルートから引こうとしたものは `is_test_only` で見分けて E0239 にする
+- （補）テストのルートの `.emel` 以外のファイルは，テストの出力の `emela_tests/` に写す（ソースのルートの `emela_project/` と同じ扱い）
+- （補）`build` と `run` にテストのルートの中のファイルを渡すと E0208（``... is under the test root, which only check and test read``）
+- （補）`fmt` は，プロジェクトのディレクトリを渡すとソースのルートとテストのルートの両方を整形する
 - （補）テストの JS の出力先は `target/emela/test`（`--out-dir` で変えられる）．テスト関数を export した別の出力なので，通常のビルドの `target/emela/js` を上書きしない
 - （補）`CoreJs` のテストの出力は `main.mjs`（選んだテスト関数を Emela の名前で export する．IR の `exported` は書き換えず，`emit_module_exporting` に渡す），ランタイム，起動用モジュール `emela_test.mjs` の3つ．node は起動用モジュールを直接実行する（`run` の起動用モジュールは使わない）
 - （補）テストランナーは結果を標準出力に1行ずつ `\x1eemela-test ` + JSON で書き，driver が読みながら表示する．結果の行でない標準出力はそのまま流す．node の標準エラーは `Output::Inherit` なら素通し，`Capture` なら `TestReport::stderr` に集める．標準入力は渡さない
@@ -98,7 +108,7 @@ pub trait TestBackend<P> {
 - （補）テストの実行中にホストのコールバックの中で投げられた例外（`uncaughtException`）は，実行中のテストの defect にする．終わったテストの継続（後から呼ばれた resume など）は進めない
 - （補）終了コードは失敗が1つでもあれば 1，なければ 0（テストが0個でも 0）．診断でエラーなら 1
 - （補）テストの途中で node が終わったとき（外部関数の `process.exit` など）は，実行中だったテストを失敗にし，その後ろで実行されなかった数を詳細に添える
-- （補）処理されなかったエラー（13.3）は，テストランナーの `$testUnhandledError` が返り値の `$Fail` を `Symbol.for("emela.fail")` の鍵（`FAIL_KEY`）で見分けて `outcome: "error"` で報告する．表示は `error: <エラーの値の表示>`（`dbg` と同じ表示．String は引用符付き）
+- （補）処理されなかったエラー（13.3）は，テストランナーの `$testUnhandledError` が返り値の `$Fail` を `Symbol.for("emela.fail")` の鍵（`FAIL_KEY`）で見分けて `outcome: "error"` で報告する．表示は `error: <エラーの値の表示>`（main と同じ．Show を満たせば `inspect` と同じ表示，満たさなければ名前だけ．14.3）
 - 積み残し: suspend するテスト（ジェネレータを返す関数）と Async の供給（13.3）はまだ扱わない
 
 ## core の中からだけ参照できる fn（`@internal`，`internal.rs`）
@@ -142,10 +152,12 @@ alpha.3 で足した（2026-10-12）．最初は Instant を作る関数（`Inst
 - （補）`MemoryFiles` は `/` を起点にし，相対パスは `/` からとみなす．`.` と `..` は字面で畳む
 - （補）診断のパスは `SourceDb::display_path` で起点（プロジェクトか単独ファイルのディレクトリ）からの相対パスにする．名前解決の診断の文面に埋め込まれたパス（重複の「先に `…` がある」）も同じく相対にする
 - ディレクトリを渡せるのはプロジェクトのディレクトリかソースのルートの中のディレクトリだけで，プロジェクトの中でもソースのルートの外（`scripts/`）なら E0208（``directory `scripts` is outside the source root `src` ``．付録 B，18.1 #32）．判定は `Input::resolve` に置き，check，build，run，test，fmt，LSP で共有する．ソースのルートの中のディレクトリを渡しても，型の検査はモジュールをまたぐのでプロジェクト全体を検査する
-- （補）ディレクトリを渡してエントリ（`src/main.emel`）がなくても `check` は通す．エントリがないことは `build` と `run` で初めてエラーにする
+- （補）ディレクトリを渡して `src/main.emel` も `src/lib.emel` もなくても `check` は通す．両方がないことは `build` と `run` で初めて E0209 にする
 - （補）エントリのファイルが名前の誤りでモジュールにならないときは，名前解決の診断に加えて「エントリ `…` がモジュールにならない」を出す
+- （補）ディレクトリ指定のプロジェクトに `src/main.emel` がなく `src/lib.emel` があるときは，ライブラリ専用として `lib.emel` を検査・テストのエントリにする．`build` は型検査だけで，lowering・出力・バックエンドの実行をしない．`run` は lib に fn `main` があっても E0230 で止まる．`src/main.emel` があればそちらを優先する．ファイルを明示指定した場合は，lib を含め従来どおりそのファイルを入口に build/run する
 - （補）`emela run` は，エントリのモジュールに `main` という名前の fn がなければ E0230（``entry `src/main.emel` has no `main` function``，位置はエントリのファイル）で止まり，出力も node の起動もしない．`build` は main がなくても出力する（8.3）．`main` という名前でも fn でないもの（const など）は main と数えない
 - （補）E0230 はほかの誤り（構文，名前，型，lowering）が1件もないときだけ出す．構文の誤りで main を読めなかっただけのときに誤りを重ねないため
+- （補）ライブラリ専用の判定は `Input::library_only` を `Analysis::library_only` に渡す．`Lower` は検査後の lowering を省き，`LowerTests` は従来どおりテストの根から lowering する．lib の fn `main` は普通の関数であり，main の境界としての R 検査はしない
 - （補）main があるかは `Frontend::has_entry_main` で引く．`Typecheck`（と，それを包む `Lower`）が直前の `check` の HIR から答える．答えないフロントエンド（`None`，既定）では確かめずに node を起動する
 - （補）`emela run` も既定の出力先（仕様 4.1）に書いてから実行する．前の出力は消さずに上書きする
 - （補）`run` は，ビルドの後で node を起動する前に `before_node` を呼ぶ．CLI はここで診断を出す（終わらないプログラムでも警告が先に見える）．node を起動できなかった診断はその後に足す
@@ -157,7 +169,7 @@ alpha.3 で足した（2026-10-12）．最初は Instant を作る関数（`Inst
 - （補）defect は `name` が `"Defect"` の `Error`（emela-codegen-js のランタイムの `$Defect`）．`instanceof` でなく `name` で見るので，起動用モジュールはランタイムを import しない
 - （補）`main` がジェネレータ（suspend する関数，16.5）を返す場合はまだ扱わない
 - （補）defect で止まったときは，標準エラーに `defect: <message>` を1行出し，終了コード 101（Rust の panic と同じ）．defect でない例外は node に任せる（スタックを出して 1）（仕様 7.5 に反映済み）
-- （補）main まで達したエラーは，起動用モジュールが main の返り値の `$Fail` を `Symbol.for("emela.fail")` の鍵（`FAIL_KEY`）で見分け，標準エラーに `error: <エラーの値の表示>` を1行出して終了コード 1（`ERROR_EXIT_CODE`，14.3）．表示は `dbg` と同じ（`error: DbError(message: "down")`）．defect は 101 のまま．起動用モジュールはランタイムを import しないので，`instanceof` でなく鍵で見る
+- （補）main まで達したエラーは，起動用モジュールが main の返り値の `$Fail` を `Symbol.for("emela.fail")` の鍵（`FAIL_KEY`）で見分け，標準エラーに `error: <エラーの値の表示>` を1行出して終了コード 1（`ERROR_EXIT_CODE`，14.3）．エラーの型が Show を満たせば表示は `inspect` と同じ（`error DbError(message: String) derive Show` なら `error: DbError(message: "down")`），満たさなければ名前だけ（`error: Retry`）．defect は 101 のまま．起動用モジュールはランタイムを import しないので，`instanceof` でなく鍵で見る
 - （補）中断しうる main（返り値がジェネレータ）は，エントリが公開するランタイムの `$start` で進め，イベントループで待つ．起動用モジュールはランタイムを import しないので，`$start` はエントリから引く（emela-codegen-js の NOTES の「中断と再開」）
 - （補）中断しない main（R が Immediate）の中で，その場で resume されずに捨てられた継続（ランタイムの `$Interrupted`．8.7 の InstantClock の形のハンドラで resume しなかったとき）も，`interrupted` と 130．イベントループが空になるのを待たずにその場で終わる．テストでは `interrupted` の失敗
 - （補）main の継続が resume されないまま「プログラムの最上位が終わる」（14.5）のは，node のイベントループが空になったとき（`beforeExit`）とした．標準エラーに `interrupted` を1行出して終了コード 130（`INTERRUPTED_EXIT_CODE`）
@@ -176,12 +188,12 @@ alpha.3 で足した（2026-10-12）．最初は Instant を作る関数（`Inst
 - （補）ariadne 0.6 は `ReportKind::Custom` の色を `with_color(false)` でも付けるので，色なしのときは出力から ANSI の色指定を取り除く
 - （補）ariadne は位置が戻るとソースの枠を分けるので，ラベルはファイルと位置の順に並べて渡す
 - （補）`TypeError` は位置を持たないので，変換関数（`Diagnostic::from_type_error`）は範囲と型名の表（`TyCons`）を受け取る．最上位の型と食い違った部分が違うときは，食い違った部分を注記にする
-- （補）位置の情報（LSP のホバー）は `Frontend::hover` で引く（トレイトの既定は `None`）．`Typecheck` は `TypedProgram` の型の表と E の表（`ProgramTypes::errors`），R の表（`ProgramTypes::effects`）から作る（`hover.rs`）．式のホバーは型の後に，空でなければ `fails E` と `use R` の行を足す．suspend fn（エフェクトの操作と `@external suspend fn`，能力の値の操作の参照）は型の前に `suspend` を付ける．handler の名前は `handler H(conn: Connection) implements E`（フィールドは構成子のシグネチャから．フィールドのない handler は括弧なし）と，init の E（`ProgramTypes::handler_fails`）が空でなければ `init fails E` の行，依存（`ProgramTypes::handler_uses`）が空でなければ `use R` の行（Async が残るかが分かる）．layer の名前は `layer L { H1, H2 }`（初期化の順，`ProgramTypes::layers`）と，layer の中で満たされない依存があれば `use R` の行．
+- （補）位置の情報（LSP のホバー）は `Frontend::hover` で引く（トレイトの既定は `None`）．`Typecheck` は `TypedProgram` の型の表と E の表（`ProgramTypes::errors`），R の表（`ProgramTypes::effects`）から作る（`hover.rs`）．式のホバーは型の後に，空でなければ `fails E` と `use R` の行を足す．suspend fn（エフェクトの操作と `@external suspend fn`，能力の値の操作の参照）は型の前に `suspend` を付ける．handler の名前は `handler H(conn: Connection): E`（フィールドは構成子のシグネチャから．フィールドのない handler は括弧なし）と，init の E（`ProgramTypes::handler_fails`）が空でなければ `init fails E` の行，依存（`ProgramTypes::handler_uses`）が空でなければ `use R` の行（Async が残るかが分かる）．layer の名前は `layer L { H1, H2 }`（初期化の順，`ProgramTypes::layers`）と，layer の中で満たされない依存があれば `use R` の行．
 - （補）定義へ移動と参照の検索（LSP）は `Frontend::definition` と `Frontend::references` で引く（トレイトの既定は `None` と空）．`Typecheck` は名前解決の参照の表（`Program::refs`），型推論の操作の表（`ProgramTypes::ops`），定義と局所変数の位置から作る（`nav.rs`）．返すのは `NavTarget`（ファイルと範囲）
 - （補）位置の名前は，参照，effect の操作の参照，定義の名前，局所変数を束縛した位置から探す．範囲の終わりの位置（名前の直後のカーソル）も含め，範囲の中にあるものを先に選ぶ
 - （補）モジュールの定義の位置はファイルの先頭（空の範囲）．同梱の core の定義と，ソースのない定義（組み込みのモジュールの関数と型，組み込みの Prelude）は移動先がないので `None`
 - （補）参照の検索では，名前の位置が同じ定義（type とその構成子，error のタグと構成子）を同じものとみなす．同梱の core の中の参照は含めない．順はファイル（`FileId`）と位置の順．モジュールの参照に定義の位置は含めない
-- （補）文書のシンボル（`document_symbols`）は検査せず構文木だけから作る．構文の誤りがあっても読めた宣言は返し，名前のない宣言は飛ばす．子は enum のバリアント，type・error・バリアント・handler のフィールド，effect の操作，trait・impl・handler の fn．impl は名前の字句がないので `impl Show for User` を名前にし，Trait の名前を選ぶ範囲にする
+- （補）文書のシンボル（`document_symbols`）は検査せず構文木だけから作る．構文の誤りがあっても読めた宣言は返し，名前のない宣言は飛ばす．子は enum のバリアント，type・error・バリアント・handler のフィールド，effect の操作，trait・impl・handler の fn．impl は名前の字句がないので `impl User: Show` を名前にし，Trait の名前を選ぶ範囲にする
 - （補）補完（LSP）は `Frontend::complete` で引く（トレイトの既定は空）．`Typecheck` は `complete.rs`．書きかけのソースは構文が崩れているので，文脈はカーソルの前のテキストで決め，候補は名前解決と型推論の結果から引く
   - `import` の行で `{` の前: モジュール名の次の区切り（`import Util.` なら `Log`）．関数や型の名前は出さない．自分のモジュールは出さない
   - `import A.{` の中: モジュール A の pub な定義（enum のバリアントも）
@@ -210,6 +222,7 @@ alpha.3 で足した（2026-10-12）．最初は Instant を作る関数（`Inst
   - 文の位置（文，束縛の右辺，ブロックの末尾）の呼び出しとパイプの E と R（`fails E use R`）．どちらも空なら出さない．入れ子の呼び出しには出さない（行が埋まるため．入れ子の E はホバーで見る）
 - （補）semantic tokens（LSP）は `Frontend::semantic_tokens`（`tokens.rs`）．能力の値（8.2）だけを返す．型検査で型が能力（`Ty::Cap`）になった局所変数に加え，型検査が諦めた場合のために，右辺が `use X` の束縛（パターンが変数1つのもの）も能力の値とみなす（`use` の effect の名前が解決できなくても）．束縛した名前と，その局所変数を指す名前の式（クロージャの中も）に印を付ける．構文や型のエラーがあっても，HIR と型の分かる範囲で返す
 - （補）`Lower` と `LowerTests`（build，run，test）は JS のターゲット（`JS_TARGET`）で外部関数の `@external` を検査する（12.1）．検査は lowering の中で単相化した IR に対して行う（操作はエフェクトの具体化ごとに見る．emela-core の NOTES の「外部関数」）．エントリからたどれる外部関数に JS の注釈がなければ E0412（``external function `wasm_now` has no `@external` for target `js` ``，注記 ``= help: add `@external(js, ...)`, or avoid calling it from the entry``）．`Typecheck`（check と LSP）は lowering しないので検査しない．E0412 を E04xx に置いたのは，外部関数が effect と同じく副作用の経路（12章の冒頭，E0407）で，E05xx〜E08xx が予約のため
+- （補）E0327（付録 B）も lowering が出す（`LowerError::ConstrainedExport`）．文面は ``cannot export `largest`: its type parameter `A` has a trait bound``，注記 ``= help: make a `pub` fn that calls it with concrete types, and export that instead``．E0412 と同じく build と run の JS だけで出し，check と LSP には出ない．`emela test` と C，WASM の build にも出ない（export しないので）
 - （補）lowering には各モジュールのソースのファイルのパスも渡す（`LowerInput::paths`）．`@external` のファイルの指定をソースの隣のファイルに直すため
 - （補）同梱の core のソースは `Frontend::core_sources` で渡す（トレイトの既定は空）．パイプラインはモジュール名を `ModuleMap::add_core` で対応表に足し，仮のパス `<core>/list.emel`（`CORE_DIR`，`Int64` は `int64.emel`）でソースの表に載せる．単独ファイルでも core のモジュールは必ず読む
 - （補）`Resolve::default()` は `emela_core::core_sources()` の全部（`CoreSource::bundled()`）を読む．テストで別の core を使うときは `with_core` で差し替える
@@ -222,8 +235,32 @@ alpha.3 で足した（2026-10-12）．最初は Instant を作る関数（`Inst
 - （補）型検査の診断（E0221，E0301〜E0324，W0301〜W0302，E0401〜E0411，E0413〜E0422）は `Diagnostic::from_type` で写す．文面は emela-types の NOTES.md の「driver に渡すときの文面」と同じ．まだ扱えない構文はコードなしのエラー `not supported yet: …` にする
 - （補）`Typecheck` は，エントリのモジュールの `main` という名前の fn と，`@test` のテスト関数を `CheckOptions` で型推論に渡す．型推論はそれらの R が空であることを確かめる（E0402，8.3，13.3）．そのためテスト関数の収集（`collect_tests`，`resolve_tests`）を型検査の前に行う．エントリのないとき（`check` にディレクトリを渡してエントリがないなど）は main を確かめない
 - （補）型検査の診断は，名前解決と同じくファイルと位置の順に並べ直す（型推論は呼び出しの順に進むため）．名前解決の診断の後に置く
-- （補）E0423（型引数のあるエフェクトの型引数を書いていない）の文面は，`use State` と use 節では ``missing type arguments for effect `State[S]` ``（注記 ``= help: write the types, like `State[...]` ``），`implements State` では ``handler `Fixed` must implement `State[S]` with concrete types``（注記 ``= help: write the types, like `implements State[...]`; a handler cannot be generic``）．E0424（エフェクトの型引数を集合として使った）は ``type parameter `E` of effect `Raise` is used as a set, but effect type parameters must be ordinary types``．仕様の付録 A に E0423 と E0424 はまだない
-- （補）ホバーは handler の名前に `implements State[Int]`（型引数を代入したタグ），能力の値に `use State[Int]` を出す．能力の値の操作の補完と型は，操作の型のエフェクトの型引数を能力の値の型引数で置き換える
+- （補）E0423（型引数のあるエフェクトの型引数を書いていない）の文面は，`use State` と use 節では ``missing type arguments for effect `State[S]` ``（注記 ``= help: write the types, like `State[...]` ``），`handler Fixed: State` では ``handler `Fixed` must implement `State[S]` with concrete types``（注記 ``= help: write the types, like `handler Fixed: State[...]`; a handler cannot be generic``）．E0424（エフェクトの型引数を集合として使った）は ``type parameter `E` of effect `Raise` is used as a set, but effect type parameters must be ordinary types``．仕様の付録 A に E0423 と E0424 はまだない
+- （補）ホバーは handler の名前に `handler Fixed: State[Int]`（型引数を代入したタグ），能力の値に `use State[Int]` を出す．能力の値の操作の補完と型は，操作の型のエフェクトの型引数を能力の値の型引数で置き換える
 - （補）同梱のソースの仮のパスは，モジュール名の区切りをディレクトリにする（`Std.Console` は `<core>/std/console.emel`，`List` は `<core>/list.emel`）
 - （補）エフェクトのラベル（issue #255）の hover．ラベルの名前と，`use` 節や `with` に書いたラベルへの参照の上では，宣言をそのまま出す（`effect DebugLog of Console default`）．型の表示はラベルのまま出し，元のエフェクトに落とした形には書き換えない
 - （補）ラベルの診断の文言．E0429〜E0433 と W0401（使われないラベルの項目）．W0401 は `with L` ならラベル L の名前を，`L by P` なら L の名前を出す
+
+## 依存（4.7）
+
+- 依存は `Input::dependencies` で受け取る．lock から組み立てるのは `project_dependencies`（CLI はネットワークに出てキャッシュにない依存を取り，言語サーバーは取得元を空にしてキャッシュだけを見る）
+- （補）依存のモジュールは，モジュールの対応表では「依存ごとに重ならない内部の名前」（`Quince.Router`．重なれば `Quince2`）で持つ．import は import する側の Pome から引く（`ModuleMap::lookup_from`）: 自分の Pome のモジュール，自分の `[dependencies]` のルート名，core の順．内部の名前は診断と defect の文面に出る
+- （補）依存の中では，`src/lib.emel` は `Lib`，ほかのモジュールは 4.1 の名前で引ける．依存する側からは `Quince`（lib）と `Quince.Router` で，`Quince.Lib` と `Quince.Main` は引けない．`src/main.emel` は読まない
+- （補）ルート名の誤りは `Pome.toml` に出す．予約名（`Std`，`Prelude`，core のモジュール）は E0203，自分のモジュールの最初の区切りやほかの依存とぶつかれば E0204，型名にならなければ E0235
+- （補）`[pome].emela` は major.minor.patch で比べる（足りない桁は 0）．新しければ E0234，minor が古ければ W0203 で，依存の中のエラーに対象の版を注記する部分はまだない
+- 依存の `@external` は，プロジェクトの `[external] allow` にある Pome だけで使える（E0233）．許されていても pub な `@external` の fn は E0237．`allow` にあって依存の木にない Pome は W0204
+- （補）E0233 は，許されていない Pome のモジュールごとに最初の `@external` にだけ出す（Pome を許せばまとめて消えるので，全部に出すと多すぎる）
+- `[pome].targets` の検査（E0238）は build，run，test の対象が決まった所（CLI の `resolve_target`）で行う．check と LSP は対象を決めないので行わない
+- （補）E0238 の注記の「required by」は，その Pome を `[dependencies]` に書いた最初の Pome（プロジェクトなら this Pome）
+- （補）依存の `@test` は集めない．`emela doc` も依存のモジュールを出さない
+- 依存のファイルの診断のパスは，キャッシュの中の絶対パスのまま出る（`SourceDb` の base はプロジェクトだけ）
+- import のパスの補完は，まだ推移的な依存の内部の名前も候補に出す（`complete.rs` は importer を見ていない）
+
+## @external のファイルの出力（12.1）
+
+- JS の出力（build，run，test）は，`@external` が指すファイルを出力先に写し，相対パスで import する．プロジェクトのものは `emela_project/`，依存のものは `emela_pomes/<source path>@<version>/`（`[replace]` なら `@replace`）の下に，ソースのルートからと同じ並びで置く
+- （補）写すのは，指されたファイルのある Pome のソースのルートの下の，`.emel` と隠しファイル以外の全部．ファイルの中から隣のファイルを相対 import してもよいようにするため．単独ファイルは，そのディレクトリが何でもありうるので，指されたファイルだけを写す
+- （補）ファイルがどのルートの下かは，両方を正規化（`..` とシンボリックリンクを解く）してから比べる．`[replace]` はプロジェクトからの相対パスで書くため
+- （補）import の指定は相対 URL の形で，英数字と `/-._~@` のほかはパーセントエンコードする
+- C は今のまま，絶対パスでコンパイルに渡す（実行ファイルに組み込まれるので写さない）．WASM はファイルを指す `@external` を実際には使っていないので，手を入れていない
+

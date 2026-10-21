@@ -25,6 +25,15 @@ enum Std.Instant.Instant {
   Instant(milliseconds: Int64)
 }
 
+enum Std.Map.Map[A, B] {
+  Empty
+  Node(size: Int, key: A, value: B, left: Std.Map.Map[A, B], right: Std.Map.Map[A, B])
+}
+
+enum Std.Set.Set[A] {
+  Set(inner: Std.Map.Map[A, ()])
+}
+
 enum Std.Http.Method {
   Get
   Head

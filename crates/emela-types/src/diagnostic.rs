@@ -18,6 +18,32 @@ pub struct Diagnostic {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticKind {
+    /// A type does not satisfy a trait (E0326, spec 10.1–10.3): a constraint at a call, or a
+    /// supertrait at an impl. `ty` is displayed.
+    NotImplemented { ty: SmolStr, trait_name: SmolStr },
+    /// A `derive` of a trait the compiler has no derivation for (E0326, spec 10.5).
+    NotDerivable { trait_name: SmolStr },
+    /// A derived impl of a type that is not `pub`, which nothing requires (W0303, spec 10.5). A
+    /// warning.
+    UnusedDerive { trait_name: SmolStr, ty: SmolStr },
+    /// A trait is its own supertrait (E0329, spec 10.1). `cycle` starts and ends with the same
+    /// trait.
+    SupertraitCycle { cycle: Vec<SmolStr> },
+    /// A second impl of the same trait for the same type (E0330, spec 10.2). `ty` is the second
+    /// impl's head.
+    DuplicateImpl { ty: SmolStr, trait_name: SmolStr },
+    /// An impl outside the modules of its type and its trait (E0331, spec 10.2).
+    OrphanImpl { ty: SmolStr, trait_name: SmolStr },
+    /// The `Self` of a trait function that only its result type determines (`Parse.parse(s)`)
+    /// is left undetermined in the function (E0333, spec 10.3).
+    AmbiguousSelf { trait_name: SmolStr },
+    /// An impl function whose parameter count differs from the trait's declaration (E0332).
+    ImplFnParamCount {
+        name: SmolStr,
+        trait_name: SmolStr,
+        expected: usize,
+        found: usize,
+    },
     /// E0304. `List[Int, Int]`, or `Option` with no type arguments.
     WrongTypeArgCount {
         name: SmolStr,
@@ -229,7 +255,7 @@ pub enum DiagnosticKind {
     /// effect names through in type argument positions, so type inference checks this.
     EffectAsType { name: SmolStr },
     /// Missing type arguments of an effect with type parameters (E0423, spec 8.1): `use State`
-    /// and `implements State`. `handler` names the handler in the `implements` case; `params`
+    /// and `handler H: State`. `handler` names the handler in the handler case; `params`
     /// names the effect's type parameters.
     MissingEffectTypeArgs {
         effect: SmolStr,
@@ -307,6 +333,7 @@ impl DiagnosticKind {
             DiagnosticKind::UnreachableArm
                 | DiagnosticKind::UnraisedError { .. }
                 | DiagnosticKind::UnusedLabelProvider { .. }
+                | DiagnosticKind::UnusedDerive { .. }
         )
     }
 }

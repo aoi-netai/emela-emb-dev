@@ -9,6 +9,8 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod pome;
+
 /// Compile, run, test, and format Emela programs.
 #[derive(Parser)]
 #[command(name = "emela", version)]
@@ -116,6 +118,11 @@ enum Command {
         #[arg(long)]
         out_dir: Option<PathBuf>,
     },
+    /// Manage dependencies: Pome.toml and Pome.lock
+    Pome {
+        #[command(subcommand)]
+        command: pome::PomeCommand,
+    },
     /// Start the language server over standard input and output
     Lsp,
 }
@@ -204,6 +211,7 @@ fn main() -> ExitCode {
             format,
             out_dir,
         } => doc(path, std, format, out_dir),
+        Command::Pome { command } => pome::pome(command),
         Command::Lsp => lsp(),
     }
 }
@@ -213,7 +221,7 @@ fn path_or_current(path: Option<PathBuf>) -> PathBuf {
 }
 
 fn check(path: &Path, board: Option<String>) -> ExitCode {
-    let Some(input) = resolve_input(&OsFs, path) else {
+    let Some(input) = resolve_input(&OsFs, path, true) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let sources = match EmbeddedProject::read(&input)
@@ -229,17 +237,24 @@ fn check(path: &Path, board: Option<String>) -> ExitCode {
 
 /// The target: `--target`, else `[build].target` of Pome.toml (spec 4.7), else js. `None` after
 /// printing E0232 for an unknown target in Pome.toml.
+/// Also `None` after printing E0238 when a dependency does not support the target (spec 4.7).
 fn resolve_target(input: &Input, flag: Option<TargetArg>) -> Option<Target> {
-    if let Some(flag) = flag {
-        return Some(flag.into());
+    let target = match flag {
+        Some(flag) => flag.into(),
+        None => match emela_driver::project_target(&OsFs, input) {
+            Ok(target) => target.unwrap_or_default(),
+            Err(diagnostic) => {
+                print_diagnostics(&[diagnostic], &SourceDb::new());
+                return None;
+            }
+        },
+    };
+    let unsupported = emela_driver::check_dependency_targets(&input.dependencies, target);
+    if !unsupported.is_empty() {
+        print_diagnostics(&unsupported, &SourceDb::new());
+        return None;
     }
-    match emela_driver::project_target(&OsFs, input) {
-        Ok(target) => Some(target.unwrap_or_default()),
-        Err(diagnostic) => {
-            print_diagnostics(&[diagnostic], &SourceDb::new());
-            None
-        }
-    }
+    Some(target)
 }
 
 fn build(
@@ -249,7 +264,7 @@ fn build(
     embedded_config: Option<PathBuf>,
     board: Option<String>,
 ) -> ExitCode {
-    let Some(input) = resolve_input(&OsFs, path) else {
+    let Some(input) = resolve_input(&OsFs, path, false) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let project = match EmbeddedProject::read(&input).and_then(|project| project.select(board)) {
@@ -365,7 +380,7 @@ fn flash(
     port: Option<String>,
     dry_run: bool,
 ) -> ExitCode {
-    let Some(input) = resolve_input(&OsFs, path) else {
+    let Some(input) = resolve_input(&OsFs, path, false) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let project = match EmbeddedProject::read(&input).and_then(|project| project.select(board)) {
@@ -396,7 +411,7 @@ fn run(
     target: Option<TargetArg>,
     args: Vec<OsString>,
 ) -> ExitCode {
-    let Some(input) = resolve_input(&OsFs, path) else {
+    let Some(input) = resolve_input(&OsFs, path, false) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let Some(target) = resolve_target(&input, target) else {
@@ -460,7 +475,7 @@ fn test(
     out_dir: Option<PathBuf>,
     target: Option<TargetArg>,
 ) -> ExitCode {
-    let Some(input) = resolve_input(&OsFs, path) else {
+    let Some(input) = resolve_input(&OsFs, path, true) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let Some(target) = resolve_target(&input, target) else {
@@ -533,7 +548,7 @@ fn doc(path: Option<PathBuf>, std: bool, format: DocFormat, out_dir: Option<Path
     let (analysis, program, title, default_out_dir) = if std {
         // The core and std modules are read for any input, so an empty single file is enough.
         let fs = MemoryFiles::new([("std/doc.emel", "")]);
-        let Some(input) = resolve_input(&fs, Path::new("std/doc.emel")) else {
+        let Some(input) = resolve_input(&fs, Path::new("std/doc.emel"), false) else {
             return ExitCode::from(DIAGNOSTIC_FAILURE);
         };
         let (analysis, program) = emela_driver::check(&fs, &input, &mut Typecheck::default());
@@ -545,7 +560,7 @@ fn doc(path: Option<PathBuf>, std: bool, format: DocFormat, out_dir: Option<Path
             PathBuf::from(emela_driver::DOC_OUT_DIR),
         )
     } else {
-        let Some(input) = resolve_input(&OsFs, &path_or_current(path)) else {
+        let Some(input) = resolve_input(&OsFs, &path_or_current(path), false) else {
             return ExitCode::from(DIAGNOSTIC_FAILURE);
         };
         let (analysis, program) = emela_driver::check(&OsFs, &input, &mut Typecheck::default());
@@ -658,14 +673,28 @@ fn lsp() -> ExitCode {
     }
 }
 
-fn resolve_input(fs: &dyn FileSystem, path: &Path) -> Option<Input> {
-    match Input::resolve(fs, path) {
-        Ok(input) => Some(input),
+/// The input of check, build, run, test and doc, with the project's dependencies from
+/// `Pome.lock` (fetched if missing from the cache, spec 4.7). With `tests` (check and test), the
+/// test root and `[dev-dependencies]` are read too (spec 13.1).
+fn resolve_input(fs: &dyn FileSystem, path: &Path, tests: bool) -> Option<Input> {
+    let mut input = match Input::resolve(fs, path) {
+        Ok(input) if tests => input.with_tests(fs),
+        Ok(input) => input,
         Err(diagnostic) => {
             print_diagnostics(&[diagnostic], &SourceDb::new());
-            None
+            return None;
+        }
+    };
+    if !input.single_file {
+        match pome::dependencies(&input.base, tests) {
+            Ok(dependencies) => input.dependencies = dependencies,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return None;
+            }
         }
     }
+    Some(input)
 }
 
 /// Returns 1 if there are errors.

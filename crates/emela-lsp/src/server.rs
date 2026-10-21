@@ -4,6 +4,8 @@
 // so it is safe as a key.
 #![allow(clippy::mutable_key_type)]
 
+mod navigation;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -14,9 +16,11 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
-    InlayHintRequest, PrepareRenameRequest, References, Rename, Request as _,
-    SemanticTokensFullRequest, SemanticTokensRangeRequest, SignatureHelpRequest,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest,
+    FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation, GotoTypeDefinition,
+    HoverRequest, InlayHintRequest, PrepareRenameRequest, References, Rename, Request as _,
+    SelectionRangeRequest, SemanticTokensFullRequest, SemanticTokensRangeRequest,
+    SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{self as lsp, Uri};
 
@@ -45,6 +49,12 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
         definition_provider: Some(lsp::OneOf::Left(true)),
         references_provider: Some(lsp::OneOf::Left(true)),
+        document_highlight_provider: Some(lsp::OneOf::Left(true)),
+        workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
+        folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+        selection_range_provider: Some(lsp::SelectionRangeProviderCapability::Simple(true)),
+        type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+        implementation_provider: Some(lsp::ImplementationProviderCapability::Simple(true)),
         document_symbol_provider: Some(lsp::OneOf::Left(true)),
         signature_help_provider: Some(lsp::SignatureHelpOptions {
             trigger_characters: Some(vec!["(".to_owned(), ",".to_owned()]),
@@ -66,7 +76,10 @@ pub fn capabilities() -> lsp::ServerCapabilities {
         ),
         code_action_provider: Some(lsp::CodeActionProviderCapability::Options(
             lsp::CodeActionOptions {
-                code_action_kinds: Some(vec![lsp::CodeActionKind::REFACTOR_REWRITE]),
+                code_action_kinds: Some(vec![
+                    lsp::CodeActionKind::REFACTOR_REWRITE,
+                    lsp::CodeActionKind::QUICKFIX,
+                ]),
                 ..lsp::CodeActionOptions::default()
             },
         )),
@@ -254,6 +267,18 @@ where
                     format!("invalid params: {err}"),
                 ),
             },
+            DocumentHighlightRequest::METHOD => {
+                respond(request, |params| self.document_highlights(&params))
+            }
+            WorkspaceSymbolRequest::METHOD => {
+                respond(request, |params| self.workspace_symbols(&params))
+            }
+            FoldingRangeRequest::METHOD => respond(request, |params| self.folding_ranges(&params)),
+            SelectionRangeRequest::METHOD => {
+                respond(request, |params| self.selection_ranges(&params))
+            }
+            GotoTypeDefinition::METHOD => respond(request, |params| self.type_definition(&params)),
+            GotoImplementation::METHOD => respond(request, |params| self.implementations(&params)),
             GotoDefinition::METHOD => respond(request, |params| self.definition(&params)),
             References::METHOD => respond(request, |params| self.references(&params)),
             DocumentSymbolRequest::METHOD => {
@@ -364,8 +389,7 @@ where
         Some(convert::semantic_tokens(index, &tokens))
     }
 
-    /// Actions that insert inferred results into omitted annotations (spec 4.5). `null` for files
-    /// that cannot be checked.
+    /// Refactorings and diagnostic-linked quick fixes. `null` for files that cannot be checked.
     fn code_actions(
         &mut self,
         params: &lsp::CodeActionParams,
@@ -378,7 +402,32 @@ where
         let range = line_index::TextRange::new(start, end);
         let actions = F::code_actions(&program, &analysis, file, range)
             .into_iter()
+            .filter(|action| {
+                let kind = convert::code_action_kind(action.kind);
+                params.context.only.as_ref().is_none_or(|only| {
+                    only.iter().any(|requested| {
+                        requested.as_str().is_empty()
+                            || requested == &kind
+                            || kind
+                                .as_str()
+                                .starts_with(&format!("{}.", requested.as_str()))
+                    })
+                })
+            })
             .map(|action| {
+                let diagnostics = action
+                    .diagnostics
+                    .iter()
+                    .map(|d| {
+                        convert::diagnostic(
+                            d,
+                            &analysis.sources,
+                            analysis.sources[file].path(),
+                            &|p| self.uri_of(p),
+                        )
+                        .1
+                    })
+                    .collect::<Vec<_>>();
                 let edits = action
                     .edits
                     .iter()
@@ -389,7 +438,8 @@ where
                     .collect();
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: action.title,
-                    kind: Some(lsp::CodeActionKind::REFACTOR_REWRITE),
+                    kind: Some(convert::code_action_kind(action.kind)),
+                    diagnostics: (!diagnostics.is_empty()).then_some(diagnostics),
                     edit: Some(lsp::WorkspaceEdit {
                         changes: Some(HashMap::from([(uri.clone(), edits)])),
                         ..lsp::WorkspaceEdit::default()
@@ -536,6 +586,7 @@ where
             input if !input.single_file => Input::resolve(&self.fs, &input.base).ok()?,
             input => input,
         };
+        let (input, _) = with_dependencies(&self.fs, input);
         let (analysis, program) =
             emela_driver::check(&self.fs, &input, &mut (self.make_frontend)());
         let program = program?;
@@ -658,8 +709,12 @@ where
             }
         }
 
-        for input in &inputs {
-            let (analysis, _) = emela_driver::check(&self.fs, input, &mut (self.make_frontend)());
+        for input in inputs {
+            let (input, problem) = with_dependencies(&self.fs, input);
+            let input = &input;
+            let (mut analysis, _) =
+                emela_driver::check(&self.fs, input, &mut (self.make_frontend)());
+            analysis.diagnostics.extend(problem);
             // Diagnostics without a location attach to the entry, or to `Pome.toml` if none.
             let anchor = input
                 .entry
@@ -770,4 +825,39 @@ where
 
 fn parse<N: lsp::notification::Notification>(notification: Notification) -> Option<N::Params> {
     notification.extract(N::METHOD).ok()
+}
+
+/// Adds the project's dependencies from the cache. The language server does not go to the
+/// network (spec 4.7): a dependency missing from the cache, or a missing lock, is a diagnostic on
+/// `Pome.toml`, and the project is checked without dependencies. The test root and
+/// `[dev-dependencies]` are read too, like `emela check`.
+fn with_dependencies(fs: &dyn FileSystem, input: Input) -> (Input, Option<Diagnostic>) {
+    if input.single_file {
+        return (input, None);
+    }
+    let mut input = input.with_tests(fs);
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let result = emela_pome::fetch::config::Config::from_env(|k| std::env::var(k).ok(), home)
+        .map_err(emela_pome::project::PomeError::Usage)
+        .and_then(|mut config| {
+            config.sources.clear();
+            let fetcher =
+                emela_pome::fetch::Fetcher::new(config, emela_pome::fetch::transport::Http::new());
+            emela_driver::project_dependencies(fs, &input.base, &fetcher, true)
+        });
+    match result {
+        Ok(dependencies) => {
+            input.dependencies = dependencies;
+            (input, None)
+        }
+        Err(e) => {
+            let diagnostic = Diagnostic::error(format!("the dependencies cannot be used: {e}"))
+                .with_code(emela_driver::code::DEPENDENCIES_NOT_READY)
+                .with_note("run `emela pome install` to get them")
+                .at(emela_driver::Location::Path(input.base.join(PROJECT_FILE)));
+            (input, Some(diagnostic))
+        }
+    }
 }

@@ -21,12 +21,13 @@ use crate::intrinsics::Builtin;
 use crate::ir::{
     Arm, Assert, BinOp, BundledFile, Callee, CtorRef, EffectDef, EffectId, EnumDef, EnumId, Expr,
     External, ExternalBinding, FiberOp, FnId, FnSets, FnType, HostModule, HostRef, Lit, Local,
-    Module, OpDef, OpTy, Pat, SetSummary, StrPart, Type, TypeId, UnOp, VariantDef, VariantFields,
-    WithBind,
+    Module, OpDef, OpTy, Pat, PreludeTraits, SetSummary, StrPart, Type, TypeId, UnOp, VariantDef,
+    VariantFields, WithBind,
 };
 use crate::mono::Monomorphized;
 use crate::named;
 
+mod builtin_impls;
 mod fiber;
 mod suspend;
 
@@ -49,6 +50,15 @@ pub enum LowerError {
     /// host files (`LowerInput::bundled_files`). An error in the bundled sources. `path` is the
     /// specifier as written.
     MissingCoreFile { path: String, span: Option<Span> },
+    /// An exported fn of the entry has a type parameter with a trait bound (E0327, appendix B):
+    /// JS could call it at any type, so no impl can be chosen for it. Reported only for the JS
+    /// target, the one that exports the entry's `pub` fns. `span` is the position of the function
+    /// name.
+    ConstrainedExport {
+        name: String,
+        param: String,
+        span: Option<Span>,
+    },
 }
 
 /// Which fns lowering starts from.
@@ -78,8 +88,9 @@ pub struct LowerInput<'a> {
     pub modules: &'a ModuleMap,
     /// Module sources, used to cut out the expression text shown when an assert fails (spec 13.2).
     pub sources: ArenaMap<ModuleId, &'a str>,
-    /// The entry module. Its definitions' IR names get no module prefix.
-    pub entry: ModuleId,
+    /// The entry module. Its definitions' IR names get no module prefix. `None` for the tests of
+    /// a project with neither `src/main.emel` nor `src/lib.emel`.
+    pub entry: Option<ModuleId>,
     /// `@test` fns (spec 13.1), not exported in a normal build. The caller has checked that normal
     /// code does not reference them (E0227), so a normal build never reaches them and drops them.
     pub tests: Vec<DefId>,
@@ -131,9 +142,13 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
         bundled_files: input.bundled_files,
         uses_bundled: false,
         errors: Vec::new(),
+        prelude_trait_fns: FxHashMap::default(),
     };
     cx.declare_enums();
     cx.define_ctors();
+    if roots == Roots::Exported && input.target == Some("js") {
+        cx.check_constrained_exports();
+    }
     for (_, items) in hir.modules.iter() {
         for &def in &items.items {
             let is_root = match (roots, hir.item(def)) {
@@ -154,6 +169,8 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
     while let Some((def, spec)) = cx.worklist.pop() {
         cx.define_fn(def, spec);
     }
+    cx.builtin_impls();
+    cx.trait_impls();
     if cx.uses_bundled {
         // If any bundled file is used, ship them all, so relative imports between them work.
         cx.module.bundled_files = input
@@ -191,6 +208,14 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
         _ => crate::mono::exported(&cx.module),
     };
     let mono = crate::mono::monomorphize_traced(&cx.module, &mono_roots);
+    // Until derive generates impls, the type checker counts a `derive` as an impl
+    // (`emela_types::Traits::satisfies`), so a call can reach a type without one.
+    for (f, ty) in &mono.missing_impls {
+        cx.errors.push(LowerError::Unsupported {
+            what: format!("`{f}` for `{ty}`, which has no impl"),
+            span: None,
+        });
+    }
     let entries: Vec<FnId> = match roots {
         Roots::Tests => mono.roots.clone(),
         // main is exported, so it is one of the roots.
@@ -220,7 +245,7 @@ struct Lowerer<'a> {
     types: &'a ProgramTypes,
     modules: &'a ModuleMap,
     sources: &'a ArenaMap<ModuleId, &'a str>,
-    entry: ModuleId,
+    entry: Option<ModuleId>,
     tests: &'a [DefId],
     /// Comparisons collected from const patterns while lowering a pattern (`x == LIMIT()`),
     /// placed at the front of the arm's guard.
@@ -264,6 +289,8 @@ struct Lowerer<'a> {
     /// Whether a lowered external function pointed to a bundled host file.
     uses_bundled: bool,
     errors: Vec<LowerError>,
+    /// The Prelude's trait functions by trait and name, once looked up.
+    prelude_trait_fns: FxHashMap<(String, String), Option<DefId>>,
 }
 
 /// An evidence table key: the effect and its type arguments as a string (empty for effects without
@@ -808,26 +835,61 @@ impl<'a> Lowerer<'a> {
             }
             Some(Item::Fn(f)) => (
                 f.sig.params.iter().map(|p| self.local(p.local)).collect(),
-                f.body.expect("a fn with a body"),
+                Some(f.body.expect("a fn with a body")),
             ),
             // A const's value is evaluated once, at the first reference (spec 5.6).
             Some(Item::Const(c)) => {
                 self.module.functions[id].constant = true;
-                (Vec::new(), c.value)
+                (Vec::new(), Some(c.value))
             }
             Some(Item::Handler(_)) => {
                 let (params, ret, body) = self.handler(def);
                 self.module.define(id, params, ret, body);
                 return;
             }
-            _ => unreachable!("fn_id got a definition that is not a fn, const or handler"),
+            // A trait function is generic in `Self`; monomorphization replaces calls of it with
+            // calls of the impl functions ([`Lowerer::dispatch`]). With a default implementation,
+            // its body is used for impls that do not define it.
+            Some(Item::TraitFn(f)) if f.body.is_some() => {
+                self.dispatch(def, spec, true);
+                (
+                    f.sig.params.iter().map(|p| self.local(p.local)).collect(),
+                    f.body,
+                )
+            }
+            _ if hir.defs[def].kind == DefKind::TraitFn => {
+                self.dispatch(def, spec, false);
+                (self.declared_params(def), None)
+            }
+            _ => match hir.impl_fn(def) {
+                Some((_, f)) => (
+                    f.params.iter().map(|p| self.local(p.local)).collect(),
+                    Some(f.body.expect("an impl function has a body (E0135)")),
+                ),
+                None => unreachable!(
+                    "fn_id got a definition that is not a fn, const, handler, trait function or \
+                     impl function"
+                ),
+            },
         };
         if !matches!(hir.item(def), Some(Item::Const(_))) && self.takes_ev(def) {
             let ev = self.ev_local();
             params.push(ev);
             self.ev = Some(ev);
         }
-        let body = self.expr(body);
+        let body = match body {
+            Some(body) => self.expr(body),
+            // Without a default implementation the body is never called: monomorphization calls
+            // an impl function instead, and reports a type without one.
+            None => Expr::Builtin {
+                op: Builtin::Panic,
+                ty_args: Vec::new(),
+                args: vec![Expr::Lit(Lit::String(format!(
+                    "no impl of `{}`",
+                    self.ir_name(def)
+                )))],
+            },
+        };
         let (ret, type_params, set_params) = self.signature(def);
         self.module.define(id, params, ret, body);
         let fails = self.declared_fails(def);
@@ -844,6 +906,220 @@ impl<'a> Lowerer<'a> {
         if !func.constant {
             func.sets = sets;
         }
+    }
+
+    /// The function `name` of the Prelude's trait `trait_name`.
+    fn prelude_trait_fn(&self, trait_name: &str, name: &str) -> Option<DefId> {
+        let hir = self.hir;
+        let t = hir.prelude_def(trait_name)?;
+        hir.defs
+            .iter()
+            .find(|(_, d)| d.kind == DefKind::TraitFn && d.parent == Some(t) && d.name == name)
+            .map(|(def, _)| def)
+    }
+
+    /// Adds the compiler's impls of the Prelude's Eq, Ord and Show for the primitive types and
+    /// tuples (spec 10.6) to the lowered trait functions' dispatch ([`builtin_impls`]).
+    fn builtin_impls(&mut self) {
+        let lowered = |cx: &Self, t: &str, f: &str| {
+            cx.prelude_trait_fn(t, f)
+                .and_then(|def| cx.fns.get(&(def, 0)).copied())
+        };
+        let fns = PreludeTraits {
+            eq: lowered(self, "Eq", "eq"),
+            compare: lowered(self, "Ord", "compare"),
+            show: lowered(self, "Show", "show"),
+        };
+        builtin_impls::add(&mut self.module, &fns);
+        self.module.traits = fns;
+    }
+
+    /// The IR function of the Prelude's trait function `name` of `trait_name`, lowered if it is
+    /// not yet. Lowering it puts its impls in `Module::dispatch`, where monomorphization looks
+    /// for the impl of `==` and interpolation (spec 10.3).
+    fn prelude_trait_fn_id(&mut self, trait_name: &str, name: &str) -> Option<FnId> {
+        let key = (trait_name.to_owned(), name.to_owned());
+        let def = match self.prelude_trait_fns.get(&key) {
+            Some(&d) => d,
+            None => {
+                let d = self.prelude_trait_fn(trait_name, name);
+                self.prelude_trait_fns.insert(key, d);
+                d
+            }
+        }?;
+        Some(self.fn_id(def, 0))
+    }
+
+    /// Parameters with the types of the declared type, named after its labels. For a trait
+    /// function without a body, whose parameters were not inferred (or have no source, in the
+    /// Prelude).
+    fn declared_params(&mut self, def: DefId) -> Vec<Local> {
+        let types = self.types;
+        let Some(sig) = types.sigs.get(def) else {
+            return Vec::new();
+        };
+        let Ty::Fn(f) = &sig.scheme.ty else {
+            return Vec::new();
+        };
+        f.params
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let ty = self.ty(t);
+                let hint = sig.labels.get(i).cloned().flatten().unwrap_or_default();
+                self.module.local(&hint, ty)
+            })
+            .collect()
+    }
+
+    /// Records the impls of trait function `def` (copy `spec`) in `Module::dispatch`, and puts
+    /// each impl function on the worklist: which one a call needs is known only once
+    /// monomorphization knows `Self`. `default` tells whether the trait function has a body.
+    fn dispatch(&mut self, def: DefId, spec: Specialization, default: bool) {
+        let hir = self.hir;
+        let types = self.types;
+        let Some(trait_def) = hir.defs[def].parent else {
+            return;
+        };
+        let mut impls = Vec::new();
+        let mut structural = Vec::new();
+        for impl_def in types.traits.impls_of(trait_def) {
+            let (Some(Item::Impl(item)), Some(head)) =
+                (hir.item(impl_def), types.traits.head(impl_def))
+            else {
+                continue;
+            };
+            let Some(f) = item
+                .fns
+                .iter()
+                .find(|f| f.trait_fn == Res::Def(def) && types.sigs.get(f.def).is_some())
+            else {
+                continue;
+            };
+            // The impl function's set type parameters follow the impl's type parameters instead
+            // of `Self`.
+            let impl_spec = (spec >> 1) << head.params.len();
+            let pattern = self.ty(&head.self_ty);
+            let f = self.fn_id(f.def, impl_spec);
+            impls.push((pattern, f));
+            // The impls of core for `List` and `Option` give what the structure gives (spec
+            // 10.6). Other impls in core and std, such as Duration's Show, do not.
+            let in_core = match hir.defs[impl_def].module {
+                DefModule::Source(m) => self.modules.is_core(m),
+                DefModule::Prelude | DefModule::Builtin(_) => true,
+            };
+            let list_or_option = match self.module.ty(pattern) {
+                Type::List(_) => true,
+                Type::Enum(id, _) => self.module.option == Some(*id),
+                _ => false,
+            };
+            if in_core && list_or_option {
+                structural.push(f);
+            }
+        }
+        let derived = self.derived(trait_def, def);
+        let id = self.fns[&(def, spec)];
+        self.module.dispatch.insert(
+            id,
+            crate::ir::Dispatch {
+                impls,
+                structural,
+                default,
+                derived,
+            },
+        );
+    }
+
+    /// Fills `Module::trait_impls` and `Module::show_trait`: every trait's impls, written and
+    /// derived, with the constraints of their type parameters (`impl Wrap[A: Eq]: Show`), so that
+    /// monomorphization can tell whether a type satisfies Show (spec 10.6).
+    fn trait_impls(&mut self) {
+        use crate::ir::{DeriveOp, TraitImpls};
+        let hir = self.hir;
+        let types = self.types;
+        let traits: Vec<DefId> = hir
+            .defs
+            .iter()
+            .filter(|(_, d)| d.kind == DefKind::Trait)
+            .map(|(def, _)| def)
+            .collect();
+        let index: FxHashMap<DefId, usize> =
+            traits.iter().enumerate().map(|(i, &d)| (d, i)).collect();
+        let mut table = Vec::with_capacity(traits.len());
+        for &trait_def in &traits {
+            let name = hir.defs[trait_def].name.as_str();
+            let builtin = if hir.prelude_def(name) == Some(trait_def) {
+                match name {
+                    "Eq" => Some(DeriveOp::Eq),
+                    "Ord" => Some(DeriveOp::Compare),
+                    "Show" => Some(DeriveOp::Show),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let heads: Vec<_> = types
+                .traits
+                .impls_of(trait_def)
+                .into_iter()
+                .filter_map(|i| types.traits.head(i).cloned())
+                .chain(
+                    types
+                        .traits
+                        .derived_of(trait_def)
+                        .into_iter()
+                        .filter_map(|ty| types.traits.derived(trait_def, ty))
+                        .map(|d| d.head.clone()),
+                )
+                .collect();
+            let impls = heads
+                .iter()
+                .map(|head| {
+                    let pattern = self.ty(&head.self_ty);
+                    let bounds = head
+                        .params
+                        .iter()
+                        .map(|p| {
+                            p.traits
+                                .iter()
+                                .filter_map(|t| index.get(t).copied())
+                                .collect()
+                        })
+                        .collect();
+                    (pattern, bounds)
+                })
+                .collect();
+            table.push(TraitImpls { builtin, impls });
+        }
+        self.module.show_trait = hir.prelude_def("Show").and_then(|d| index.get(&d).copied());
+        self.module.trait_impls = table;
+    }
+
+    /// For a function of a derivable trait of the Prelude (`Eq.eq`, `Ord.compare`, `Show.show`),
+    /// the enums whose `derive` lists the trait (spec 10.5). Bool is `TypeId::BOOL`, not an enum.
+    fn derived(&self, trait_def: DefId, def: DefId) -> Option<crate::ir::Derived> {
+        use crate::ir::DeriveOp;
+        let hir = self.hir;
+        if hir.prelude_def(&hir.defs[trait_def].name) != Some(trait_def) {
+            return None;
+        }
+        let op = match (
+            hir.defs[trait_def].name.as_str(),
+            hir.defs[def].name.as_str(),
+        ) {
+            ("Eq", "eq") => DeriveOp::Eq,
+            ("Ord", "compare") => DeriveOp::Compare,
+            ("Show", "show") => DeriveOp::Show,
+            _ => return None,
+        };
+        let enums = self
+            .types
+            .traits
+            .derived_of(trait_def)
+            .into_iter()
+            .filter_map(|ty| self.enums.get(ty).copied())
+            .collect();
+        Some(crate::ir::Derived { op, enums })
     }
 
     /// Whether the declared (or generalized) type's E is not empty. Opaque sets (set type
@@ -1790,7 +2066,7 @@ impl<'a> Lowerer<'a> {
 
     /// The IR function of the entry module's `main`.
     fn entry_main(&self) -> Option<FnId> {
-        let items = self.hir.modules.get(self.entry)?;
+        let items = self.hir.modules.get(self.entry?)?;
         items.items.iter().find_map(|&def| {
             let data = &self.hir.defs[def];
             (data.name == "main" && data.kind == DefKind::Fn)
@@ -1939,7 +2215,25 @@ impl<'a> Lowerer<'a> {
                 body: Box::new(self.expr(*expr)),
                 arms: arms.iter().map(|arm| self.arm(arm)).collect(),
             },
-            ExprKind::Fail(inner) => Expr::Fail(Box::new(self.expr(*inner))),
+            ExprKind::Fail(inner) => {
+                // An error reaching the entry is shown by its Show, through the impls if any
+                // are written (monomorphization's `error_display`, spec 14.3).
+                let shown = match self.expr_ty(*inner) {
+                    Ty::Named(con, _) => {
+                        let def = self.types.ty_table.def(*con);
+                        let traits = &self.types.traits;
+                        hir.prelude_def("Show").is_some_and(|show| {
+                            traits.impl_of(show, def).is_some()
+                                || traits.derived(show, def).is_some()
+                        })
+                    }
+                    _ => true,
+                };
+                if shown {
+                    self.prelude_trait_fn_id("Show", "show");
+                }
+                Expr::Fail(Box::new(self.expr(*inner)))
+            }
             ExprKind::Use { .. } => self.use_(id, e.span),
             ExprKind::With { handlers, body } => self.with(id, handlers, *body, e.span),
         }
@@ -1999,6 +2293,13 @@ impl<'a> Lowerer<'a> {
             // lambda.
             Some(Item::Fn(f)) if f.is_intrinsic => self.wrap_in_lambda(id, span),
             Some(Item::Fn(_)) => self.fn_value(def, id),
+            _ if self.hir.defs[def].kind == DefKind::TraitFn => {
+                if self.has_generic_tags(def) {
+                    self.wrap_in_lambda(id, span)
+                } else {
+                    self.fn_value(def, id)
+                }
+            }
             Some(Item::Ctor(_) | Item::Error(_)) => match self.ctors.get(def) {
                 Some(&ctor) if self.module.variant(ctor).fields.is_empty() => Expr::Ctor {
                     ctor,
@@ -2189,6 +2490,7 @@ impl<'a> Lowerer<'a> {
         let ExprKind::Path(Res::Def(def)) = hir.exprs[callee].kind else {
             return Ok(Target::Value(self.expr(callee), call, ev));
         };
+        let is_trait_fn = hir.defs[def].kind == DefKind::TraitFn;
         match hir.item(def) {
             Some(Item::Fn(f)) if f.body.is_some() => {
                 let ev = self
@@ -2217,6 +2519,24 @@ impl<'a> Lowerer<'a> {
                     Some(tys) => tys.iter().map(|t| self.ty(t)).collect(),
                     None => Vec::new(),
                 };
+                // Monomorphization turns it into a call of `Show.show` (`Module::traits`), and
+                // `dbg` and `inspect` call it for a type with a written Show impl (spec 10.6).
+                let basic = ty_args.first().is_some_and(|&t| {
+                    matches!(
+                        self.module.ty(t),
+                        Type::Int
+                            | Type::Int64
+                            | Type::Float
+                            | Type::Bool
+                            | Type::String
+                            | Type::Unit
+                    )
+                });
+                if op == Builtin::ShowNested
+                    || matches!(op, Builtin::Dbg | Builtin::Inspect) && !basic
+                {
+                    self.prelude_trait_fn_id("Show", "show");
+                }
                 Ok(Target::Builtin { op, ty_args })
             }
             // External functions do not fail (spec 12.5), and their R is empty or only Async
@@ -2234,6 +2554,15 @@ impl<'a> Lowerer<'a> {
                 Some(&ctor) => Ok(Target::Ctor(ctor, self.ty_args(def, callee))),
                 None => Err(self.unsupported("this constructor", span)),
             },
+            // A trait function, called directly; monomorphization picks the impl (spec 10.3).
+            _ if is_trait_fn => {
+                let ev = self
+                    .takes_ev(def)
+                    .then(|| self.generic_ev(def, callee, self.ev_arg()));
+                let f = self.fn_ref(def, callee);
+                let ty_args = self.ty_args(def, callee);
+                Ok(Target::Direct(f, ty_args, self.direct_call(f, call), ev))
+            }
             _ => Ok(Target::Value(self.expr(callee), call, ev)),
         }
     }
@@ -2408,10 +2737,16 @@ impl<'a> Lowerer<'a> {
             BinaryOp::Mul => (BinOp::Mul, operand),
             BinaryOp::Div => (BinOp::Div, operand),
             BinaryOp::Rem => (BinOp::Rem, operand),
-            // Equality of non-primitive values compares structure.
-            BinaryOp::Eq => (BinOp::Eq, operand.or(Some(OpTy::Structural))),
-            BinaryOp::Ne => (BinOp::Ne, operand.or(Some(OpTy::Structural))),
-            // Ordering (Ord) of non-primitive values waits for traits.
+            // Equality of other values goes through Eq: monomorphization compares by structure
+            // where Eq gives the same, and calls `Eq.eq` otherwise (spec 10.3, 10.6).
+            BinaryOp::Eq => (BinOp::Eq, Some(self.eq_op_ty(operand))),
+            BinaryOp::Ne => (BinOp::Ne, Some(self.eq_op_ty(operand))),
+            // Ordering of other values is `Ord.compare` (spec 10.3).
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge if operand.is_none() => {
+                let ty = self.ty(self.expr_ty(lhs));
+                let (a, b) = (self.expr(lhs), self.expr(rhs));
+                return self.compare(op, ty, a, b, span);
+            }
             BinaryOp::Lt => (BinOp::Lt, operand),
             BinaryOp::Le => (BinOp::Le, operand),
             BinaryOp::Gt => (BinOp::Gt, operand),
@@ -2431,14 +2766,73 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The operand type of `==` on values whose primitive operand type is `operand`:
+    /// `OpTy::Structural` if not primitive, and then `Eq.eq` is lowered for monomorphization.
+    fn eq_op_ty(&mut self, operand: Option<OpTy>) -> OpTy {
+        operand.unwrap_or_else(|| {
+            self.prelude_trait_fn_id("Eq", "eq");
+            OpTy::Structural
+        })
+    }
+
+    /// `lhs < rhs` (and `<=`, `>`, `>=`) on values that are not primitive:
+    /// `Ord.compare(lhs, rhs) match { Less -> True, _ -> False }` and so on (spec 10.3).
+    fn compare(&mut self, op: BinaryOp, ty: TypeId, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+        let hir = self.hir;
+        let (Some(compare), Some(less), Some(greater)) = (
+            self.prelude_trait_fn_id("Ord", "compare"),
+            hir.prelude_def("Less")
+                .and_then(|d| self.ctors.get(d).copied()),
+            hir.prelude_def("Greater")
+                .and_then(|d| self.ctors.get(d).copied()),
+        ) else {
+            return self.unsupported("this operator on this type", span);
+        };
+        // The variant that decides, and the answer when it is the result.
+        let (ctor, when) = match op {
+            BinaryOp::Lt => (less, true),
+            BinaryOp::Le => (greater, false),
+            BinaryOp::Gt => (greater, true),
+            _ => (less, false),
+        };
+        let call = Expr::Call {
+            callee: Callee::Direct {
+                f: compare,
+                ty_args: vec![ty],
+            },
+            args: vec![lhs, rhs],
+            fails: false,
+            suspends: false,
+        };
+        Expr::Match {
+            scrutinee: Box::new(call),
+            arms: vec![
+                Arm {
+                    pat: Pat::Ctor {
+                        ctor,
+                        fields: Vec::new(),
+                    },
+                    guard: None,
+                    body: Expr::Lit(Lit::Bool(when)),
+                },
+                Arm {
+                    pat: Pat::Wild,
+                    guard: None,
+                    body: Expr::Lit(Lit::Bool(!when)),
+                },
+            ],
+        }
+    }
+
     /// `None` unless it is a primitive type.
     fn op_ty(&self, operand: ExprId) -> Option<OpTy> {
         prim_op_ty(self.expr_ty(operand))
     }
 
-    /// `assert expr` (spec 13.2). A comparison becomes the form that shows both sides
-    /// (`Assert::compare`). If the sides' type cannot be shown (it contains type parameters or
-    /// functions), it falls back to the form that shows no values (`Assert::bool`).
+    /// `assert expr` (spec 13.2). A comparison becomes the form that shows both sides with the
+    /// debug display (`Assert::compare`, `inspect` in spec 10.6), which shows functions as `<fn>`
+    /// and needs no Show. Only a side holding a capability value falls back to the form that
+    /// shows no values (`Assert::bool`).
     fn assert(&mut self, cond: ExprId) -> Expr {
         let hir = self.hir;
         let c = &hir.exprs[cond];
@@ -2449,14 +2843,26 @@ impl<'a> Lowerer<'a> {
             let ty = self.ty(self.expr_ty(*lhs));
             let op_ty = match (self.op_ty(*lhs), bin) {
                 (Some(t), _) => Some(t),
-                (None, BinOp::Eq | BinOp::Ne) => Some(OpTy::Structural),
+                (None, BinOp::Eq | BinOp::Ne) => Some(self.eq_op_ty(None)),
                 (None, _) => None,
             };
-            if let Some(op_ty) = op_ty
-                && unshowable(&self.module, ty).is_none()
-            {
-                let (lhs, rhs) = (self.expr(*lhs), self.expr(*rhs));
-                return Assert::compare(bin, op_ty, ty, lhs, rhs, text);
+            if unshowable(&self.module, ty, true).is_none() {
+                // Monomorphization shows the sides through a written Show impl (spec 10.6).
+                if prim_op_ty(self.expr_ty(*lhs)).is_none() {
+                    self.prelude_trait_fn_id("Show", "show");
+                }
+                let (l, r) = (self.expr(*lhs), self.expr(*rhs));
+                if let Some(op_ty) = op_ty {
+                    return Assert::compare(bin, op_ty, ty, l, r, text);
+                }
+                // An ordering through `Ord.compare`: the sides are bound first and shown if it
+                // fails (spec 13.2).
+                let (a, b) = (
+                    self.module.local("left", ty),
+                    self.module.local("right", ty),
+                );
+                let decide = self.compare(*op, ty, Expr::Var(a), Expr::Var(b), c.span);
+                return Assert::shown(decide, bin, ty, (a, l), (b, r), text);
             }
         }
         let cond = self.expr(cond);
@@ -2581,8 +2987,13 @@ impl<'a> Lowerer<'a> {
                 HirStrPart::Text(s) => StrPart::Lit(s.clone()),
                 HirStrPart::Interp(e) => {
                     let ty = self.ty(self.expr_ty(*e));
-                    if let Some(what) = unshowable(&self.module, ty) {
+                    if let Some(what) = unshowable(&self.module, ty, false) {
                         self.report(what, self.hir.exprs[*e].span);
+                    }
+                    // Monomorphization shows by structure where Show gives the same, and calls
+                    // `Show.show` otherwise (spec 10.3, 10.6).
+                    if prim_op_ty(self.expr_ty(*e)).is_none() {
+                        self.prelude_trait_fn_id("Show", "show");
                     }
                     StrPart::Value(self.expr(*e), ty)
                 }
@@ -2717,7 +3128,7 @@ impl<'a> Lowerer<'a> {
                 let types = self.types;
                 let x_ty = self.ty(&types.pats[id]);
                 let x = self.module.local("c", x_ty);
-                let ty = prim_op_ty(&types.pats[id]).unwrap_or(OpTy::Structural);
+                let ty = self.eq_op_ty(prim_op_ty(&types.pats[id]));
                 let value = Expr::Call {
                     callee: Callee::Direct {
                         f: self.fn_id(*def, 0),
@@ -2771,24 +3182,86 @@ impl<'a> Lowerer<'a> {
 
     /// The name in the IR: definitions of the entry module keep their names; others get the
     /// module name (`List.map`).
+    ///
+    /// A trait function is named after its trait (`Show.show`), an impl function after its type
+    /// and trait (`User: Show.show`).
     fn ir_name(&self, def: DefId) -> String {
-        let data = &self.hir.defs[def];
+        let hir = self.hir;
+        let data = &hir.defs[def];
+        let name = match data.kind {
+            DefKind::TraitFn => match data.parent {
+                Some(t) => format!("{}.{}", hir.defs[t].name, data.name),
+                None => data.name.to_string(),
+            },
+            DefKind::ImplFn => {
+                let head = data
+                    .parent
+                    .and_then(|i| self.types.traits.head(i))
+                    .map(|h| (h.ty_def, h.trait_def));
+                match head {
+                    Some((ty, t)) => {
+                        format!("{}: {}.{}", hir.defs[ty].name, hir.defs[t].name, data.name)
+                    }
+                    None => data.name.to_string(),
+                }
+            }
+            _ => data.name.to_string(),
+        };
         match &data.module {
-            DefModule::Source(m) if *m == self.entry => data.name.to_string(),
-            DefModule::Source(m) => format!("{}.{}", self.modules[*m].name, data.name),
-            DefModule::Prelude => data.name.to_string(),
-            DefModule::Builtin(m) => format!("{m}.{}", data.name),
+            DefModule::Source(m) if Some(*m) == self.entry => name,
+            DefModule::Source(m) => format!("{}.{name}", self.modules[*m].name),
+            DefModule::Prelude => name,
+            DefModule::Builtin(m) => format!("{m}.{name}"),
         }
     }
 
     /// Whether to export in JS: the entry module's `pub` fns and `main` (called by the entry
     /// module). Test functions are excluded (for `emela test`, the test runner exports them).
+    /// Whether `def` is a fn the entry exports: `pub` or `main`, but not a test function, and not
+    /// one with a trait-bounded type parameter (E0327 on JS; on C and WASM only main is used).
     fn is_exported(&self, def: DefId) -> bool {
+        self.exports(def) && self.bounded_param(def).is_none()
+    }
+
+    /// Whether `def` is a fn the entry would export, regardless of its type parameters.
+    fn exports(&self, def: DefId) -> bool {
         let data = &self.hir.defs[def];
         data.kind == DefKind::Fn
-            && data.module == DefModule::Source(self.entry)
+            && self
+                .entry
+                .is_some_and(|entry| data.module == DefModule::Source(entry))
             && (data.is_pub || data.name == "main")
             && !self.tests.contains(&def)
+    }
+
+    /// The name of the first type parameter of `def` with a trait bound.
+    fn bounded_param(&self, def: DefId) -> Option<&str> {
+        let sig = self.types.sigs.get(def)?;
+        sig.scheme
+            .params
+            .iter()
+            .find(|p| !p.traits.is_empty())
+            .map(|p| p.name.as_str())
+    }
+
+    /// Reports the entry's exported fns with a trait-bounded type parameter (E0327, appendix B),
+    /// in declaration order.
+    fn check_constrained_exports(&mut self) {
+        let Some(items) = self.entry.and_then(|entry| self.hir.modules.get(entry)) else {
+            return;
+        };
+        for &def in &items.items {
+            if !matches!(self.hir.item(def), Some(Item::Fn(_))) || !self.exports(def) {
+                continue;
+            }
+            if let Some(param) = self.bounded_param(def) {
+                self.errors.push(LowerError::ConstrainedExport {
+                    name: self.hir.defs[def].name.to_string(),
+                    param: param.to_owned(),
+                    span: self.hir.defs[def].span,
+                });
+            }
+        }
     }
 }
 
@@ -2980,16 +3453,16 @@ fn is_atomic(e: &Expr) -> bool {
     )
 }
 
-/// Why the type cannot be shown in interpolation, if it cannot. Type parameter values need Show
-/// dictionary passing or monomorphization (traits come in 0.21). Functions cannot be shown
-/// (spec 10.6), but the Show check comes with traits.
-fn unshowable(m: &Module, ty: TypeId) -> Option<&'static str> {
+/// Why the type cannot be shown, if it cannot. Type parameters are resolved by
+/// monomorphization, which also substitutes the types carried by `StrPart::Value` and
+/// `AssertCond::Compare`. Functions cannot be shown in interpolation (spec 10.6), but the Show
+/// check comes with traits; the debug display (`inspect`) shows them as `<fn>`.
+fn unshowable(m: &Module, ty: TypeId, inspect: bool) -> Option<&'static str> {
     match m.ty(ty) {
-        Type::Param(_) => Some("showing a value of a type parameter"),
-        Type::Fn(_) => Some("showing a function"),
+        Type::Fn(_) if !inspect => Some("showing a function"),
         Type::Handler(_) => Some("showing a capability value"),
-        Type::Tuple(ts) | Type::Enum(_, ts) => ts.iter().find_map(|&t| unshowable(m, t)),
-        Type::List(t) => unshowable(m, *t),
+        Type::Tuple(ts) | Type::Enum(_, ts) => ts.iter().find_map(|&t| unshowable(m, t, inspect)),
+        Type::List(t) => unshowable(m, *t, inspect),
         _ => None,
     }
 }

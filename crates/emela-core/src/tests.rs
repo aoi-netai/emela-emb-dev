@@ -51,6 +51,17 @@ fn loopify_rewrites_tail_self_call() {
 }
 
 #[test]
+fn loopify_does_not_rewrite_const_initializers() {
+    let mut m = Module::new();
+    let constant = m.declare("A", false);
+    m.functions[constant].constant = true;
+    m.define(constant, vec![], TypeId::INT, call(constant, vec![]));
+
+    assert!(!tail::loopify_function(&mut m, constant));
+    assert_eq!(m.functions[constant].body, call(constant, vec![]));
+}
+
+#[test]
 fn loopify_leaves_non_tail_calls() {
     // fn sum(n) = if n == 0 then 0 else n + sum(n - 1)
     let mut m = Module::new();
@@ -262,6 +273,7 @@ fn builtin_names_are_unique_and_found_by_lookup() {
         Some(Builtin::StringLength)
     );
     assert_eq!(Builtin::lookup(None, "dbg"), Some(Builtin::Dbg));
+    assert_eq!(Builtin::lookup(None, "inspect"), Some(Builtin::Inspect));
     // Prelude functions are not qualified.
     assert_eq!(Builtin::lookup(Some("Prelude"), "panic"), None);
     assert_eq!(Builtin::lookup(Some("List"), "map"), None);
@@ -286,6 +298,7 @@ fn builtin_schemes() {
     assert_eq!(show(Builtin::Todo), "fn() -> Never");
     assert_eq!(show(Builtin::Dbg), "∀ A. fn(A) -> A");
     assert_eq!(Builtin::Dbg.info().path(), "dbg");
+    assert_eq!(show(Builtin::Inspect), "∀ A. fn(A) -> String");
     assert_eq!(Builtin::Int64FromInt.info().path(), "Int64.from_int");
 }
 

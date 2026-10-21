@@ -44,6 +44,9 @@ impl Deriver for BackendDeriver {
         ty: TypeId,
         name: &str,
     ) -> Option<Function> {
+        if kind == DeriveKind::ErrorName {
+            return None;
+        }
         if !self.contains(core, ty, &mut HashSet::new()) {
             return None;
         }
@@ -59,6 +62,7 @@ impl Deriver for BackendDeriver {
                 b.set_ret(TypeId::STRING);
                 "show"
             }
+            DeriveKind::ErrorName => unreachable!("error names use the ordinary Flow derivation"),
         };
         Some(b.finish_external(External {
             bindings: vec![ExternalBinding {

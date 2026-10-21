@@ -44,8 +44,28 @@ pub const ENTRY_WITHOUT_MAIN: &str = "E0230";
 pub const CONST_CYCLE: &str = "E0231";
 // `[build].target` of Pome.toml (spec 4.7)
 pub const UNKNOWN_BUILD_TARGET: &str = "E0232";
+/// `@external` in a dependency that `[external] allow` does not allow (spec 4.7, chapter 12).
+pub const EXTERNAL_IN_DEPENDENCY: &str = "E0233";
+/// A dependency needs a newer compiler (`[pome].emela`, spec 4.7).
+pub const NEWER_COMPILER_NEEDED: &str = "E0234";
+/// A root name of a dependency that cannot be a module name (spec 4.7).
+pub const INVALID_ROOT_NAME: &str = "E0235";
+/// The dependencies of `Pome.toml` cannot be used: no lock, or not in the cache for the language
+/// server (spec 4.7).
+pub const DEPENDENCIES_NOT_READY: &str = "E0236";
+/// A `pub` `@external` fn in a dependency (spec 4.7).
+pub const PUB_EXTERNAL_IN_DEPENDENCY: &str = "E0237";
+/// A dependency whose `[pome].targets` does not include the build target (spec 4.7).
+pub const UNSUPPORTED_TARGET: &str = "E0238";
+/// A module of the source root imports a module of the test root or a `[dev-dependencies]` Pome
+/// (spec 4.7, 13.1).
+pub const TEST_ONLY_MODULE: &str = "E0239";
 pub const SHADOWED_BY_TYPE_PARAM: &str = "W0201";
 pub const SHADOWS_PRELUDE: &str = "W0202";
+/// A dependency written for an older minor version of the compiler (`[pome].emela`, spec 4.7).
+pub const OLDER_COMPILER_DEPENDENCY: &str = "W0203";
+/// A Pome in `[external] allow` that is not depended on (spec 4.7).
+pub const UNUSED_EXTERNAL_ALLOW: &str = "W0204";
 
 // E03xx: types
 pub const TYPE_MISMATCH: &str = "E0301";
@@ -75,8 +95,22 @@ pub const IMMEDIATE_ON_NON_EFFECT: &str = "E0322";
 // Sets as declaration type arguments (spec 9.2)
 pub const SET_ARG_MISMATCH: &str = "E0323";
 pub const SET_AS_TYPE: &str = "E0324";
+// Required trait methods (spec 10.2)
+pub const INCOMPLETE_IMPL: &str = "E0325";
+// Traits (spec 10.1–10.3)
+pub const NOT_IMPLEMENTED: &str = "E0326";
+/// Found by lowering for the JS target, which exports the entry's `pub` fns (appendix B).
+pub const CONSTRAINED_EXPORT: &str = "E0327";
+/// Found by name resolution, which sees the names in the head.
+pub const IMPL_HEAD: &str = "E0328";
+pub const SUPERTRAIT_CYCLE: &str = "E0329";
+pub const DUPLICATE_IMPL: &str = "E0330";
+pub const ORPHAN_IMPL: &str = "E0331";
+pub const IMPL_FN_PARAM_COUNT: &str = "E0332";
+pub const AMBIGUOUS_SELF: &str = "E0333";
 pub const UNREACHABLE_MATCH_ARM: &str = "W0301";
 pub const UNRAISED_ERROR: &str = "W0302";
+pub const UNUSED_DERIVE: &str = "W0303";
 pub const UNUSED_LABEL_PROVIDER: &str = "W0401";
 
 // E04xx: effects and handlers (spec chapter 8)

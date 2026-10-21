@@ -43,7 +43,7 @@ effect Clock {
   fn now() -> Int
 }
 
-handler Fixed implements Clock {
+handler Fixed: Clock {
   fn now() { 42 }
 }
 
@@ -57,6 +57,74 @@ fn main() {
 ",
     )]));
     insta::assert_snapshot!(parts(&m, &["fn main(", "fn List.map[", "fn List.fold["]));
+}
+
+/// A trait function call becomes a call of the impl function for the type, with the impl's type
+/// parameters taken from the type (`Box[Point]` gives `A = Point`). A default implementation is
+/// copied per type, and calls inside it pick the impl too (spec 10.3).
+#[test]
+fn trait_calls_pick_the_impl() {
+    let m = mono(&lower_files(&[(
+        "main.emel",
+        "\
+type Point(x: Int)
+type Box[A](value: A)
+
+trait Size {
+  fn size(self) -> Int
+
+  fn double(self) -> Int { Size.size(self) * 2 }
+}
+
+impl Point: Size {
+  fn size(self) { self.x }
+}
+
+impl Box[A: Size]: Size {
+  fn size(self) { Size.size(self.value) + 1 }
+}
+
+fn main() {
+  dbg(Size.size(Box(value: Point(x: 1))))
+  dbg(Size.double(Point(x: 2)))
+}
+",
+    )]));
+    insta::assert_snapshot!(parts(&m, &["fn main(", "Size."]));
+}
+
+/// A derived impl is generated per type (spec 10.5). Eq of a type that reaches no written impl
+/// compares the structure as a whole; Show of a type with a field that has a written impl goes
+/// field by field; Ord compares the constructors' indices, then the fields.
+#[test]
+fn derived_impls_are_generated_per_type() {
+    let m = mono(&lower_files(&[(
+        "main.emel",
+        "\
+type Name(value: String)
+
+impl Name: Show {
+  fn show(self) { self.value }
+}
+
+type User(id: Int, name: Name, nick: String) derive Show
+
+type Point(x: Int, y: Int) derive Eq, Ord
+
+enum Shape {
+  Dot
+  Line(Point, Point)
+}
+  derive Eq, Ord
+
+fn main() {
+  dbg(Show.show(User(id: 1, name: Name(value: \"a\"), nick: \"b\")))
+  dbg(Eq.eq(Point(x: 1, y: 2), Point(x: 1, y: 2)))
+  dbg(Ord.compare(Dot, Line(Point(x: 1, y: 2), Point(x: 3, y: 4))))
+}
+",
+    )]));
+    insta::assert_snapshot!(parts(&m, &["fn main(", ": Eq.", ": Ord.", ": Show."]));
 }
 
 /// Option, nested generic types and a generic function calling another with its own type
@@ -191,7 +259,7 @@ effect Clock {
   suspend fn sleep(ms: Int) -> Int
 }
 
-handler InstantClock implements Clock {
+handler InstantClock: Clock {
   suspend fn sleep(ms, resume) { resume(ms) }
 }
 
@@ -246,7 +314,7 @@ effect Log {
   fn info(msg: String) -> ()
 }
 
-handler Quiet implements Log {
+handler Quiet: Log {
   fn info(msg) { () }
 }
 

@@ -375,6 +375,7 @@ impl Client {
                 .map(|a| match a {
                     lsp::CodeActionOrCommand::CodeAction(a) => {
                         assert_eq!(a.kind, Some(lsp::CodeActionKind::REFACTOR_REWRITE));
+                        assert!(a.diagnostics.is_none());
                         let edits = a
                             .edit
                             .unwrap()
@@ -393,6 +394,51 @@ impl Client {
                 })
                 .collect(),
         )
+    }
+
+    fn quickfixes(
+        &mut self,
+        path: &str,
+        start: (u32, u32),
+        end: (u32, u32),
+    ) -> Vec<lsp::CodeAction> {
+        let id = self.request(
+            CodeActionRequest::METHOD,
+            json!({
+                "textDocument": { "uri": uri(path) },
+                "range": range(start, end),
+                "context": { "diagnostics": [], "only": ["quickfix"] },
+            }),
+        );
+        let actions: Vec<lsp::CodeAction> =
+            serde_json::from_value(self.response(&id).response_result.unwrap()).unwrap();
+        for action in &actions {
+            assert_eq!(action.kind, Some(lsp::CodeActionKind::QUICKFIX));
+            assert_eq!(action.diagnostics.as_ref().unwrap().len(), 1);
+            assert!(action.diagnostics.as_ref().unwrap()[0].code.is_some());
+            assert_eq!(
+                action
+                    .edit
+                    .as_ref()
+                    .unwrap()
+                    .changes
+                    .as_ref()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(
+                action
+                    .edit
+                    .as_ref()
+                    .unwrap()
+                    .changes
+                    .as_ref()
+                    .unwrap()
+                    .contains_key(&uri(path))
+            );
+        }
+        actions
     }
 
     /// Returns semantic tokens in absolute positions. `range` asks for `semanticTokens/range`
@@ -592,6 +638,29 @@ fn import_errors_go_to_the_importing_file() {
     assert!(published[0].diagnostics.is_empty());
     assert_eq!(published[1].uri, uri("/app/src/util.emel"));
     assert_eq!(codes(&published[1]), ["E0205"]);
+    client.shutdown();
+}
+
+/// The server does not go to the network: dependencies it cannot use (here, no `Pome.lock`) are
+/// reported on `Pome.toml` (spec 4.7).
+#[test]
+fn reports_dependencies_that_cannot_be_used() {
+    let manifest = "[pome]\nname = \"github.com/me/app\"\nversion = \"0.1.0\"\nemela = \"0.21.0\"\n\n[dependencies]\n\"github.com/acme/x\" = \"v1.0.0\"\n";
+    let files = [
+        ("/app/Pome.toml", manifest),
+        ("/app/src/main.emel", "const X = 1\n"),
+    ];
+    let client = Client::initialize(&files, Some("/app"), ParseOnly::new);
+    let published = client.diagnostics();
+    assert_eq!(published.uri, uri("/app/Pome.toml"));
+    assert_eq!(codes(&published), ["E0236"]);
+    assert!(
+        published.diagnostics[0]
+            .message
+            .contains("emela pome install"),
+        "{:?}",
+        published.diagnostics
+    );
     client.shutdown();
 }
 
@@ -885,7 +954,7 @@ fn hover_on_negative_number_pattern() {
 
 #[test]
 fn hover_shows_effects() {
-    let src = "effect Logger {\n  fn info(msg: String) -> ()\n}\n\nhandler Quiet implements Logger {\n  fn info(msg) { () }\n}\n\nfn greet() {\n  log = use Logger\n  log.info(\"hi\")\n}\n\nfn main() {\n  with Quiet { greet() }\n}\n";
+    let src = "effect Logger {\n  fn info(msg: String) -> ()\n}\n\nhandler Quiet: Logger {\n  fn info(msg) { () }\n}\n\nfn greet() {\n  log = use Logger\n  log.info(\"hi\")\n}\n\nfn main() {\n  with Quiet { greet() }\n}\n";
     let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
@@ -927,7 +996,7 @@ fn hover_shows_effects() {
 /// `suspend`, and handler names show their dependencies.
 #[test]
 fn hover_shows_suspend_and_async() {
-    let src = "effect Clock {\n  suspend fn sleep(ms: Int) -> ()\n}\n\n@external(js, \"setTimeout\")\nfn set_timeout(ms: Int, f: fn() -> ()) -> ()\n\nhandler JsClock implements Clock {\n  suspend fn sleep(ms, resume) {\n    set_timeout(ms, fn() { resume(()) })\n  }\n}\n\nfn main() {\n  with JsClock { (use Clock).sleep(1) }\n}\n";
+    let src = "effect Clock {\n  suspend fn sleep(ms: Int) -> ()\n}\n\n@external(js, \"setTimeout\")\nfn set_timeout(ms: Int, f: fn() -> ()) -> ()\n\nhandler JsClock: Clock {\n  suspend fn sleep(ms, resume) {\n    set_timeout(ms, fn() { resume(()) })\n  }\n}\n\nfn main() {\n  with JsClock { (use Clock).sleep(1) }\n}\n";
     let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
@@ -940,7 +1009,7 @@ fn hover_shows_suspend_and_async() {
     );
     assert_eq!(
         text(client.hover("/app/src/main.emel", 7, 10)),
-        "```emela\nhandler JsClock implements Clock\nuse Async\n```"
+        "```emela\nhandler JsClock: Clock\nuse Async\n```"
     );
     // `resume` takes the operation's return type and returns `()`.
     assert_eq!(
@@ -964,7 +1033,7 @@ fn hover_shows_suspend_and_async() {
 /// the unmet dependencies; `self` shows the handler value's type.
 #[test]
 fn hover_shows_stateful_handlers_and_layers() {
-    let src = "error Down\n\neffect Config {\n  fn url() -> String\n}\n\neffect Users {\n  fn find(id: Int) -> String\n}\n\nfn connect(url: String) -> String fails Down { url }\n\nhandler DbUsers(conn: String) implements Users {\n  init { DbUsers(conn: connect((use Config).url())) }\n  fn find(id) { self.conn }\n}\n\nlayer App {\n  DbUsers\n}\n";
+    let src = "error Down\n\neffect Config {\n  fn url() -> String\n}\n\neffect Users {\n  fn find(id: Int) -> String\n}\n\nfn connect(url: String) -> String fails Down { url }\n\nhandler DbUsers(conn: String): Users {\n  init { DbUsers(conn: connect((use Config).url())) }\n  fn find(id) { self.conn }\n}\n\nlayer App {\n  DbUsers\n}\n";
     let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
@@ -973,7 +1042,7 @@ fn hover_shows_stateful_handlers_and_layers() {
     };
     assert_eq!(
         text(client.hover("/app/src/main.emel", 12, 10)),
-        "```emela\nhandler DbUsers(conn: String) implements Users\ninit fails Down\nuse Config\n```"
+        "```emela\nhandler DbUsers(conn: String): Users\ninit fails Down\nuse Config\n```"
     );
     assert_eq!(
         text(client.hover("/app/src/main.emel", 14, 16)),
@@ -986,11 +1055,11 @@ fn hover_shows_stateful_handlers_and_layers() {
     client.shutdown();
 }
 
-/// Effects with type arguments (spec 8.1). The handler name shows `implements Cell[Int]`, a
+/// Effects with type arguments (spec 8.1). The handler name shows `handler H: Cell[Int]`, a
 /// capability shows `use Cell[Int]`, and an operation shows its type with the arguments substituted.
 #[test]
 fn hover_shows_effect_type_args() {
-    let src = "effect Cell[S] {\n  fn get() -> S\n}\n\nhandler Zero implements Cell[Int] {\n  fn get() { 0 }\n}\n\nfn read() -> Int use Cell[Int] {\n  cell = use Cell[Int]\n  cell.get()\n}\n";
+    let src = "effect Cell[S] {\n  fn get() -> S\n}\n\nhandler Zero: Cell[Int] {\n  fn get() { 0 }\n}\n\nfn read() -> Int use Cell[Int] {\n  cell = use Cell[Int]\n  cell.get()\n}\n";
     let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
@@ -999,7 +1068,7 @@ fn hover_shows_effect_type_args() {
     };
     assert_eq!(
         text(client.hover("/app/src/main.emel", 4, 9)),
-        "```emela\nhandler Zero implements Cell[Int]\n```"
+        "```emela\nhandler Zero: Cell[Int]\n```"
     );
     assert_eq!(
         text(client.hover("/app/src/main.emel", 9, 3)),
@@ -1016,7 +1085,7 @@ fn hover_shows_effect_type_args() {
 /// is visible; outside it only the set type parameter remains.
 #[test]
 fn hover_shows_mixed_effect_sets() {
-    let src = "effect Quiet {\n  fn hush() -> ()\n}\n\nhandler Silent implements Quiet {\n  fn hush() { () }\n}\n\nfn run[R](f: fn() -> () use { Quiet, R }) -> () use R {\n  with Silent { f() }\n}\n";
+    let src = "effect Quiet {\n  fn hush() -> ()\n}\n\nhandler Silent: Quiet {\n  fn hush() { () }\n}\n\nfn run[R](f: fn() -> () use { Quiet, R }) -> () use R {\n  with Silent { f() }\n}\n";
     let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
@@ -1040,6 +1109,234 @@ fn hover_shows_mixed_effect_sets() {
     client.shutdown();
 }
 
+fn navigation<T: serde::de::DeserializeOwned>(
+    client: &mut Client,
+    method: &str,
+    params: serde_json::Value,
+) -> T {
+    let id = client.request(method, params);
+    let response = client.response(&id);
+    serde_json::from_value(response.response_result.unwrap()).unwrap()
+}
+
+#[test]
+fn navigation_capabilities() {
+    let caps = emela_lsp::capabilities();
+    assert_eq!(
+        caps.document_highlight_provider,
+        Some(lsp::OneOf::Left(true))
+    );
+    assert_eq!(caps.workspace_symbol_provider, Some(lsp::OneOf::Left(true)));
+    assert_eq!(
+        caps.folding_range_provider,
+        Some(lsp::FoldingRangeProviderCapability::Simple(true))
+    );
+    assert_eq!(
+        caps.selection_range_provider,
+        Some(lsp::SelectionRangeProviderCapability::Simple(true))
+    );
+    assert_eq!(
+        caps.type_definition_provider,
+        Some(lsp::TypeDefinitionProviderCapability::Simple(true))
+    );
+    assert_eq!(
+        caps.implementation_provider,
+        Some(lsp::ImplementationProviderCapability::Simple(true))
+    );
+}
+
+#[test]
+fn highlights_are_same_file_and_include_the_binding() {
+    let mut client = Client::initialize(&nav_files(), Some("/app"), Typecheck::default);
+    let highlights: Vec<lsp::DocumentHighlight> = navigation(
+        &mut client,
+        "textDocument/documentHighlight",
+        Client::position(MAIN, 17, 7),
+    );
+    assert_eq!(
+        highlights.iter().map(|h| h.range).collect::<Vec<_>>(),
+        [range((1, 15), (1, 20)), range((17, 6), (17, 11))]
+    );
+    assert!(
+        highlights
+            .iter()
+            .all(|h| h.kind == Some(lsp::DocumentHighlightKind::TEXT))
+    );
+    let highlights: Vec<lsp::DocumentHighlight> = navigation(
+        &mut client,
+        "textDocument/documentHighlight",
+        Client::position(MAIN, 12, 3),
+    );
+    assert_eq!(
+        highlights.iter().map(|h| h.range).collect::<Vec<_>>(),
+        [range((12, 2), (12, 5)), range((13, 2), (13, 5))]
+    );
+    let empty: Vec<lsp::DocumentHighlight> = navigation(
+        &mut client,
+        "textDocument/documentHighlight",
+        Client::position(MAIN, 2, 0),
+    );
+    assert!(empty.is_empty());
+    drain(&client);
+    client.shutdown();
+}
+
+#[test]
+fn workspace_symbols_search_unopened_modules_and_unsaved_contents() {
+    let mut files = nav_files().to_vec();
+    files.push(("/other/Pome.toml", ""));
+    files.push(("/other/src/lib.emel", "pub type OtherShape(id: Int)\n"));
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    let symbols: Vec<lsp::SymbolInformation> =
+        navigation(&mut client, "workspace/symbol", json!({ "query": "sHaP" }));
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Shape");
+    assert_eq!(
+        symbols[0].location,
+        location(SHAPES, (0, 9), (0, 14)).unwrap()
+    );
+    assert_eq!(symbols[0].container_name.as_deref(), Some("Shapes"));
+    client.open(
+        SHAPES,
+        1,
+        "pub type NewShape(id: Int)\nfn broken() { missing }\n",
+    );
+    let symbols: Vec<lsp::SymbolInformation> =
+        navigation(&mut client, "workspace/symbol", json!({ "query": "shape" }));
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "NewShape");
+    let all: Vec<lsp::SymbolInformation> =
+        navigation(&mut client, "workspace/symbol", json!({ "query": "" }));
+    assert!(
+        all.iter()
+            .all(|s| s.location.uri.as_str().starts_with("file:///app/"))
+    );
+    let empty: Vec<lsp::SymbolInformation> = navigation(
+        &mut client,
+        "workspace/symbol",
+        json!({ "query": "no_such_symbol" }),
+    );
+    assert!(empty.is_empty());
+    drain(&client);
+    client.shutdown();
+}
+
+#[test]
+fn syntax_navigation_works_with_parse_only_and_utf16() {
+    let path = "/tmp/main.emel";
+    let text = "# 😀 one\r\n## two\r\nimport First\r\nimport Second\r\nfn broken() {\r\n  \"😀\"\r\n  unknown match {\r\n    _ -> 1\r\n  }\r\n}\r\nfn unfinished(\r\n";
+    let mut client = Client::initialize(&[(path, "")], None, ParseOnly::new);
+    client.open(path, 1, text);
+    let folds: Vec<lsp::FoldingRange> = navigation(
+        &mut client,
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": uri(path) } }),
+    );
+    assert_eq!(
+        folds
+            .iter()
+            .map(|f| (f.start_line, f.end_line, f.kind.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (0, 1, Some(lsp::FoldingRangeKind::Comment)),
+            (2, 3, Some(lsp::FoldingRangeKind::Imports)),
+            (4, 9, Some(lsp::FoldingRangeKind::Region)),
+            (6, 8, Some(lsp::FoldingRangeKind::Region)),
+        ]
+    );
+    let selections: Vec<lsp::SelectionRange> = navigation(
+        &mut client,
+        "textDocument/selectionRange",
+        json!({
+            "textDocument": { "uri": uri(path) }, "positions": [
+                { "line": 0, "character": 4 }, { "line": 5, "character": 3 }, { "line": 6, "character": 3 }
+            ]
+        }),
+    );
+    assert_eq!(selections.len(), 3);
+    assert_eq!(selections[0].range, range((0, 0), (0, 8)));
+    assert_eq!(selections[1].range, range((5, 3), (5, 5)));
+    assert_eq!(selections[2].range, range((6, 2), (6, 9)));
+    for selection in &selections {
+        let mut current = selection;
+        while let Some(parent) = current.parent.as_deref() {
+            assert!(
+                parent.range.start <= current.range.start && parent.range.end >= current.range.end
+            );
+            assert_ne!(parent.range, current.range);
+            current = parent;
+        }
+    }
+    client.change(path, 2, "fn empty() {}\n");
+    let folds: Vec<lsp::FoldingRange> = navigation(
+        &mut client,
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": uri(path) } }),
+    );
+    assert!(folds.is_empty());
+    drain(&client);
+    client.shutdown();
+}
+
+#[test]
+fn type_and_implementation_navigation_with_type_errors() {
+    let data = "pub type Boxed(value: Int)\npub enum Choice { One }\npub trait Speak {\n  fn speak(self) -> String\n}\nimpl Boxed: Speak {\n  fn speak(self) { \"boxed\" }\n}\nimpl Choice: Speak {\n  fn speak(self) { \"choice\" }\n}\n";
+    let text = "import Data.{Boxed, Speak}\nfn call(item: Boxed) {\n  copy = item\n  Speak.speak(copy)\n}\nfn broken() -> Int { missing }\n";
+    let mut client = Client::initialize(
+        &[
+            ("/app/Pome.toml", ""),
+            (MAIN, text),
+            ("/app/src/data.emel", data),
+        ],
+        Some("/app"),
+        Typecheck::default,
+    );
+    let found: Option<lsp::Location> = navigation(
+        &mut client,
+        "textDocument/typeDefinition",
+        Client::position(MAIN, 3, 15),
+    );
+    assert_eq!(found, location("/app/src/data.emel", (0, 9), (0, 14)));
+    let found: Option<lsp::Location> = navigation(
+        &mut client,
+        "textDocument/typeDefinition",
+        Client::position(MAIN, 5, 16),
+    );
+    assert_eq!(found, None);
+    let impls: Vec<lsp::Location> = navigation(
+        &mut client,
+        "textDocument/implementation",
+        Client::position(MAIN, 3, 4),
+    );
+    assert_eq!(
+        impls,
+        [
+            location("/app/src/data.emel", (5, 0), (7, 1)).unwrap(),
+            location("/app/src/data.emel", (8, 0), (10, 1)).unwrap()
+        ]
+    );
+    let methods: Vec<lsp::Location> = navigation(
+        &mut client,
+        "textDocument/implementation",
+        Client::position(MAIN, 3, 9),
+    );
+    assert_eq!(
+        methods,
+        [
+            location("/app/src/data.emel", (6, 5), (6, 10)).unwrap(),
+            location("/app/src/data.emel", (9, 5), (9, 10)).unwrap()
+        ]
+    );
+    let empty: Vec<lsp::Location> = navigation(
+        &mut client,
+        "textDocument/implementation",
+        Client::position(MAIN, 1, 9),
+    );
+    assert!(empty.is_empty());
+    drain(&client);
+    client.shutdown();
+}
+
 /// The project for go-to-definition, find-references and document symbols.
 const NAV_MAIN: &str = "import Util.Log
 import Shapes.{Shape, area}
@@ -1048,7 +1345,7 @@ effect Logger {
   fn info(msg: String) -> ()
 }
 
-handler Quiet implements Logger {
+handler Quiet: Logger {
   fn info(msg) { () }
 }
 
@@ -1143,7 +1440,7 @@ fn definition_of_names() {
         location(MAIN, (3, 7), (3, 13))
     );
     assert_eq!(
-        client.definition(MAIN, 7, 25),
+        client.definition(MAIN, 7, 17),
         location(MAIN, (3, 7), (3, 13))
     );
     assert_eq!(
@@ -1287,7 +1584,7 @@ fn document_symbols_list_declarations() {
     );
     // An open document uses unsaved contents. Declarations that parsed are listed despite syntax
     // errors.
-    let src = "enum Color { Red\n Green }\n\nconst MAX: Int = 3\n\ntrait Named {\n  fn name(self) -> String\n}\n\nimpl Named for Color {\n  fn name(self) { \"c\" }\n}\n\nfn broken( {\n";
+    let src = "enum Color { Red\n Green }\n\nconst MAX: Int = 3\n\ntrait Named {\n  fn name(self) -> String\n}\n\nimpl Color: Named {\n  fn name(self) { \"c\" }\n}\n\nfn broken( {\n";
     client.open("/app/src/other.emel", 1, src);
     assert_eq!(
         outline(&client.document_symbols("/app/src/other.emel").unwrap()),
@@ -1295,7 +1592,7 @@ fn document_symbols_list_declarations() {
             "Color Enum [Red EnumMember, Green EnumMember]",
             "MAX Constant",
             "Named Interface [name Method]",
-            "impl Named for Color Namespace [name Method]",
+            "impl Color: Named Namespace [name Method]",
             "broken Function",
         ]
     );
@@ -1511,7 +1808,7 @@ const PIPE_MAIN: &str = "effect Logger {
   fn info(msg: String) -> ()
 }
 
-handler Quiet implements Logger {
+handler Quiet: Logger {
   fn info(msg) { () }
 }
 
@@ -1769,6 +2066,173 @@ fn apply[A](f: fn() -> A) {
     client.shutdown();
 }
 
+#[test]
+fn quickfixes_link_only_the_diagnostic_at_the_requested_range() {
+    let main = "enum Color { Red, Blue }\nfn color(x: Color) -> Int { x match { Red -> 1 } }\nfn first(count: Int) -> Int { cout }\nfn second(total: Int) -> Int { tota }\ntrait Show { fn show(self) -> String }\nimpl Color: Show {}\n";
+    let files = [("/app/Pome.toml", ""), (MAIN, main)];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    // Read the workspace's first diagnostics, or they can arrive after the last response and
+    // fail `shutdown`.
+    let published = client.diagnostics();
+    assert_eq!(
+        codes(&published),
+        ["E0211", "E0211", "W0202", "E0303", "E0325"]
+    );
+    let capabilities = emela_lsp::capabilities();
+    let Some(lsp::CodeActionProviderCapability::Options(options)) =
+        capabilities.code_action_provider
+    else {
+        panic!("code action options")
+    };
+    assert!(
+        options
+            .code_action_kinds
+            .unwrap()
+            .contains(&lsp::CodeActionKind::QUICKFIX)
+    );
+
+    for (at, code, inserted) in [
+        ((1, 28), "E0303", "Blue -> todo()"),
+        ((2, 30), "E0211", "count"),
+        ((3, 31), "E0211", "total"),
+        ((5, 1), "E0325", "fn show(self) { todo() }"),
+    ] {
+        let actions = client.quickfixes(MAIN, at, at);
+        assert_eq!(actions.len(), 1, "at {at:?}: {actions:?}");
+        let action = &actions[0];
+        let diagnostic = &action.diagnostics.as_ref().unwrap()[0];
+        assert_eq!(
+            diagnostic.code,
+            Some(lsp::NumberOrString::String(code.to_owned()))
+        );
+        assert!(diagnostic.range.start <= lsp::Position::new(at.0, at.1));
+        assert!(diagnostic.range.end > lsp::Position::new(at.0, at.1));
+        let edits = &action.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+        assert_eq!(edits.len(), 1);
+        assert!(edits[0].new_text.contains(inserted));
+    }
+    assert!(client.quickfixes(MAIN, (1, 0), (1, 0)).is_empty());
+    assert_eq!(client.quickfixes(MAIN, (1, 0), (6, 0)).len(), 4);
+    // The snapshot is rechecked even when the client echoes no diagnostics.
+    client.open(MAIN, 1, main);
+    client.change(MAIN, 2, &main.replace("cout", "count"));
+    assert!(client.quickfixes(MAIN, (2, 30), (2, 30)).is_empty());
+    client.shutdown();
+}
+
+#[test]
+fn impl_stubs_are_quickfixes_linked_to_published_diagnostics() {
+    let main = "type User(id: Int)\ntrait Label {\n  fn show(self) -> String\n  fn merge(self, other: Self) -> Self\n  fn default(self) -> Int { 1 }\n}\nimpl User: Label {\n  fn show(self) { \"user\" }\n}\nimpl Int: Label {}\n";
+    let files = [("/app/Pome.toml", ""), (MAIN, main)];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    let published = client.diagnostics();
+    assert_eq!(codes(&published), ["E0325", "E0325"]);
+    assert_eq!(published.diagnostics[0].range, range((6, 0), (6, 16)));
+    assert_eq!(published.diagnostics[1].range, range((9, 0), (9, 15)));
+    let id = client.request(
+        CodeActionRequest::METHOD,
+        json!({
+            "textDocument": { "uri": uri(MAIN) },
+            "range": range((6, 0), (6, 0)),
+            "context": { "diagnostics": [] },
+        }),
+    );
+    let actions: Vec<lsp::CodeAction> =
+        serde_json::from_value(client.response(&id).response_result.unwrap()).unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, Some(lsp::CodeActionKind::QUICKFIX));
+    // The old header refactoring is not offered alongside the quickfix.
+    let id = client.request(
+        CodeActionRequest::METHOD,
+        json!({
+            "textDocument": { "uri": uri(MAIN) },
+            "range": range((6, 0), (6, 0)),
+            "context": { "diagnostics": [], "only": ["refactor.rewrite"] },
+        }),
+    );
+    let actions: Vec<lsp::CodeAction> =
+        serde_json::from_value(client.response(&id).response_result.unwrap()).unwrap();
+    assert!(actions.is_empty());
+    assert_eq!(
+        published.diagnostics[0].message,
+        "incomplete impl: missing methods `merge`"
+    );
+    assert_eq!(
+        published.diagnostics[1].message,
+        "incomplete impl: missing methods `show`, `merge`"
+    );
+    for at in [(6, 0), (6, 5), (6, 15)] {
+        let actions = client.quickfixes(MAIN, at, at);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Implement missing trait methods");
+        assert_eq!(
+            actions[0].diagnostics.as_ref().unwrap(),
+            &vec![published.diagnostics[0].clone()]
+        );
+        let edits = &actions[0].edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "\n  fn merge(self, other) { todo() }");
+    }
+    assert_eq!(client.quickfixes(MAIN, (6, 5), (6, 18)).len(), 1);
+    for at in [(6, 19), (6, 20), (6, 21), (7, 2), (7, 18), (8, 0), (8, 1)] {
+        assert!(client.quickfixes(MAIN, at, at).is_empty(), "at {at:?}");
+    }
+    assert!(client.quickfixes(MAIN, (6, 20), (8, 1)).is_empty());
+    let actions = client.quickfixes(MAIN, (9, 0), (9, 0));
+    assert_eq!(actions.len(), 1);
+    let edits = &actions[0].edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+    assert!(edits[0].new_text.contains("fn show(self) { todo() }"));
+    assert!(
+        edits[0]
+            .new_text
+            .contains("fn merge(self, other) { todo() }")
+    );
+    assert!(!edits[0].new_text.contains("fn default"));
+    assert_eq!(client.quickfixes(MAIN, (6, 0), (10, 0)).len(), 2);
+    client.open(MAIN, 1, main);
+    client.change(
+        MAIN,
+        2,
+        &main.replace(
+            "fn merge(self, other: Self) -> Self",
+            "fn merge(self, other: Self) -> Self { self }",
+        ),
+    );
+    assert!(client.quickfixes(MAIN, (6, 0), (6, 0)).is_empty());
+    client.shutdown();
+}
+
+#[test]
+fn quickfixes_insert_imports_and_extend_effect_and_error_annotations() {
+    let main = "error Missing\neffect Log { fn log() -> () }\nfn io() -> () { Io.print(\"hi\") }\nfn fails() -> () use {} { fail Missing }\nfn effects() -> () use {} { (use Log).log() }\n";
+    let files = [
+        ("/app/Pome.toml", ""),
+        (MAIN, main),
+        ("/app/src/io.emel", "pub fn print(s: String) -> () {}\n"),
+    ];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    // Read the workspace's first diagnostics, or they can arrive after the last response and
+    // fail `shutdown`.
+    let published = client.diagnostics();
+    assert_eq!(codes(&published), ["E0211", "E0318", "E0402"]);
+    for (at, code, inserted) in [
+        ((2, 16), "E0211", "import Io\n"),
+        ((3, 26), "E0318", " fails Missing"),
+        ((4, 29), "E0402", "use Log"),
+    ] {
+        let actions = client.quickfixes(MAIN, at, at);
+        assert_eq!(actions.len(), 1, "at {at:?}: {actions:?}");
+        let action = &actions[0];
+        assert_eq!(
+            action.diagnostics.as_ref().unwrap()[0].code,
+            Some(lsp::NumberOrString::String(code.to_owned()))
+        );
+        let edits = &action.edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+        assert_eq!(edits[0].new_text, inserted);
+    }
+    client.shutdown();
+}
+
 /// Shows the unwritten types, E and R inline (spec 9.3).
 #[test]
 fn inlay_hints_show_types_errors_and_effects() {
@@ -1782,7 +2246,7 @@ effect Logger {
   fn info(msg: String) -> ()
 }
 
-handler Quiet implements Logger {
+handler Quiet: Logger {
   fn info(msg) { () }
 }
 
@@ -1834,11 +2298,11 @@ const CAPABILITY_MAIN: &str = "effect Logger {
   fn info(msg: String) -> ()
 }
 
-handler Quiet implements Logger {
+handler Quiet: Logger {
   fn info(msg) { () }
 }
 
-handler Loud implements Logger {
+handler Loud: Logger {
   fn info(msg) { () }
 }
 
@@ -1996,7 +2460,7 @@ fn completion_after_dot_chains() {
 /// After a handler value (`self.`), its fields are offered (spec 8.4).
 #[test]
 fn completion_of_handler_fields() {
-    let src = "effect Users {\n  fn find(id: Int) -> String\n}\n\nhandler DbUsers(url: String, port: Int) implements Users {\n  init { DbUsers(url: \"x\", port: 1) }\n  fn find(id) { self.url }\n}\n";
+    let src = "effect Users {\n  fn find(id: Int) -> String\n}\n\nhandler DbUsers(url: String, port: Int): Users {\n  init { DbUsers(url: \"x\", port: 1) }\n  fn find(id) { self.url }\n}\n";
     let files = [("/app/Pome.toml", ""), (MAIN, src)];
     let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
     let items = client.complete(MAIN, 6, 21).unwrap();
@@ -2068,5 +2532,275 @@ fn completion_of_argument_labels() {
     let items = client.complete(MAIN, 12, 19).unwrap();
     assert_eq!(labels(&items)[..2], ["x:", "y:"]);
     drain(&client);
+    client.shutdown();
+}
+
+/// Requests an IDE result at a substring in the main file, keeping documentation fields.
+fn doc_query(
+    client: &mut Client,
+    method: &str,
+    text: &str,
+    needle: &str,
+    within: usize,
+) -> serde_json::Value {
+    let offset = text.find(needle).unwrap() + within;
+    let prefix = &text[..offset];
+    let line = prefix.bytes().filter(|&b| b == b'\n').count() as u32;
+    let character = prefix.rsplit('\n').next().unwrap().encode_utf16().count() as u32;
+    let id = client.request(method, Client::position(MAIN, line, character));
+    client.response(&id).response_result.unwrap()
+}
+
+#[test]
+fn doc_comments_are_markdown_and_follow_unsaved_changes() {
+    let text = "## Doubles **値**.\n##\n##     double(2)\nfn double(value: Int) -> Int { value * 2 }\nfn main() -> Int { double(1) }\n";
+    let mut client = Client::initialize(
+        &[("/app/Pome.toml", ""), (MAIN, text)],
+        None,
+        Typecheck::default,
+    );
+    client.open(MAIN, 1, text);
+    let doc = "Doubles **値**.\n\n    double(2)";
+    let markup = json!({ "kind": "markdown", "value": doc });
+    let hover = doc_query(&mut client, HoverRequest::METHOD, text, "double(1)", 0);
+    assert_eq!(hover["contents"]["kind"], "markdown");
+    assert_eq!(
+        hover["contents"]["value"],
+        format!("```emela\ndouble: fn(Int) -> Int\n```\n\n---\n\n{doc}")
+    );
+    let help = doc_query(
+        &mut client,
+        SignatureHelpRequest::METHOD,
+        text,
+        "double(1)",
+        7,
+    );
+    assert_eq!(help["signatures"][0]["documentation"], markup);
+    // There is no parameter-doc convention; the whole Markdown remains on the signature.
+    assert!(help["signatures"][0]["parameters"][0]["documentation"].is_null());
+    let items = doc_query(&mut client, Completion::METHOD, text, "double(1)", 0);
+    let item = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["label"] == "double")
+        .unwrap();
+    assert_eq!(item["documentation"], markup);
+
+    let changed = text.replace("Doubles **値**.", "Updated docs.");
+    client.change(MAIN, 2, &changed);
+    let help = doc_query(
+        &mut client,
+        SignatureHelpRequest::METHOD,
+        &changed,
+        "double(1)",
+        7,
+    );
+    assert_eq!(
+        help["signatures"][0]["documentation"]["value"],
+        "Updated docs.\n\n    double(2)"
+    );
+    let no_doc = "# Ordinary comment.\nfn double(value: Int) -> Int { value * 2 }\nfn main() -> Int { double(1) }\n";
+    client.change(MAIN, 3, no_doc);
+    let hover = doc_query(&mut client, HoverRequest::METHOD, no_doc, "double(1)", 0);
+    assert_eq!(
+        hover["contents"]["value"],
+        "```emela\ndouble: fn(Int) -> Int\n```"
+    );
+    let items = doc_query(&mut client, Completion::METHOD, no_doc, "double(1)", 0);
+    assert!(
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["label"] == "double")
+            .unwrap()["documentation"]
+            .is_null()
+    );
+    drain(&client);
+    client.shutdown();
+}
+
+#[test]
+fn docs_use_definition_spans_across_modules_and_std() {
+    let text = "import Alpha\nimport Beta\nimport Std.Duration\nfn main() -> Int {\n  Alpha.same(1)\n  Beta.same(2)\n  Duration.to_seconds(Duration.milliseconds(1))\n  0\n}\n";
+    let alpha = "## Alpha's docs.\npub fn same(n: Int) -> Int { n }\n";
+    let beta = "## Beta's docs.\npub fn same(n: Int) -> Int { n }\n";
+    let mut client = Client::initialize(
+        &[
+            ("/app/Pome.toml", ""),
+            (MAIN, text),
+            ("/app/src/alpha.emel", alpha),
+            ("/app/src/beta.emel", beta),
+        ],
+        None,
+        Typecheck::default,
+    );
+    for (needle, name, within, doc) in [
+        ("Alpha.same(1)", "same", 6, "Alpha's docs."),
+        ("Beta.same(2)", "same", 5, "Beta's docs."),
+        (
+            "Duration.to_seconds(",
+            "to_seconds",
+            9,
+            "Truncates toward zero.",
+        ),
+    ] {
+        let hover = doc_query(&mut client, HoverRequest::METHOD, text, needle, within);
+        assert!(
+            hover["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("\n\n---\n\n{doc}")),
+            "{hover}"
+        );
+        let help = doc_query(
+            &mut client,
+            SignatureHelpRequest::METHOD,
+            text,
+            needle,
+            within + name.len() + 1,
+        );
+        assert_eq!(
+            help["signatures"][0]["documentation"],
+            json!({"kind": "markdown", "value": doc})
+        );
+        let items = doc_query(&mut client, Completion::METHOD, text, needle, within);
+        let item = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["label"] == name)
+            .unwrap();
+        assert_eq!(
+            item["documentation"],
+            json!({"kind": "markdown", "value": doc})
+        );
+    }
+    // Reading the definition uses the overlay too, not the dependency's disk contents.
+    client.open(
+        "/app/src/alpha.emel",
+        1,
+        &alpha.replace("Alpha's docs.", "Unsaved docs."),
+    );
+    let help = doc_query(
+        &mut client,
+        SignatureHelpRequest::METHOD,
+        text,
+        "Alpha.same(1)",
+        11,
+    );
+    assert_eq!(
+        help["signatures"][0]["documentation"]["value"],
+        "Unsaved docs."
+    );
+    drain(&client);
+    client.shutdown();
+}
+
+#[test]
+fn docs_coexist_with_highlights_and_completion_based_quickfixes() {
+    let text = "## Returns a count.\nfn count(value: Int) -> Int { value }\n## A record.\ntype Point(value: Int)\ntrait Read { fn read(self) -> Int }\n## Implements reading.\nimpl Point: Read {\n  ## Reads the field.\n  fn read(self) { self.value }\n}\nfn main() -> Int { count(1) }\nfn broken() -> Int { cont(2) }\n";
+    let mut client = Client::initialize(
+        &[("/app/Pome.toml", ""), (MAIN, text)],
+        None,
+        Typecheck::default,
+    );
+    let hover = doc_query(&mut client, HoverRequest::METHOD, text, "count(1)", 0);
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .ends_with("\n\n---\n\nReturns a count.")
+    );
+    let highlights: Vec<lsp::DocumentHighlight> = serde_json::from_value(doc_query(
+        &mut client,
+        "textDocument/documentHighlight",
+        text,
+        "count(1)",
+        0,
+    ))
+    .unwrap();
+    assert_eq!(
+        highlights.iter().map(|h| h.range).collect::<Vec<_>>(),
+        [range((1, 3), (1, 8)), range((10, 19), (10, 24))]
+    );
+    let items = doc_query(&mut client, Completion::METHOD, text, "cont(2)", 0);
+    assert_eq!(
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["label"] == "count")
+            .unwrap()["documentation"]["value"],
+        "Returns a count."
+    );
+    let fixes = client.quickfixes(MAIN, (11, 21), (11, 21));
+    assert_eq!(fixes.len(), 1);
+    let edits = &fixes[0].edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+    assert_eq!(edits[0].new_text, "count");
+
+    // Impl methods use their own docs, while local names still resolve through symbol_at.
+    let hover = doc_query(
+        &mut client,
+        HoverRequest::METHOD,
+        text,
+        "fn read(self) {",
+        3,
+    );
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .ends_with("\n\n---\n\nReads the field.")
+    );
+    let highlights: Vec<lsp::DocumentHighlight> = serde_json::from_value(doc_query(
+        &mut client,
+        "textDocument/documentHighlight",
+        text,
+        "fn read(self) {",
+        8,
+    ))
+    .unwrap();
+    assert_eq!(
+        highlights.iter().map(|h| h.range).collect::<Vec<_>>(),
+        [range((8, 10), (8, 14)), range((8, 18), (8, 22))]
+    );
+    let empty = doc_query(
+        &mut client,
+        "textDocument/documentHighlight",
+        text,
+        "impl Point: Read {",
+        20,
+    );
+    assert_eq!(empty, json!([]));
+    assert!(
+        doc_query(
+            &mut client,
+            HoverRequest::METHOD,
+            text,
+            "impl Point: Read {",
+            20
+        )
+        .is_null()
+    );
+    drain(&client);
+    client.shutdown();
+}
+
+/// The old impl and handler heads come with quick fixes that rewrite them (E0144, E0145).
+#[test]
+fn old_forms_have_rewriting_quickfixes() {
+    let main = "trait Label { fn label(self) -> String }\nimpl Label for Int {\n  fn label(self) { \"n\" }\n}\neffect Log { fn log() -> () }\nhandler Quiet implements Log {\n  fn log() { () }\n}\n";
+    let files = [("/app/Pome.toml", ""), (MAIN, main)];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    let published = client.diagnostics();
+    assert_eq!(codes(&published), ["E0144", "E0145"]);
+    for ((line, character), expected) in [((1, 0), "impl Int: Label"), ((5, 14), ":")] {
+        let actions = client.quickfixes(MAIN, (line, character), (line, character));
+        assert_eq!(actions.len(), 1, "at {line}:{character}");
+        let edits = &actions[0].edit.as_ref().unwrap().changes.as_ref().unwrap()[&uri(MAIN)];
+        assert_eq!(edits[0].new_text, expected);
+    }
     client.shutdown();
 }

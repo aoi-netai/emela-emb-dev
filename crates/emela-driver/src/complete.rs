@@ -5,8 +5,8 @@
 //! checker results.
 
 use emela_resolve::hir::{
-    DefId, DefKind, Expr, ExprId, ExprKind, Fields, Item, LocalId, PatId, PatKind, Program, Res,
-    Stmt,
+    DefId, DefKind, Expr, ExprId, ExprKind, Fields, Item, LocalId, LocalKind, PatId, PatKind,
+    Program, Res, Stmt,
 };
 use emela_resolve::{ModuleId, ModuleName};
 use emela_syntax::ast::AstNode;
@@ -25,6 +25,8 @@ pub struct Completion {
     pub detail: Option<String>,
     /// Text inserted when chosen; `None` means `label`.
     pub insert_text: Option<String>,
+    /// The definition's `##` comment, as Markdown.
+    pub documentation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,6 +80,7 @@ pub(crate) fn complete(
         analysis,
         module,
         text,
+        docs: crate::documentation::Documentation::default(),
     };
     // Before the partially typed name.
     let start = before.trim_end_matches(is_name_char).len();
@@ -98,11 +101,12 @@ pub(crate) fn complete(
             }),
             _ => {
                 // At the start of a call argument, offer labels not yet written first.
-                let mut items = labels(program, analysis, file, offset, start);
+                let mut items = labels(program, analysis, file, offset, start, &cx.docs);
                 items.extend(cx.in_scope(offset, |_| true));
                 items.extend(KEYWORDS.iter().map(|k| Completion {
                     label: (*k).to_owned(),
                     kind: CompletionKind::Keyword,
+                    documentation: None,
                     detail: None,
                     insert_text: None,
                 }));
@@ -125,6 +129,7 @@ fn labels(
     file: FileId,
     offset: TextSize,
     start: usize,
+    docs: &crate::documentation::Documentation,
 ) -> Vec<Completion> {
     let text = analysis.sources[file].text();
     let Some(call) = crate::signature::call_at(program, analysis, file, offset) else {
@@ -151,6 +156,7 @@ fn labels(
     // offered.
     let labels = crate::signature::without_piped(call.piped, &mut f.params, labels);
     let cons = &program.types.ty_table.cons;
+    let callee = crate::signature::callee_def(program, call.callee);
     labels
         .iter()
         .zip(&f.params)
@@ -159,6 +165,7 @@ fn labels(
             (!written.contains(&label)).then(|| Completion {
                 label: format!("{label}:"),
                 kind: CompletionKind::Label,
+                documentation: callee.and_then(|def| docs.field(program, analysis, def, label)),
                 detail: Some(ty.display_with(cons, &params).to_string()),
                 insert_text: Some(format!("{label}: ")),
             })
@@ -171,6 +178,7 @@ struct Context<'a> {
     analysis: &'a Analysis,
     module: ModuleId,
     text: &'a str,
+    docs: crate::documentation::Documentation,
 }
 
 impl Context<'_> {
@@ -205,6 +213,7 @@ impl Context<'_> {
                 Some(Completion {
                     label: segments[typed.len()].to_string(),
                     kind: CompletionKind::Module,
+                    documentation: None,
                     detail: Some(data.name.to_string()),
                     insert_text: None,
                 })
@@ -343,6 +352,7 @@ impl Context<'_> {
                     .map(|f| Completion {
                         label: f.name.to_string(),
                         kind: CompletionKind::Field,
+                        documentation: self.docs.field(self.program, self.analysis, def, &f.name),
                         detail: hir.types[f.ty].span.and_then(|s| self.source_text(s)),
                         insert_text: None,
                     })
@@ -425,6 +435,7 @@ impl Context<'_> {
                 items.push(Completion {
                     label: data.name.to_string(),
                     kind: CompletionKind::Local,
+                    documentation: None,
                     detail,
                     insert_text: None,
                 });
@@ -482,6 +493,7 @@ impl Context<'_> {
                 items.push(Completion {
                     label: name.last().to_string(),
                     kind: CompletionKind::Module,
+                    documentation: None,
                     detail: Some(name.to_string()),
                     insert_text: None,
                 });
@@ -490,7 +502,7 @@ impl Context<'_> {
         items
     }
 
-    /// Definitions without a kind (impls, type parameters) are not offered. A constructor named
+    /// Definitions without a kind (impls and their functions, type parameters) are not offered. A constructor named
     /// like its type is offered as the type (they merge later since the names match).
     fn def_item(&self, def: DefId) -> Option<Completion> {
         let data = &self.hir().defs[def];
@@ -506,7 +518,7 @@ impl Context<'_> {
             DefKind::Layer => CompletionKind::Layer,
             DefKind::Trait => CompletionKind::Trait,
             DefKind::Op | DefKind::TraitFn => CompletionKind::Method,
-            DefKind::Impl | DefKind::TypeParam => return None,
+            DefKind::Impl | DefKind::ImplFn | DefKind::TypeParam => return None,
         };
         let types = &self.program.types;
         let detail = types
@@ -517,6 +529,7 @@ impl Context<'_> {
             label: data.name.to_string(),
             kind,
             detail,
+            documentation: self.docs.definition(self.program, self.analysis, def),
             insert_text: None,
         })
     }
@@ -635,7 +648,16 @@ fn visible_locals(
                 }
             }
             ExprKind::Lambda { params, body } => {
-                add(params.iter().map(|p| p.local).collect(), span_of(*body));
+                // A parameter in place of a pattern has no name in scope; the names of the
+                // pattern come from the binding at the head of the body.
+                add(
+                    params
+                        .iter()
+                        .map(|p| p.local)
+                        .filter(|&l| hir.locals[l].kind != LocalKind::PatParam)
+                        .collect(),
+                    span_of(*body),
+                );
             }
             ExprKind::Match { arms, .. } | ExprKind::Escape { arms, .. } => {
                 for arm in arms {

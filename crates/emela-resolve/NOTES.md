@@ -32,7 +32,7 @@
 - 型の位置に書けるのは type，enum，error（7.1：error は同じ名前の型も定義する），組み込みの型，型引数．effect は「型として使えない」の E0221（8.2：能力の値の型は書けない）．型引数の位置に書いた集合（`Handler[NotFound | Timeout, { Db }]`）は `TypeKind::ErrorSet` と `TypeKind::EffectSet` にし，要素を `fails` 節と `use` 節と同じく引く．ただし名前付き型の型引数の位置（`Handler[NotFound, Db]` の `Db`）では effect も通す（9.2 の集合の型引数に渡すため）．集合の型引数の位置かは宣言の型引数の種類で決まるので，型推論が確かめ，集合でない位置なら同じ E0221 を出す．handler，layer，trait は E0217
 - 型引数は，ふつうの型・エラーの集合・効果の集合のどれかを区別せずに解決する．種は型推論の段が使われ方から推論する（9.2）．`fails` 節と `use` 節にも型引数を書ける
 - （補）`fails` 節は error と型引数，`use` 節は effect と型引数，`use X` の式は effect だけ．`with` と layer の中身は handler か layer．制約，derive，impl，上位の Trait は trait
-- （補）エフェクトの型引数（8.1）．`effect State[S]` の型引数は effect の定義を親にした `DefKind::TypeParam` で，`EffectItem::type_params` に持ち，操作のシグネチャの中で引ける．`use State[Int]` の型引数は `ExprKind::Use::args`，`implements State[Int]` は `HandlerItem::effect_args`，`use` 節の要素は `EffectRef`（エフェクトか型引数と，その型引数）に持つ．型引数の中はふつうの型の位置として引く（エフェクトの名前は E0221）．型引数の数と省略は型推論が確かめる（E0304，E0423）
+- （補）エフェクトの型引数（8.1）．`effect State[S]` の型引数は effect の定義を親にした `DefKind::TypeParam` で，`EffectItem::type_params` に持ち，操作のシグネチャの中で引ける．`use State[Int]` の型引数は `ExprKind::Use::args`，`handler H: State[Int]` は `HandlerItem::effect_args`，`use` 節の要素は `EffectRef`（エフェクトか型引数と，その型引数）に持つ．型引数の中はふつうの型の位置として引く（エフェクトの名前は E0221）．型引数の数と省略は型推論が確かめる（E0304，E0423）
 - （補）大文字名の型引数を式に書いたら E0217（2.3：型の位置でだけ参照できる）
 
 ### import と可視性
@@ -73,7 +73,7 @@
 ### Prelude と組み込みのモジュール
 
 - （補）Prelude の定義は `Program` の最初に作る（`DefModule::Prelude`）．`Bool`，`Option`，`Ordering` は enum の中身を持ち，`Option` は型引数 `A` と位置引数1つの `Some(A)` を持つ．Prelude の中の型（`Some(A)` の `A`）だけは位置がない（`TypeRef::span` が `None`）
-- （補）Prelude の Trait の関数は `Eq.eq`，`Ord.compare`，`Show.show`，`Hash.hash` を名前だけ定義する．シグネチャは型推論の段が持つ
+- （補）Prelude の Trait の関数は `Eq.eq`，`Ord.compare`，`Show.show` を名前だけ定義する．Hash は持たない（2026-10-19 に仕様から外れた．10.6，15.1）．シグネチャは型推論の段が持つ
 - （補）組み込みの制約 `Immediate`（9.5）とエフェクト `Async`（8.7）も Prelude と同じく import なしで見せる
 - （補）組み込みのモジュール（`String`，`List` など）は `BuiltinModules` から引く．import なしで `.` の左に書ける（4.4 の `String.contains`）．項目の `DefId` は初めて引いたときに作る（`DefModule::Builtin`）
 - （補）型の位置で，型引数，モジュールの定義と import，Prelude のどれにも名前がないとき，組み込みのモジュール `X` が同じ名前の型 `X` を持てばそれを使う（5.7 の `Map[String, List[User]]`）．ソースのモジュールには適用しない
@@ -83,6 +83,7 @@
 - （補）「もしかして」の候補は，同じ位置で引ける名前のうち編集距離が名前の長さの3分の1（最低1）以下で最も近いもの
 - （補）診断はモジュールの順，ファイルの中は位置の順に並べる
 - （補）名前のない impl の `DefId` には `impl#1` のような名前を付ける
+- （補）impl の fn は impl を親にした `DefKind::ImplFn` の定義を持つ（`ImplFn::def`）．どの名前空間にも入れない（呼び出しは Trait の関数を通り，単相化が impl の fn を選ぶ，10.3）．型検査と lowering が fn と同じく定義ごとに扱うため．impl の中で同じ名前の fn を2回書いたら，trait の関数と同じく E0213
 
 ### 部分更新（5.3）
 
@@ -103,6 +104,7 @@
 - （補）`BuiltinModules`（組み込みのモジュールの表）と `DefModule::Builtin` は，同梱の core のソースで置き換わったので使われていない（driver は `NoBuiltins`）．HIR を読む型推論の側と合わせてから外す
 
 - （補）`@external(target, "a", "b")` の引数は `FnItem::externals`（`ExternalAttr`）に書かれた順で持つ．最初の引数が名前でないもの，文字列でない残りの引数は飛ばす（形の誤りは構文の段の E0138〜E0141 が出す）．文字列はエスケープを解いた値．
+- （補）無名関数の引数のパターン（`fn((k, v)) { ... }`，6.1）はここで脱糖する．パターンの引数は名前を持たない隠れた引数（`LocalKind::PatParam`，名前はパターンの字面で表示用．スコープには入れない）にし，本体のブロックの先頭に `パターン = 隠れた引数` の束縛（`Stmt::Let`）を足す．型検査の反駁可能性の検査（E0317）と lowering 以降はこの束縛を普通の束縛として扱うので変更がない．名前だけの引数は今までどおり．全部の引数のパターンで1つの Binder を使い，引数どうしの名前の重なりを E0220 にする．構文では名前だけの引数は PARAM の直下の LOWER_NAME のまま，パターンのときだけ PARAM の下にパターンのノードを置く（`ast::Param::pattern`）
 
 ### この段で見ないもの（型推論以降に残す）
 
@@ -119,5 +121,6 @@
 - （補）`@intrinsic` は本体のない fn に加えて effect にも付けられる（組み込みのエフェクト `Scope`，8.1，11.2）．同梱のソースの外では E0224 で，`EffectItem::is_intrinsic` は偽のまま（利用者のエフェクトとして型検査する）．それ以外の宣言に付ければ今までどおり E0225（文面は fn のまま）
 - （補）エフェクトの操作の型引数（`fn fork[A](...)`，17.3 の op_sig）は `OpItem::sig.type_params` に入れ，操作の引数と戻り値の型の中で見える．組み込みのエフェクトだけに許すかは型検査が見る（E0426）
 - （補）`Program::modules` の `ModuleItems` にモジュール名（`name`）を持たせた．型検査が診断に `Fiber.scope` のような名前を出すため
-- （補）エフェクトのラベル（issue #255）．`effect L of E [default]` は EffectItem の `label`（LabelOf）に元のエフェクトとその型引数，`default` を持つ．ラベル自身は操作を持たず，`Program::effect_ops` が元のエフェクトの操作を返す（1段だけ．ラベルのラベルは型検査の E0429）．ラベルの handler（`handler H implements L`）は型検査が E0433 にするので，名前解決は操作を引かず，E0212 を重ねない
+- （補）エフェクトのラベル（issue #255）．`effect L of E [default]` は EffectItem の `label`（LabelOf）に元のエフェクトとその型引数，`default` を持つ．ラベル自身は操作を持たず，`Program::effect_ops` が元のエフェクトの操作を返す（1段だけ．ラベルのラベルは型検査の E0429）．ラベルの handler（`handler H: L`）は型検査が E0433 にするので，名前解決は操作を引かず，E0212 を重ねない
 - （補）`with` の項目は WithItem（`res`，`span`，`by`）．`by` のない項目は handler，layer，エフェクトを受け（Expected::WithItem），`L by P` の左はエフェクト（Expected::Label），右は handler かエフェクト（Expected::HandlerOrEffect）．ラベルかどうか（`with Console` がラベルでない）は名前解決では見ず，型検査が E0430 にする．そのため，`with` にエフェクトを書いたときの「handler or layer が要る」の診断は出なくなった
+- （補）impl の頭の型引数（`impl Map[K: Eq, V: Eq]: Eq`，10.2）は impl の定義を親にした `DefKind::TypeParam` で，`ImplItem::type_params` に持ち，impl の本体の中で引ける．`ImplItem::self_ty` は型の名前を自分の型引数に当てた型（`Map[K, V]`）にする．頭の型引数の重複（`impl Pair[A, A]: Eq`）と既存の型と同じ名前（`impl List[Int]: Show` の `Int`）は，E0213 と W0201 でなく E0328 にして頭の全体を指す．名前を見られるのは名前解決なので，E03xx だがここで出す．重複した名前にも型引数を作り，頭の型引数の数を保つ．`ImplItem::malformed_head` が立ち，型検査はその impl の頭を見ない

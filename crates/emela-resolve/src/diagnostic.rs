@@ -31,6 +31,9 @@ pub enum DiagnosticKind {
     DuplicateModule { name: ModuleName, first: PathBuf },
     /// The imported module does not exist.
     UndefinedModule { name: ModuleName },
+    /// E0239. A module of the source root imports a module of the test root or a
+    /// `[dev-dependencies]` Pome, which only the test root may import (spec 4.7, 13.1).
+    TestOnlyModule { name: ModuleName },
     /// `modules` goes around the cycle once (the edge back to the first module is omitted).
     ImportCycle { modules: Vec<ModuleName> },
     /// A directory could not be read.
@@ -96,6 +99,9 @@ pub enum DiagnosticKind {
     ShadowedByTypeParam { name: SmolStr },
     /// A module definition or import hides a Prelude name of the same name (W0202).
     ShadowsPrelude { name: SmolStr },
+    /// An impl head that is not a type name with distinct type parameters (E0328, spec 10.2):
+    /// `impl List[Int]: Show`, `impl Pair[A, A]: Eq`. `head` is the head as written.
+    ImplHead { head: SmolStr },
 }
 
 /// Where a name was looked up. Used in the diagnostic message.
@@ -110,7 +116,7 @@ pub enum Expected {
     TypeParam,
     /// Left of `.`.
     ModuleOrTrait,
-    /// `use X`, `implements X`, the `use` clause.
+    /// `use X`, `handler H: X`, the `use` clause.
     Effect,
     /// The contents of a layer.
     HandlerOrLayer,
@@ -193,6 +199,9 @@ impl fmt::Display for DiagnosticKind {
             ),
             DiagnosticKind::UndefinedModule { name } => {
                 write!(f, "undefined module `{name}`")
+            }
+            DiagnosticKind::TestOnlyModule { name } => {
+                write!(f, "module `{name}` can only be imported under `test/`")
             }
             DiagnosticKind::ImportCycle { modules } => {
                 if let [only] = modules.as_slice() {
@@ -277,6 +286,10 @@ impl fmt::Display for DiagnosticKind {
             DiagnosticKind::ShadowsPrelude { name } => {
                 write!(f, "`{name}` shadows the prelude's `{name}`")
             }
+            DiagnosticKind::ImplHead { head } => write!(
+                f,
+                "impl head must be a type with distinct type parameters: `{head}`"
+            ),
         }
     }
 }

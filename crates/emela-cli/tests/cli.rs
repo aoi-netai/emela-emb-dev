@@ -91,6 +91,37 @@ fn check_reports_all_errors() {
 }
 
 #[test]
+fn incomplete_impl_is_rejected_by_every_command_and_target() {
+    let project = Project::new(
+        "incomplete-impl",
+        &[
+            ("Pome.toml", ""),
+            (
+                "src/main.emel",
+                "type User(id: Int)\ntrait Label {\n  fn label(self) -> String\n  fn merge(self, other: Self) -> Self\n  fn default(self) -> Int { 1 }\n}\nimpl User: Label {}\nfn main() {}\n@test\nfn works() {}\n",
+            ),
+        ],
+    );
+    let check = project.emela(&["check"]);
+    assert_eq!(check.code, Some(1), "{check:?}");
+    assert!(
+        check
+            .stderr
+            .contains("error[E0325]: incomplete impl: missing methods `label`, `merge`")
+    );
+    assert!(!check.stderr.contains("`default`"));
+    for command in ["build", "run", "test"] {
+        for target in ["js", "c", "wasm"] {
+            let run = project.emela(&[command, "--target", target]);
+            assert_eq!(run.code, Some(1), "{command} {target}: {run:?}");
+            assert_eq!(run.stderr, check.stderr, "{command} {target}");
+            assert!(run.stdout.is_empty(), "{command} {target}: {run:?}");
+        }
+    }
+    assert!(!project.path().join("target").exists());
+}
+
+#[test]
 fn check_file_and_directory_agree() {
     let project = Project::new("agree", BROKEN);
     let by_dir = project.emela(&["check", "."]);
@@ -159,11 +190,10 @@ fn build_reports_unsupported_expressions() {
         "unsupported",
         &[
             ("Pome.toml", ""),
-            // Showing a type parameter's value needs Show dictionary passing or monomorphization,
-            // which comes in 0.21.
+            // Capability values cannot be shown.
             (
                 "src/main.emel",
-                "fn main() {\n  show(1)\n}\n\nfn show[A](x: A) -> String {\n  \"#{x}\"\n}\n",
+                "import Std.Console.{Console, SystemConsole}\n\nfn main() {\n  with SystemConsole {\n    c = use Console\n    dbg(\"#{c}\")\n  }\n}\n",
             ),
         ],
     );
@@ -172,7 +202,7 @@ fn build_reports_unsupported_expressions() {
         assert_eq!(run.code, Some(1), "{command}");
         assert!(
             run.stderr
-                .starts_with("error: not supported yet: showing a value of a type parameter\n"),
+                .starts_with("error: not supported yet: showing a capability value\n"),
             "{command}: {}",
             run.stderr
         );
@@ -180,14 +210,134 @@ fn build_reports_unsupported_expressions() {
 }
 
 #[test]
+fn library_only_project_uses_lib_as_entry_for_check_and_test() {
+    for source in [
+        "pub fn f() -> Int { 1 }\n",
+        "pub fn f() -> Int { 1 }\n\n@test\nfn works() { assert f() == 1 }\n",
+        "pub fn f() -> Int { 1 }\n\n@test\nfn works() { assert f() == 1 }\n\nfn main() { panic(\"must not run\") }\n",
+    ] {
+        let project = Project::new(
+            "library-only",
+            &[("Pome.toml", ""), ("src/lib.emel", source)],
+        );
+        let check = project.emela(&["check"]);
+        assert_eq!((check.code, check.stderr.as_str()), (Some(0), ""));
+
+        // Build before running tests so their output cannot mask an unwanted build artifact.
+        for target in ["js", "c", "wasm"] {
+            for path in [".", "src"] {
+                let build = project.emela(&["build", path, "--target", target]);
+                assert_eq!((build.code, build.stderr.as_str()), (Some(0), ""));
+                assert!(!project.path().join("target").exists());
+                let build =
+                    project.emela(&["build", path, "--target", target, "--out-dir", "custom"]);
+                assert_eq!((build.code, build.stderr.as_str()), (Some(0), ""));
+                assert!(!project.path().join("custom").exists());
+
+                let run = project.emela(&["run", path, "--target", target]);
+                assert_eq!((run.code, run.stdout.as_str()), (Some(1), ""));
+                assert!(
+                    run.stderr
+                        .starts_with("error[E0230]: entry `src/lib.emel` has no `main` function"),
+                    "{}",
+                    run.stderr
+                );
+                assert!(!project.path().join("target").exists());
+            }
+        }
+        let test = project.emela(&["test"]);
+        assert_eq!((test.code, test.stderr.as_str()), (Some(0), ""));
+        if source.contains("@test") {
+            assert!(test.stdout.contains("test works ... ok"), "{}", test.stdout);
+        } else {
+            assert!(
+                test.stdout.contains("0 passed; 0 failed"),
+                "{}",
+                test.stdout
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_library_file_remains_a_file_entry_and_binary_entry_takes_priority() {
+    let project = Project::new(
+        "library-entry-selection",
+        &[
+            ("Pome.toml", ""),
+            (
+                "src/lib.emel",
+                "fn main() { dbg(42) }\n@test\nfn in_lib() { assert True }\n",
+            ),
+        ],
+    );
+    let build = project.emela(&["build", "src/lib.emel"]);
+    assert_eq!((build.code, build.stderr.as_str()), (Some(0), ""));
+    assert!(project.path().join("target/emela/js/main.mjs").exists());
+    let run = project.emela(&["run", "src/lib.emel"]);
+    assert_eq!(
+        (run.code, run.stdout.as_str(), run.stderr.as_str()),
+        (Some(0), "", "42\n")
+    );
+
+    std::fs::write(
+        project.path().join("src/main.emel"),
+        "fn main() { dbg(7) }\n@test\nfn in_main() { assert True }\n",
+    )
+    .unwrap();
+    let run = project.emela(&["run"]);
+    assert_eq!(
+        (run.code, run.stdout.as_str(), run.stderr.as_str()),
+        (Some(0), "", "7\n")
+    );
+    let test = project.emela(&["test"]);
+    assert_eq!((test.code, test.stderr.as_str()), (Some(0), ""));
+    assert!(
+        test.stdout.contains("test in_main ... ok"),
+        "{}",
+        test.stdout
+    );
+    assert!(
+        test.stdout.contains("test Lib.in_lib ... ok"),
+        "{}",
+        test.stdout
+    );
+}
+
+#[test]
+fn library_type_errors_are_reported_by_all_commands() {
+    let project = Project::new(
+        "library-type-error",
+        &[
+            ("Pome.toml", ""),
+            ("src/lib.emel", "pub fn f() -> Int { \"wrong\" }\n"),
+        ],
+    );
+    for command in ["check", "test", "build", "run"] {
+        let run = project.emela(&[command]);
+        assert_eq!(run.code, Some(1), "{command}: {run:?}");
+        assert!(
+            run.stderr.starts_with("error[E0301]:"),
+            "{command}: {run:?}"
+        );
+        assert!(!run.stderr.contains("E0230"), "{command}: {run:?}");
+        assert!(!run.stderr.contains("internal error"), "{command}: {run:?}");
+        assert!(!project.path().join("target").exists());
+    }
+}
+
+#[test]
 fn build_reports_missing_entry() {
     let project = Project::new("no-entry", &[("Pome.toml", ""), ("src/util.emel", "")]);
-    let run = project.emela(&["build"]);
-    assert_eq!(run.code, Some(1));
-    assert_eq!(
-        run.stderr,
-        "error[E0209]: the entry `src/main.emel` does not exist\n\n1 error\n"
-    );
+    for command in ["build", "run"] {
+        let run = project.emela(&[command]);
+        assert_eq!(run.code, Some(1));
+        assert_eq!(
+            run.stderr,
+            "error[E0209]: the entry `src/main.emel` does not exist\n\n1 error\n"
+        );
+    }
+    assert!(!project.path().join("target").exists());
     // `check` does not require the entry.
     assert_eq!(project.emela(&["check"]).code, Some(0));
 }
@@ -491,7 +641,7 @@ fn run_reports_unhandled_error_with_exit_code_1() {
             ("Pome.toml", ""),
             (
                 "src/main.emel",
-                "error NotFound(id: Int)\n\nfn find(id: Int) -> Int fails NotFound {\n  if id > 0 { id } else { fail NotFound(id:) }\n}\n\nfn main() {\n  dbg(find(0) escape { NotFound(_) -> 0 })\n  dbg(find(-1))\n}\n",
+                "error NotFound(id: Int) derive Show\n\nfn find(id: Int) -> Int fails NotFound {\n  if id > 0 { id } else { fail NotFound(id:) }\n}\n\nfn main() {\n  dbg(find(0) escape { NotFound(_) -> 0 })\n  dbg(find(-1))\n}\n",
             ),
         ],
     );
@@ -752,7 +902,7 @@ fn run_calls_external_module_next_to_the_source() {
             ),
             (
                 "src/host/host.emel",
-                "pub effect Host {\n  fn lone() -> String\n  fn boom() -> ()\n}\n\n@external(js, \"./ffi.mjs\", \"lone\")\nfn js_lone() -> String\n\n@external(js, \"./ffi.mjs\", \"boom\")\nfn js_boom() -> ()\n\npub handler NodeHost implements Host {\n  fn lone() { js_lone() }\n  fn boom() { js_boom() }\n}\n",
+                "pub effect Host {\n  fn lone() -> String\n  fn boom() -> ()\n}\n\n@external(js, \"./ffi.mjs\", \"lone\")\nfn js_lone() -> String\n\n@external(js, \"./ffi.mjs\", \"boom\")\nfn js_boom() -> ()\n\npub handler NodeHost: Host {\n  fn lone() { js_lone() }\n  fn boom() { js_boom() }\n}\n",
             ),
             (
                 "src/main.emel",

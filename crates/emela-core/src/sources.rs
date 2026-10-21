@@ -23,8 +23,11 @@ const SOURCES: &[(&str, &str)] = &[
     ("Int", include_str!("../lib/core/int.emel")),
     ("Int64", include_str!("../lib/core/int64.emel")),
     ("Float", include_str!("../lib/core/float.emel")),
+    ("Bool", include_str!("../lib/core/bool.emel")),
     ("Std.Duration", include_str!("../lib/std/duration.emel")),
     ("Std.Instant", include_str!("../lib/std/instant.emel")),
+    ("Std.Map", include_str!("../lib/std/map.emel")),
+    ("Std.Set", include_str!("../lib/std/set.emel")),
     ("Std.State", include_str!("../lib/std/state.emel")),
     ("Std.Console", include_str!("../lib/std/console.emel")),
     ("Std.Random", include_str!("../lib/std/random.emel")),
@@ -300,7 +303,7 @@ mod tests {
                 assert!(
                     core_source(module)
                         .unwrap()
-                        .contains(&format!("pub handler {h} ")),
+                        .contains(&format!("pub handler {h}: ")),
                     "{module} has no {h}"
                 );
             }

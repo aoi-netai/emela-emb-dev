@@ -60,8 +60,13 @@ fn run(name: &str, m: Module) -> String {
     run_mode(name, m, RuntimeMode::Import(None))
 }
 
-/// Adds an error with fields, or without (`fields` empty).
+/// Adds an error with fields, or without (`fields` empty). Unless a field is a function, it is
+/// shown by its structure when it reaches the entry, as for `derive Show` (monomorphization
+/// records that in `Module::error_display`, spec 14.3).
 fn error(m: &mut Module, name: &str, fields: Vec<(&str, TypeId)>) -> CtorRef {
+    let showable = !fields
+        .iter()
+        .any(|&(_, t)| matches!(m.ty(t), emela_core::Type::Fn(_)));
     let variant = if fields.is_empty() {
         VariantDef::unit(name)
     } else {
@@ -74,6 +79,10 @@ fn error(m: &mut Module, name: &str, fields: Vec<(&str, TypeId)>) -> CtorRef {
         error: true,
         external: false,
     });
+    if showable {
+        m.error_display
+            .insert(enum_id, emela_core::ErrorDisplay::Structure);
+    }
     CtorRef {
         enum_id,
         variant: 0,
@@ -307,9 +316,8 @@ fn errors_are_values_with_their_own_tag() {
 
 #[test]
 fn unshowable_error_shows_its_name() {
-    // An error with a function field cannot be shown (spec 10.6), so an unhandled one prints only
-    // its name. Even with the runtime inlined, the entry tells failures apart by the `Symbol.for`
-    // key.
+    // An unhandled error with a function field prints only its name (spec 14.3). Even with the
+    // runtime inlined, the entry tells failures apart by the `Symbol.for` key.
     let mut m = Module::new();
     let f = m.func(FnType {
         params: vec![],

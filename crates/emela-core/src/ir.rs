@@ -30,6 +30,93 @@ pub struct Module {
     pub bundled_files: Vec<BundledFile>,
     /// Every type the module mentions, each once.
     pub types: TypeTable,
+    /// Trait functions (spec 10.3) → their impls. A call of a trait function is generic in `Self`,
+    /// its first type argument; [`crate::mono`] replaces it with a direct call of the impl
+    /// function for that type (no dictionary passing). Empty after monomorphization.
+    pub dispatch: FxHashMap<FnId, Dispatch>,
+    /// The Prelude's trait functions, if lowered. [`crate::mono`] calls them where `==`,
+    /// interpolation and `Builtin::ShowNested` cannot use the structure (spec 10.6).
+    pub traits: PreludeTraits,
+    /// Every trait's impls, written and derived, indexed by [`TraitRef`]: what [`crate::mono`]
+    /// needs to tell whether a type satisfies Show where the type checker does not ask (`dbg`,
+    /// assert, errors reaching the entry, spec 10.6, 13.2, 14.3). Kept by monomorphization, which
+    /// the C and WASM backends run again on its output.
+    pub trait_impls: Vec<TraitImpls>,
+    /// The Prelude's Show in [`Module::trait_impls`].
+    pub show_trait: Option<TraitRef>,
+    /// How a failure reaching the entry or a test shows an error enum (spec 13.3, 14.3). Filled by
+    /// [`crate::mono`] for the errors the functions construct. An error not here is shown by its
+    /// name (its type does not satisfy Show).
+    pub error_display: FxHashMap<EnumId, ErrorDisplay>,
+}
+
+/// A trait, by its index in [`Module::trait_impls`].
+pub type TraitRef = usize;
+
+/// The impls of one trait ([`Module::trait_impls`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TraitImpls {
+    /// Eq, Ord or Show of the Prelude, which the compiler implements for the basic types and
+    /// tuples (spec 10.6; Float has no Ord).
+    pub builtin: Option<DeriveOp>,
+    /// Per impl (written or derived), its type with the impl's type parameters as `Type::Param`
+    /// (`Wrap[$0]`), and per type parameter the traits it is constrained with (`[A: Eq]`).
+    pub impls: Vec<(TypeId, Vec<Vec<TraitRef>>)>,
+}
+
+/// How an error reaching the entry is shown ([`Module::error_display`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorDisplay {
+    /// By the backend's display of the structure, which is what its Show gives (derived only).
+    Structure,
+    /// By calling the function, its Show impl (`fn(E) -> String`).
+    Impl(FnId),
+}
+
+/// The IR functions of the Prelude's trait functions ([`Module::traits`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PreludeTraits {
+    pub eq: Option<FnId>,
+    pub compare: Option<FnId>,
+    pub show: Option<FnId>,
+}
+
+/// The impls of one trait function.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Dispatch {
+    /// The impl's type, with the impl's type parameters as `Type::Param` (`Pair[$0, $1]`), and the
+    /// impl function. The impl function's type parameters are the impl's, then the trait
+    /// function's own (all but `Self`).
+    pub impls: Vec<(TypeId, FnId)>,
+    /// The trait function has a default implementation: its own body, used for types whose impl
+    /// does not define the function.
+    pub default: bool,
+    /// Impl functions that give what the structural operation gives (`==` by `OpTy::Structural`,
+    /// interpolation's show): the impls of the compiler, and those of core for `List` and `Option`
+    /// (spec 10.6). Other impls in core and std (Duration's Show) are written ones.
+    pub structural: Vec<FnId>,
+    /// For the functions of the derivable traits (`Eq.eq`, `Ord.compare`, `Show.show`), which
+    /// one, and the enums that derive the trait (spec 10.5). [`crate::mono`] generates their
+    /// impl functions per type.
+    pub derived: Option<Derived>,
+}
+
+/// The enums deriving a trait, for one function of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derived {
+    pub op: DeriveOp,
+    pub enums: Vec<EnumId>,
+}
+
+/// The function of a derivable trait (spec 10.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeriveOp {
+    /// `Eq.eq(self, other) -> Bool`.
+    Eq,
+    /// `Ord.compare(self, other) -> Ordering`.
+    Compare,
+    /// `Show.show(self) -> String`.
+    Show,
 }
 
 /// A host file bundled with the compiler (under `lib/`).
@@ -701,6 +788,11 @@ impl TypeTable {
         self.ids.get(ty).copied()
     }
 
+    /// Every type, in the order of their IDs.
+    pub fn iter(&self) -> impl Iterator<Item = &Type> {
+        self.types.iter()
+    }
+
     /// The number of distinct types.
     pub fn len(&self) -> usize {
         self.types.len()
@@ -1214,6 +1306,11 @@ impl Expr {
                     f(lhs);
                     f(rhs);
                 }
+                AssertCond::Shown { cond, lhs, rhs, .. } => {
+                    f(cond);
+                    f(lhs);
+                    f(rhs);
+                }
                 AssertCond::Bool(e) => f(e),
             },
             Expr::Provide { base, bindings } => {
@@ -1425,6 +1522,17 @@ pub enum AssertCond {
         lhs: Expr,
         rhs: Expr,
     },
+    /// A comparison decided by `cond`, which calls an impl (`Eq.eq`, `Ord.compare`, spec 10.3).
+    /// `lhs` and `rhs` are the sides, already evaluated into variables (`Expr::Var`) before the
+    /// assert, so evaluating them again has no effect; if `cond` is false, both are shown as with
+    /// `Compare`. `op` is the comparison written in the source, for the message.
+    Shown {
+        cond: Expr,
+        op: BinOp,
+        ty: TypeId,
+        lhs: Expr,
+        rhs: Expr,
+    },
     /// Not a comparison; only the expression's value is checked.
     Bool(Expr),
 }
@@ -1452,10 +1560,46 @@ impl Assert {
         }))
     }
 
+    /// A comparison decided by `cond` ([`AssertCond::Shown`]): `let a = lhs; let b = rhs;
+    /// assert(cond)`, showing `a` and `b` if it fails. `cond` refers to `a` and `b`.
+    pub fn shown(
+        cond: Expr,
+        op: BinOp,
+        ty: TypeId,
+        (a, lhs): (Local, Expr),
+        (b, rhs): (Local, Expr),
+        text: &str,
+    ) -> Expr {
+        let assert = Expr::Assert(Box::new(Assert {
+            cond: AssertCond::Shown {
+                cond,
+                op,
+                ty,
+                lhs: Expr::Var(a),
+                rhs: Expr::Var(b),
+            },
+            text: text.to_owned(),
+        }));
+        Expr::Let {
+            var: a,
+            value: Box::new(lhs),
+            body: Box::new(Expr::Let {
+                var: b,
+                value: Box::new(rhs),
+                body: Box::new(assert),
+            }),
+        }
+    }
+
     /// Applies `f` to subexpressions in evaluation order.
     pub fn for_each_operand_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
         match &mut self.cond {
             AssertCond::Compare { lhs, rhs, .. } => {
+                f(lhs);
+                f(rhs);
+            }
+            AssertCond::Shown { cond, lhs, rhs, .. } => {
+                f(cond);
                 f(lhs);
                 f(rhs);
             }

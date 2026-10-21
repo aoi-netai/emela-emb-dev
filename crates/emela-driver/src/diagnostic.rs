@@ -170,6 +170,16 @@ impl Diagnostic {
             DiagnosticKind::UndefinedModule { name } => {
                 (code::UNDEFINED_MODULE, format!("undefined module `{name}`"))
             }
+            DiagnosticKind::TestOnlyModule { name } => {
+                return Diagnostic::error(format!(
+                    "`{name}` can only be imported under `test/`"
+                ))
+                .with_code(code::TEST_ONLY_MODULE)
+                .with_note(
+                    "the test root and [dev-dependencies] are only for the tests; move the tests that use it under test/ (13.1)",
+                )
+                .at(location);
+            }
             DiagnosticKind::ImportCycle { modules } => {
                 let message = match modules.as_slice() {
                     [only] => format!("module `{only}` imports itself"),
@@ -346,6 +356,11 @@ impl Diagnostic {
                 code::SHADOWS_PRELUDE,
                 format!("`{name}` shadows the prelude's `{name}`"),
             ),
+            DiagnosticKind::ImplHead { head } => (
+                Severity::Error,
+                code::IMPL_HEAD,
+                format!("impl head must be a type with distinct type parameters: `{head}`"),
+            ),
             _ => unreachable!("module and import graph diagnostics are handled by from_resolve"),
         };
         let mut out = Diagnostic::new(severity, message)
@@ -421,6 +436,16 @@ impl Diagnostic {
                 .with_help(format!(
                     "add `@external({target}, ...)`, or avoid calling it from the entry"
                 )),
+                span,
+            ),
+            emela_core::LowerError::ConstrainedExport { name, param, span } => (
+                Diagnostic::error(format!(
+                    "cannot export `{name}`: its type parameter `{param}` has a trait bound"
+                ))
+                .with_code(code::CONSTRAINED_EXPORT)
+                .with_help(
+                    "make a `pub` fn that calls it with concrete types, and export that instead",
+                ),
                 span,
             ),
             emela_core::LowerError::MissingCoreFile { path, span } => (
@@ -591,6 +616,22 @@ impl Diagnostic {
                         "refutable pattern in binding: {} not covered",
                         quoted_list("pattern", "patterns", missing)
                     ),
+                )
+            }
+            TypeDiagnosticKind::UnusedDerive { trait_name, ty } => {
+                // dbg and a failed assert show a value by its Show if it has one (spec 10.6,
+                // 13.2), and do not count as uses.
+                help = Some(if trait_name == "Show" {
+                    format!(
+                        "remove it from `derive`; `dbg` then shows `{ty}` as constructed, and a failed `assert` no longer shows its values"
+                    )
+                } else {
+                    "remove it from `derive`".to_owned()
+                });
+                (
+                    Severity::Warning,
+                    Some(code::UNUSED_DERIVE),
+                    format!("derived `{trait_name}` for `{ty}` is never used"),
                 )
             }
             TypeDiagnosticKind::UnreachableArm => (
@@ -830,7 +871,7 @@ impl Diagnostic {
                 let message = match handler {
                     Some(handler) => {
                         help = Some(format!(
-                            "write the types, like `implements {effect}[{holes}]`; a handler cannot be generic"
+                            "write the types, like `handler {handler}: {effect}[{holes}]`; a handler cannot be generic"
                         ));
                         format!(
                             "handler `{handler}` must implement `{effect}[{}]` with concrete types",
@@ -1097,6 +1138,65 @@ impl Diagnostic {
                     format!("`{param}` of `{ty}` is {set}, found {found}"),
                 )
             }
+            TypeDiagnosticKind::NotImplemented { ty, trait_name } => (
+                Severity::Error,
+                Some(code::NOT_IMPLEMENTED),
+                format!("type `{ty}` does not implement `{trait_name}`"),
+            ),
+            TypeDiagnosticKind::NotDerivable { trait_name } => (
+                Severity::Error,
+                Some(code::NOT_IMPLEMENTED),
+                format!("cannot derive `{trait_name}`: only `Eq`, `Ord` and `Show` can be derived"),
+            ),
+            TypeDiagnosticKind::SupertraitCycle { cycle } => (
+                Severity::Error,
+                Some(code::SUPERTRAIT_CYCLE),
+                format!(
+                    "trait `{}` is its own supertrait: {}",
+                    cycle[0],
+                    cycle
+                        .iter()
+                        .map(|t| format!("`{t}`"))
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                ),
+            ),
+            TypeDiagnosticKind::DuplicateImpl { ty, trait_name } => (
+                Severity::Error,
+                Some(code::DUPLICATE_IMPL),
+                format!("`{trait_name}` is already implemented for `{ty}`"),
+            ),
+            TypeDiagnosticKind::OrphanImpl { ty, trait_name } => {
+                help = Some(format!(
+                    "wrap `{ty}` in a type of this module and implement `{trait_name}` for it"
+                ));
+                (
+                    Severity::Error,
+                    Some(code::ORPHAN_IMPL),
+                    format!(
+                        "`{trait_name}` for `{ty}` can only be implemented in the module of \
+                         `{trait_name}` or of `{ty}`"
+                    ),
+                )
+            }
+            TypeDiagnosticKind::AmbiguousSelf { trait_name } => (
+                Severity::Error,
+                Some(code::AMBIGUOUS_SELF),
+                format!("cannot infer which impl of `{trait_name}` to use: add a type annotation"),
+            ),
+            TypeDiagnosticKind::ImplFnParamCount {
+                name,
+                trait_name,
+                expected,
+                found,
+            } => (
+                Severity::Error,
+                Some(code::IMPL_FN_PARAM_COUNT),
+                format!(
+                    "wrong number of parameters: `{name}` of `{trait_name}` takes {expected}, \
+                     found {found}"
+                ),
+            ),
             TypeDiagnosticKind::ImmediateOnNonEffect { param } => (
                 Severity::Error,
                 Some(code::IMMEDIATE_ON_NON_EFFECT),

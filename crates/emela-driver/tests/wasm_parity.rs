@@ -17,6 +17,23 @@ use emela_driver::{
 /// Programs that use only the pure language and `dbg`, so both targets must run them the same way.
 const PROGRAMS: &[(&str, &str)] = &[
     (
+        "xorshift",
+        r#"
+fn next(seed: Int) -> Int {
+  s = if seed == 0 { 1831565813 } else { seed }
+  a = Int.bit_xor(s, Int.shift_left(s, 13))
+  b = Int.bit_xor(a, Int.shift_right_unsigned(a, 17))
+  Int.bit_xor(b, Int.shift_left(b, 5))
+}
+
+fn main() {
+  seeds = [0, 1, -1, 8, 20261013, 0 - 2147483647 - 1, 2147483647]
+  dbg(List.map(seeds, next))
+  dbg(List.map(seeds, fn(seed) { next(next(next(seed))) % 1000 }))
+}
+"#,
+    ),
+    (
         "integers",
         r#"
 fn fib(n: Int) -> Int {
@@ -116,7 +133,7 @@ effect Greet {
   fn hello(name: String) -> String
 }
 
-handler Hi implements Greet {
+handler Hi: Greet {
   fn hello(name) { "hi #{name}" }
 }
 
@@ -182,15 +199,15 @@ effect Debug of Log default
 effect AuditA of Log
 effect AuditB of Log
 
-handler PrintLog implements Log {
+handler PrintLog: Log {
   fn log(msg) { _ = dbg("print: #{msg}") }
 }
 
-handler AuditLog implements Log {
+handler AuditLog: Log {
   fn log(msg) { _ = dbg("audit: #{msg}") }
 }
 
-handler Tagged(tag: String) implements Log {
+handler Tagged(tag: String): Log {
   init {
     _ = dbg("open")
     Tagged(tag: "t")
@@ -295,6 +312,121 @@ fn main() {
   dbg(String.split("\u{20AC}", "\u{20AC}"))
 }
 "#,
+    ),
+    (
+        "inspect",
+        r##"
+enum Shape {
+  Square(side: Int)
+  Rect(Int, Int)
+  Empty
+}
+  derive Show
+
+type Name(value: String)
+
+impl Name: Show {
+  fn show(self) { "<#{self.value}>" }
+}
+
+type Button(label: Name, on_click: fn(Int) -> Int)
+
+fn twice(x: Int) -> Int { x * 2 }
+
+fn show_any[A: Show](x: A) -> String { inspect(x) }
+
+fn dbg_any[A](x: A) -> A { dbg(x) }
+
+fn main() {
+  dbg(inspect(42))
+  dbg(inspect("a\"b\\c\nd \#{e}"))
+  dbg(inspect([Square(side: 1), Rect(1, 2), Empty]))
+  dbg(inspect((1, "a", [Some("x"), None])))
+  dbg(show_any([Some(Name(value: "n"))]))
+  dbg(twice)
+  dbg(Button(label: Name(value: "dbg"), on_click: twice))
+  dbg_any([(1, fn(x: Int) { x + 1 })])
+  dbg_any([Button(label: Name(value: "g"), on_click: twice)])
+  dbg("top")
+}
+"##,
+    ),
+    (
+        "traits",
+        r##"
+type Point(x: Int, y: Int)
+type Box[A](value: A)
+
+trait Size {
+  fn size(self) -> Int
+
+  fn double(self) -> Int { Size.size(self) * 2 }
+}
+
+impl Point: Size {
+  fn size(self) { self.x + self.y }
+}
+
+impl Box[A: Size]: Size {
+  fn size(self) { Size.size(self.value) + 1 }
+
+  fn double(self) { 0 }
+}
+
+fn total[A: Size](xs: List[A]) -> Int { List.fold(xs, 0, fn(acc, x) { acc + Size.size(x) }) }
+
+fn main() {
+  p = Point(x: 1, y: 2)
+  dbg(Size.size(p))
+  dbg(Size.double(p))
+  dbg(Size.size(Box(value: Box(value: p))))
+  dbg(Size.double(Box(value: p)))
+  dbg(total([p, Point(x: 3, y: 4)]))
+}
+"##,
+    ),
+    (
+        "error_with_a_function_field",
+        r#"
+error Retry(after: fn() -> Int)
+
+fn attempt(n: Int) -> Int fails Retry {
+  if n > 1 { fail Retry(after: fn() { n }) }
+  n
+}
+
+fn main() {
+  dbg(attempt(1))
+  dbg(attempt(2))
+}
+"#,
+    ),
+    (
+        "derived",
+        r##"
+type Name(value: String)
+
+impl Name: Show {
+  fn show(self) { "<#{self.value}>" }
+}
+
+type User(id: Int, name: Name, nick: String) derive Show
+
+enum Tree[A] {
+  Leaf
+  Node(Tree[A], A, Tree[A])
+}
+  derive Eq, Ord, Show
+
+fn main() {
+  dbg(Show.show(User(id: 1, name: Name(value: "ann"), nick: "a\"n")))
+  t = Node(Leaf, 2, Node(Leaf, 3, Leaf))
+  dbg(Show.show(t))
+  dbg(Eq.eq(t, t))
+  dbg(Ord.compare(t, Node(Leaf, 2, Leaf)))
+  dbg(Ord.compare(Leaf, t))
+}
+"##,
     ),
     (
         "deep_recursion",
