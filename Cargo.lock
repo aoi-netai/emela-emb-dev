@@ -454,6 +454,7 @@ version = "0.24.0"
 dependencies = [
  "ariadne",
  "emela-codegen-c",
+ "emela-codegen-emb",
  "emela-codegen-js",
  "emela-codegen-wasm",
  "emela-core",
