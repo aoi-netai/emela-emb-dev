@@ -11,6 +11,53 @@
 
 例えば19℃では、停止中なら停止を続け、加熱中なら加熱を続ける。加熱中に29℃へ上昇した場合は、加熱を停止して冷却へ切り替える。温度が取得できない場合は両方OFFにして`fault`へ移り、次の有効な入力で制御を再開する。
 
+## CLIでfirmwareを作り、書き込む
+
+[firmware/Pome.toml](firmware/Pome.toml)を使うと、Emelaの型検査から各CPU向けのcompile・link、Flash imageの作成までCLIで行える。workspace rootから実行する。
+
+```sh
+emela build crates/emela-codegen-emb/examples/temperature-controller/firmware \
+  --board stm32f446 --out-dir /tmp/emela-temperature-stm32-flash
+emela flash crates/emela-codegen-emb/examples/temperature-controller/firmware \
+  --board stm32f446 --out-dir /tmp/emela-temperature-stm32-flash --dry-run
+```
+
+`--dry-run`を外すとST-Link／OpenOCDを使って実機へ書き込み、verify後にresetする。`--port`にはST-Linkのadapter serialを指定できる。ARM GNU toolchainは`PATH`または`ARM_TOOLCHAIN_PATH`、OpenOCDは`PATH`または`OPENOCD`で指定する。STM32Cubeはこのfirmware経路には不要である。
+
+ボードを`--board esp32c3`へ変えると同じEmelaアプリをESP32-C3向けに作る。ボードの既定値・固定容量・独自C sourceは`Pome.toml`と[firmware/embedded.toml](firmware/embedded.toml)へまとめ、`[embedded.modules]`が`{board}`に応じて`Board` moduleの配線を選ぶ。ESP32-C3のtoolchain・Flash imageと書き込み手順は[packageの説明](../../boards/esp32c3/README.md)を参照する。
+
+共通の`controller.emel`はそのままで、[firmware/src/main.emel](firmware/src/main.emel)が`Controller.run(24)`を呼ぶ。packageの汎用runtimeがstartup、標準GPIO・Clock・Console、schedulerを提供する。独自の模擬センサだけを[firmware/sensor.c](firmware/sensor.c)から追加するため、アプリ側にCの`main`は不要である。
+
+出力先には`generated/`、展開された`bsp/`、`firmware/firmware.elf`・`.bin`・`.map`、資源とhashを含むmanifestを保存する。書き込み前にはboard、生成物とソース・設定の鮮度を検査し、変更後にrebuildしていない場合は失敗する。
+
+### STM32のFlash resetをRenodeで確認する
+
+```sh
+python3 crates/emela-codegen-emb/examples/temperature-controller/firmware/renode_stm32.py \
+  --firmware-dir /tmp/emela-temperature-stm32-flash/firmware \
+  --output /tmp/emela-temperature-stm32-flash-observed \
+  --renode /path/to/renode --toolchain /path/to/arm-toolchain
+```
+
+`RENODE`・`ARM_TOOLCHAIN_PATH`環境変数でも指定できる。空のdirectoryまたはこの検証runnerが所有する出力先を使う。空白を含むpathにも対応する。
+
+runnerはCLIが作成した`firmware.bin`のみをFlash `0x08000000`へloadする。同一Flashを`0x00000000`にも登録してBOOT0=0をmodel化し、CPU resetでvectorからMSP／PCを取り込む。ELFはsymbolのaddressを得るためだけに使い、Renodeへはloadしない。monitorでPC・SP・VTORを設定する処理もない。
+
+`.data`と`.bss`の観測wordを事前に`0xdeadbeef`で汚してからresetし、startup自身が初期化することを確認する。さらに24行のUARTの温度と運転状態、1秒間隔で観測する実GPIO出力、23回のtask通知、正常終了後の両出力OFF、stack high-waterとguardを検査する。`run.resc`・platform・`renode.log`・`uart.log`・`report.json`を残す。GPIOの観測はsample時の出力状態の確認であり、全命令間の短い過渡状態の記録ではない。
+
+CLIが同梱する汎用STM32 runtimeを使い、Renode 1.16.1・Arm GNU GCC 13.2.1で次を確認した。単位はbyte。
+
+| 最適化 | Flash BIN | 静的RAM | RAM予約合計 | 観測MSP |
+| --- | ---: | ---: | ---: | ---: |
+| O0 | 41,232 | 7,032 | 23,672 | 1,980 |
+| O2 | 28,268 | 7,048 | 23,688 | 1,360 |
+
+予約RAM合計は静的RAM、stack 16,384byte、guard 256byteの合計である。固定heap 2,048byteと各poolは静的RAMに含む。両構成とも24sampleの温度・mode・GPIOが一致し、結果24、実SysTick割り込み23,000回、task通知23回、stale通知0、UART 944byte、失敗0、終了時両出力OFF、guard正常だった。観測MSPはこのプログラムと入力での値であり、任意のアプリの最大値ではない。
+
+別途、独自C sourceを持たず`BoardConsole`で2行を出力し、`BoardClock`で10ms待機して`Int`を返すEmelaだけのprojectもCLIでbuildし、Flash BINからのreset、待機後の再開と終了を確認した。標準APIだけを使うアプリにCやRustの補助mainは必要ない。実機のST-Link転送は実測しておらず、書き込みcommandはdry runで確認した。
+
+このFlash経路と、以下の詳細な履歴付きのボード別runnerは、別の確認手順として残している。
+
 ## Cを生成する
 
 このdirectoryで次を実行する。Rustのexampleプログラムは必要なく、通常の`emela build`で組み込みCを生成できる。
@@ -32,7 +79,7 @@ cargo run --locked -q -p emela-cli -- build \
   --out-dir /tmp/emela-temperature-generated
 ```
 
-CLIはCとheaderの生成までを担当する。各CPU向けのcompile・linkとRenode起動は、以下のボード用runnerで行う。上記の直接生成commandは既定のSTM32用`board.emel`を選ぶ。
+上記のboard指定を使わない直接生成commandはCとheaderを出力し、既定のSTM32用`board.emel`を選ぶ。以下のボード別runnerはこの直接生成経路を使い、独自の観測付きboard Cと組み合わせてcompile・linkとRenode起動を行う。
 
 ## STM32F446／Renodeで実行する
 
@@ -69,7 +116,7 @@ bash crates/emela-codegen-emb/examples/temperature-controller/renode-esp32c3/run
   --verify-scenario --optimization O2 --output /tmp/emela-temperature-esp32c3-O2
 ```
 
-runnerは`controller.emel`をbyte単位で同一のまま出力先の`source/`へcopyし、[ESP32-C3用board.emel](boards/esp32c3/board.emel)を組み合わせて通常のCLIへ渡す。[ESP32-C3用embedded.toml](boards/esp32c3/embedded.toml)を用い、生成Cを加工せずRISC-V向けにcompile・linkする。アプリの状態遷移・effect・標準handlerの実装はSTM32と同じである。CLIに`board`設定を追加する作業は今後の段階であり、現在はこのrunnerがボードを選ぶ。
+runnerは`controller.emel`をbyte単位で同一のまま出力先の`source/`へcopyし、[ESP32-C3用board.emel](boards/esp32c3/board.emel)を組み合わせて通常のCLIへ渡す。[ESP32-C3用embedded.toml](boards/esp32c3/embedded.toml)を用い、生成Cを加工せずRISC-V向けにcompile・linkする。アプリの状態遷移・effect・標準handlerの実装はSTM32と同じである。この詳細観測runnerのボード選択はrunner内で行い、上のfirmware projectではCLIの`--board`を使う。
 
 | 入出力 | ESP32-C3での割り当て |
 | --- | --- |
@@ -85,7 +132,7 @@ GPIOは独自の小さなRenode modelから外部LED endpointへ接続する。�
 
 `--continuous`で継続運転を26秒相当観察する。`--optimization O0`も利用できる。`report.json`、`metrics.json`、`resources.json`、`uart.log`、`firmware.elf`とmap、生成ソースを出力先に保存する。空のdirectoryか、このESP32-C3 runnerが作成したdirectoryだけを出力先にできる。別processと同時利用した出力先や、以前のUART logを成功として再利用しない。
 
-この構成はboot ROM・ESP-IDF・flashを使わないSRAM実行である。Renode monitorが実行前にentry PC、`MTVEC`とCLIC line1を設定し、その後は`SYSTIMER → interrupt matrix → CLIC → trap → ISR → task通知 → main scheduler`で進む。ISRを呼び出すPC hookはない。実機のflash起動・書き込みcommand・ESP-IDF統合はまだ提供しない。I²C・SPI・Wi-Fi・BLE等の動作確認もこのexampleには含めない。
+この詳細観測runnerの構成はboot ROM・ESP-IDF・flashを使わないSRAM実行である。Renode monitorが実行前にentry PC、`MTVEC`とCLIC line1を設定し、その後は`SYSTIMER → interrupt matrix → CLIC → trap → ISR → task通知 → main scheduler`で進む。ISRを呼び出すPC hookはない。Flash向けの成果物と書き込みcommandは上のfirmware projectで扱う。I²C・SPI・Wi-Fi・BLE等の動作確認もこのexampleには含めない。
 
 ### ESP32-C3の資源
 
@@ -112,6 +159,13 @@ temperature-controller/
 ├── board.emel
 ├── embedded.toml
 ├── README.md
+├── firmware/
+│   ├── Pome.toml
+│   ├── embedded.toml
+│   ├── src/main.emel
+│   ├── sensor.c
+│   └── renode_stm32.py
+├── boards/stm32f446/board.emel
 ├── boards/esp32c3/
 │   ├── board.emel
 │   └── embedded.toml
@@ -134,6 +188,9 @@ temperature-controller/
 | [controller.emel](controller.emel) | 状態遷移、状態の保持、温度取得と出力、周期待機 |
 | [board.emel](board.emel) | 論理ピンとUART設定、温度センサeffectとボード固有の接続 |
 | [embedded.toml](embedded.toml) | 固定容量、ボード用の公開名の設定。標準APIのadapter指定は不要 |
+| [firmware/Pome.toml](firmware/Pome.toml)、[src/main.emel](firmware/src/main.emel) | CLIでボードを選び、汎用packageから起動するprojectと引数なしentry |
+| [firmware/sensor.c](firmware/sensor.c) | projectが追加する独自の模擬センサ。制御判断とCのmainは持たない |
+| [firmware/renode_stm32.py](firmware/renode_stm32.py) | CLI作成済みのFlash BINをreset起動し、UART・sample時GPIO・startup初期化・stackを確認する |
 | [renode/board.c](renode/board.c) | 模擬温度入力、GPIO、USART2、SysTick、schedulerの駆動 |
 | [renode/run.sh](renode/run.sh)、[run.py](renode/run.py) | ビルド、Renode起動、実行ログと資源の確認 |
 | [boards/esp32c3/board.emel](boards/esp32c3/board.emel) | ESP32-C3向けの論理ピン・UART0設定。アプリ共通のセンサeffectとlayer |

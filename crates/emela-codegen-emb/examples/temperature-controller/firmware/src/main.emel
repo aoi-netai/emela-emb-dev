@@ -1,0 +1,6 @@
+import Controller
+
+# The firmware package supplies startup, peripherals, and the scheduler.
+pub fn main() -> Int use Async {
+  Controller.run(24)
+}

@@ -1,0 +1,13 @@
+[build]
+target = "c-embedded"
+
+[embedded]
+board = "stm32f446"
+config = "embedded.toml"
+entry = "main"
+sources = ["sensor.c"]
+optimization = "O2"
+
+[embedded.modules]
+Controller = "../controller.emel"
+Board = "../boards/{board}/board.emel"
