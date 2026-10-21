@@ -21,8 +21,44 @@ macro_rules! asset {
     };
 }
 
+macro_rules! stm32f4_assets {
+    ($profile:literal, $chip:literal) => {
+        &[
+            asset!("stm32/stm32f4", "build.py"),
+            asset!("stm32/common", "stm32_common.py"),
+            asset!("stm32/stm32f4", "startup.S"),
+            asset!("stm32/stm32f4", "firmware.ld.in"),
+            asset!("stm32/stm32f4", "runtime.c"),
+            asset!("stm32/stm32f4", "validation_stack.c"),
+            asset!("stm32/stm32f4", "validation_stack.h"),
+            asset!("stm32/stm32f4", "README.md"),
+            BoardAsset {
+                name: "profile.json",
+                contents: include_bytes!(concat!(
+                    "../boards/stm32/stm32f4/boards/",
+                    $profile,
+                    ".json"
+                )),
+            },
+            BoardAsset {
+                name: "chip.json",
+                contents: include_bytes!(concat!("../boards/stm32/stm32f4/chips/", $chip, ".json")),
+            },
+        ]
+    };
+}
+
 /// Canonical board identifiers accepted by the CLI and project configuration.
-pub const BOARD_NAMES: &[&str] = &["stm32f446", "esp32c3"];
+pub const BOARD_NAMES: &[&str] = &[
+    "stm32f446",
+    "stm32f407vg",
+    "stm32f412zg",
+    "stm32f429zi",
+    "stm32f446re",
+    "stm32f4-discovery",
+    "nucleo-f446re",
+    "esp32c3",
+];
 
 /// Verifies build inputs and images before invoking a board flasher.
 pub const BUILD_STATE_SCRIPT: &str = include_str!("../boards/build_state.py");
@@ -30,17 +66,18 @@ pub const BUILD_STATE_SCRIPT: &str = include_str!("../boards/build_state.py");
 /// Returns a package without depending on the compiler's source checkout at runtime.
 pub fn package(id: &str) -> Option<BoardPackage> {
     let (id, assets): (_, &'static [BoardAsset]) = match id {
-        "stm32f446" => (
-            "stm32f446",
-            &[
-                asset!("stm32f446", "build.py"),
-                asset!("stm32f446", "startup.S"),
-                asset!("stm32f446", "firmware.ld"),
-                asset!("stm32f446", "runtime.c"),
-                asset!("stm32f446", "validation_stack.c"),
-                asset!("stm32f446", "validation_stack.h"),
-                asset!("stm32f446", "README.md"),
-            ],
+        "stm32f446" => ("stm32f446", stm32f4_assets!("stm32f446", "stm32f446re")),
+        "stm32f407vg" => ("stm32f407vg", stm32f4_assets!("stm32f407vg", "stm32f407vg")),
+        "stm32f412zg" => ("stm32f412zg", stm32f4_assets!("stm32f412zg", "stm32f412zg")),
+        "stm32f429zi" => ("stm32f429zi", stm32f4_assets!("stm32f429zi", "stm32f429zi")),
+        "stm32f446re" => ("stm32f446re", stm32f4_assets!("stm32f446re", "stm32f446re")),
+        "stm32f4-discovery" => (
+            "stm32f4-discovery",
+            stm32f4_assets!("stm32f4-discovery", "stm32f407vg"),
+        ),
+        "nucleo-f446re" => (
+            "nucleo-f446re",
+            stm32f4_assets!("nucleo-f446re", "stm32f446re"),
         ),
         "esp32c3" => (
             "esp32c3",

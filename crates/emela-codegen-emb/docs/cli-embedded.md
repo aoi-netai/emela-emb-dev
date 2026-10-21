@@ -67,7 +67,7 @@ deferred_capacity = 1
 pub fn main() -> Int use Async { 0 }
 ```
 
-Pythonと[STM32F446のtoolchain・OpenOCD](../boards/stm32f446/README.md)を用意して、次を実行する。同じボード文書にはConsoleとClockを使うEmelaだけの例もある。
+Pythonと[STM32F4共通packageのtoolchain・OpenOCD](../boards/stm32/stm32f4/README.md)を用意して、次を実行する。既存の`stm32f446`指定は引き続き利用できる。
 
 ```sh
 emela check thermostat
@@ -75,6 +75,17 @@ emela build thermostat
 emela flash thermostat --dry-run
 emela flash thermostat
 ```
+
+現在同梱するボードIDは次のとおり。MCU定義と基板の配線profileを分け、STM32F4はruntime・startup・build処理を共有する。
+
+| 対象 | `board`／`--board`の値 |
+| --- | --- |
+| STM32F4のMCUと既定Console配線 | `stm32f407vg`、`stm32f412zg`、`stm32f429zi`、`stm32f446re` |
+| STM32F4の基板profile | `stm32f4-discovery`、`nucleo-f446re` |
+| 従来のSTM32F446互換ID | `stm32f446` |
+| ESP32-C3 | `esp32c3` |
+
+F4のMCU別のメモリ容量、Console USART・pin、GPIOの論理IDは[共通package](../boards/stm32/stm32f4/README.md)、Renodeで確認したplatformの一覧は[F4対応記録](stm32f4-boards.md)を参照する。未登録のF4型番や基板への自動対応は行わない。互換IDはmanifestや出力directoryでも`stm32f446`を維持する。
 
 ESP32-C3は`board = "esp32c3"`、または`--board esp32c3`で選ぶ。書き込みにはserial portを指定する。
 
@@ -86,7 +97,7 @@ emela flash thermostat --board esp32c3 --port /dev/ttyUSB0
 
 `--board`がTOMLより優先する。ボード指定時にtargetを省略すると`c-embedded`となり、明示した別targetとは併用できない。既定の出力先は`target/emela/c-embedded/<board>/`で、`generated/`にCとheader、`bsp/`にボードパッケージ、`firmware/`にELF・BIN・map・資源情報を置く。`--out-dir`はこの3directoryの親を指定する。
 
-ボードパッケージはコンパイラに同梱されるため、インストール後のCLIから開発時のリポジトリを参照する必要はない。Pythonの実行ファイルは`EMELA_PYTHON`で指定できる。ボードのtoolchain・書き込みtool・起動方式の条件は、[STM32F446](../boards/stm32f446/README.md)と[ESP32-C3](../boards/esp32c3/README.md)を参照する。
+ボードパッケージはコンパイラに同梱されるため、インストール後のCLIから開発時のリポジトリを参照する必要はない。Pythonの実行ファイルは`EMELA_PYTHON`で指定できる。ボードのtoolchain・書き込みtool・起動方式の条件は、[STM32F4共通package](../boards/stm32/stm32f4/README.md)と[ESP32-C3](../boards/esp32c3/README.md)を参照する。
 
 ### 配線・独自デバイスの選択
 
