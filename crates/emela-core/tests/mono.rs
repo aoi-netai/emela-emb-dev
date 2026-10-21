@@ -501,3 +501,38 @@ pub fn asynchronous() -> Int use Async {
         "Async specialization marks calls and lambda as suspending"
     );
 }
+
+/// Abstract display properties terminate for growing enum applications (not just regular
+/// recursion) while unused type parameters and opaque function values keep their meaning.
+#[test]
+fn growing_enum_display_properties_are_finite() {
+    let module = mono(&lower_files(&[(
+        "main.emel",
+        r##"
+pub enum Grow[A] { End(value: A), Next(rest: Grow[List[A]]) } derive Eq, Show
+pub fn same(n: Int) -> Bool {
+  value: Grow[Int] = Next(rest: End(value: [n]))
+  value == value
+}
+pub fn text(n: Int) -> String {
+  value: Grow[Int] = End(value: n)
+  "#{value}"
+}
+pub fn debug(n: Int) -> Int {
+  value: Grow[fn(Int) -> Int] = End(value: fn(x) { x + n })
+  dbg(value)
+  n
+}
+pub enum Phantom[A] { Stop, More(Phantom[List[A]]) }
+pub fn phantom() -> Int {
+  value: Phantom[fn(Int) -> Int] = Stop
+  dbg(value)
+  0
+}
+"##,
+    )]));
+    assert!(module.functions.len() < 64);
+    let output = dump(&module);
+    assert!(output.contains("Grow[Int]"));
+    assert!(output.contains("Phantom["));
+}

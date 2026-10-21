@@ -1317,11 +1317,72 @@ impl<'a> Mono<'a> {
     /// (`Dispatch::structural`) and for derived impls (`mono/derive.rs`), when every part is so
     /// too. A type with an impl written in source is not. `seen` breaks cycles of
     /// recursive types.
-    fn structural(&mut self, f: FnId, ty: TypeId, seen: &mut Vec<TypeId>) -> bool {
-        if seen.contains(&ty) {
-            return true;
-        }
-        let parts: Vec<TypeId> = match self.out.ty(ty).clone() {
+    fn structural(&mut self, f: FnId, ty: TypeId, seen: &mut Vec<(EnumId, Vec<bool>)>) -> bool {
+        self.display_property(f, ty, &[], seen, false)
+    }
+
+    /// Evaluate display properties without materializing an unbounded family such as
+    /// Grow[A] -> Grow[List[A]]. Parameters carry only the property their fields observe.
+    /// Coherence permits one impl per enum head and trait, so written-impl selection is
+    /// independent of these flags. Function and Cell contents remain opaque here.
+    fn display_property(
+        &mut self,
+        f: FnId,
+        ty: TypeId,
+        env: &[bool],
+        seen: &mut Vec<(EnumId, Vec<bool>)>,
+        written: bool,
+    ) -> bool {
+        match self.out.ty(ty).clone() {
+            Type::Param(i) => env.get(i).copied().unwrap_or(false),
+            Type::List(t) => self.display_property(f, t, env, seen, written),
+            Type::Tuple(ts) => {
+                if written {
+                    ts.into_iter()
+                        .any(|t| self.display_property(f, t, env, seen, written))
+                } else {
+                    ts.into_iter()
+                        .all(|t| self.display_property(f, t, env, seen, written))
+                }
+            }
+            Type::Enum(id, args) => {
+                if self.m.dispatch.get(&f).is_some_and(|dispatch| {
+                    dispatch.impls.iter().any(|&(pattern, implementation)| {
+                        matches!(self.m.ty(pattern), Type::Enum(head, _) if *head == id)
+                            && !dispatch.structural.contains(&implementation)
+                    })
+                }) {
+                    return written;
+                }
+                if self.out.enums[id].external {
+                    return false;
+                }
+                let flags: Vec<_> = args
+                    .into_iter()
+                    .map(|t| self.display_property(f, t, env, seen, written))
+                    .collect();
+                let key = (id, flags.clone());
+                if seen.contains(&key) {
+                    return !written;
+                }
+                seen.push(key);
+                let fields: Vec<_> = self.out.enums[id]
+                    .variants
+                    .iter()
+                    .flat_map(|variant| variant.tys.iter().copied())
+                    .collect();
+                let result = if written {
+                    fields
+                        .into_iter()
+                        .any(|t| self.display_property(f, t, &flags, seen, written))
+                } else {
+                    fields
+                        .into_iter()
+                        .all(|t| self.display_property(f, t, &flags, seen, written))
+                };
+                seen.pop();
+                result
+            }
             Type::Int
             | Type::Int64
             | Type::Float
@@ -1329,33 +1390,9 @@ impl<'a> Mono<'a> {
             | Type::String
             | Type::Unit
             | Type::Never
-            | Type::Any => return true,
-            Type::List(t) => vec![t],
-            Type::Tuple(ts) => ts,
-            Type::Enum(id, args) => {
-                if self.out.enums[id].external {
-                    return false;
-                }
-                let mut parts = Vec::new();
-                for v in 0..self.out.enums[id].variants.len() {
-                    for t in self.out.enums[id].variants[v].tys.clone() {
-                        parts.push(self.out.types.subst(t, &args));
-                    }
-                }
-                parts
-            }
-            _ => return false,
-        };
-        if let Some(dispatch) = self.m.dispatch.get(&f)
-            && let Some((impl_fn, _)) = self.pick_impl(f, dispatch, &[ty])
-            && !dispatch.structural.contains(&impl_fn)
-        {
-            return false;
+            | Type::Any => !written,
+            _ => false,
         }
-        seen.push(ty);
-        let ok = parts.into_iter().all(|t| self.structural(f, t, seen));
-        seen.pop();
-        ok
     }
 
     /// `dbg(x)` and `inspect(x)` (spec 10.6). A type whose display reaches no written Show impl
@@ -1463,39 +1500,7 @@ impl<'a> Mono<'a> {
         let Some(show) = self.m.traits.show else {
             return false;
         };
-        self.written_show_in(show, ty, &mut Vec::new())
-    }
-
-    fn written_show_in(&mut self, show: FnId, ty: TypeId, seen: &mut Vec<TypeId>) -> bool {
-        if seen.contains(&ty) {
-            return false;
-        }
-        let parts: Vec<TypeId> = match self.out.ty(ty).clone() {
-            Type::List(t) => vec![t],
-            Type::Tuple(ts) => ts,
-            Type::Enum(id, args) => {
-                if let Some(dispatch) = self.m.dispatch.get(&show)
-                    && let Some((impl_fn, _)) = self.pick_impl(show, dispatch, &[ty])
-                    && !dispatch.structural.contains(&impl_fn)
-                {
-                    return true;
-                }
-                let mut parts = Vec::new();
-                for v in 0..self.out.enums[id].variants.len() {
-                    for t in self.out.enums[id].variants[v].tys.clone() {
-                        parts.push(self.out.types.subst(t, &args));
-                    }
-                }
-                parts
-            }
-            _ => return false,
-        };
-        seen.push(ty);
-        let found = parts
-            .into_iter()
-            .any(|t| self.written_show_in(show, t, seen));
-        seen.pop();
-        found
+        self.display_property(show, ty, &[], &mut Vec::new(), true)
     }
 
     /// Records how a failure with an error of type `ty` is shown if it reaches the entry or a
