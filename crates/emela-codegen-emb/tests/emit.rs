@@ -1,7 +1,11 @@
+mod any_data;
 mod builtin_audit;
 mod cell;
+mod deferred;
 mod effect_discard;
-mod function_aggregate;
+mod fiber;
+#[path = "../examples/support/gc_anchor.rs"]
+mod gc_anchor;
 mod owned;
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;

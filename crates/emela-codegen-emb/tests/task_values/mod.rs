@@ -1,5 +1,8 @@
 use super::*;
 mod arguments;
+mod error_any;
+mod failure;
+mod managed;
 mod queue;
 mod representations;
 
@@ -9,6 +12,7 @@ fn options() -> Options {
         .with_fiber_capacity(8)
         .with_frame_capacity(24)
         .with_frame_bytes(1024)
+        .with_deferred_capacity(2)
         .with_task_capacity(2)
         .with_event_capacity(2)
         .with_task_adapter("host_value", "board_value_start")
@@ -115,29 +119,4 @@ fn external_task_signatures_reject_callbacks_even_when_nested_in_aggregates() {
                 .any(|e| e.message.contains("callback or runtime capability"))
         );
     }
-}
-
-pub(super) fn add_heap_check(output: &mut Output) {
-    output
-        .files
-        .iter_mut()
-        .find(|f| f.path == "emela_embedded.c")
-        .unwrap()
-        .contents
-        .push_str(
-            r#"
-#ifdef EMELA_UNWIND_RUNTIME
-void test_cancel(EmelaFiber f) { emela_fiber_get(f)->cancelled=1; }
-#endif
-int test_heap_empty(void) {
-  if (!emela_heap_initialized) return 1;
-  for (unsigned char *p=emela_heap_storage;p<emela_heap_end();) {
-    emela_heap_block *b=(emela_heap_block *)(void*)p;
-    if (!b->is_free) { return 0; }
-    p+=b->size;
-  }
-  return 1;
-}
-"#,
-        );
 }

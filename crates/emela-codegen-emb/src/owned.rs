@@ -145,8 +145,6 @@ impl TypeLayouts<'_> {
             writer.line(&format!("emela_any_own(&({value}));"));
         } else if matches!(self.types[ty], Type::String) {
             writer.assign(value, &format!("emela_heap_own_string({value})"));
-        } else if matches!(self.types[ty], Type::Any) && self.managed_error_payloads {
-            writer.line(&format!("emela_error_own(&({value}));"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!("emela_heap_own_value_{index}(&({value}));"));
         } else if self.is_managed_value(ty) {

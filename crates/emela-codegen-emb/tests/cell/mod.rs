@@ -1,8 +1,5 @@
 use super::*;
 
-#[path = "../../examples/support/shared_cell_cycle.rs"]
-mod cycle_fixture;
-
 fn with_heap_check(mut output: Output) -> Output {
     output
         .files
@@ -24,6 +21,94 @@ int test_heap_empty(void) {
 "#,
         );
     output
+}
+
+#[test]
+fn shared_cells_keep_string_updates_alive_across_capture_suspend_and_cancellation() {
+    let core = support::try_lower(
+        &[(
+            "main.emel",
+            include_str!("../../examples/support/shared_cell.emel"),
+        )],
+        Roots::Exported,
+    )
+    .unwrap();
+    let mut output = with_heap_check(
+        compile(
+            &core,
+            &Options::default()
+                .with_heap_bytes(8192)
+                .with_string_capacity(128)
+                .with_fiber_capacity(8)
+                .with_frame_capacity(24)
+                .with_frame_bytes(1024)
+                .with_task_capacity(2)
+                .with_event_capacity(2)
+                .with_deferred_capacity(0)
+                .with_task_adapter("host_wait", "board_wait_start"),
+        )
+        .unwrap(),
+    );
+    output
+        .files
+        .iter_mut()
+        .find(|f| f.path == "emela_embedded.c")
+        .unwrap()
+        .contents
+        .push_str("void test_cancel(EmelaFiber h) { emela_fiber_get(h)->cancelled = 1; }\n");
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+void test_cancel(EmelaFiber h);
+static EmelaTask tasks[4];
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { fprintf(stderr, "%d: %.*s\n",k,n,m); abort(); }
+void board_wait_start(EmelaTask t, int32_t n) { assert(n == 10 || n == 20 || n == 30); tasks[n / 10] = t; }
+static void drain(void) { while (emela_scheduler_run(1)) {} }
+int main(void) {
+  for (unsigned i = 0; i < 1000; i++) {
+    assert(emela_export_escaped_result_1(40, NULL) == 83);
+    assert(test_heap_empty());
+    char composite_buffer[128];
+    EmelaString composite = emela_export_composite_4(42, composite_buffer, sizeof(composite_buffer));
+    assert(composite.length == 4 && memcmp(composite.data,"4242",4)==0);
+    emela_embedded_release(composite.owner); assert(test_heap_empty());
+    EmelaString result = {0};
+    EmelaFiber fiber = emela_export_shared_2_start(42, &result); drain();
+    assert(emela_task_complete_int(tasks[1], 0)); drain();
+    assert(emela_task_complete_int(tasks[2], 0)); drain();
+    assert(result.length == 31 && memcmp(result.data, "42 child parent/42 child parent", 31) == 0);
+    emela_fiber_release(fiber); emela_embedded_release(result.owner); assert(test_heap_empty());
+    fiber = emela_export_shared_2_start(42, NULL); drain();
+    assert(emela_task_complete_int(tasks[2], 0)); drain();
+    assert(emela_task_complete_int(tasks[1], 0)); drain();
+    emela_fiber_release(fiber); assert(test_heap_empty());
+    for (int bad = 0; bad < 2; bad++) {
+      fiber = emela_export_failed_3_start(42, bad, &result); drain();
+      assert(emela_task_complete_int(tasks[3], 0)); drain();
+      assert(result.length == 10 && memcmp(result.data,"42 failure",10)==0);
+      emela_fiber_release(fiber); emela_embedded_release(result.owner); assert(test_heap_empty());
+    }
+    fiber = emela_export_failed_3_start(42, 1, NULL); drain();
+    test_cancel(fiber); drain(); emela_fiber_release(fiber); assert(test_heap_empty());
+    for (unsigned step = 0; step < 2; step++) {
+      fiber = emela_export_shared_2_start(42, &result); drain();
+      if (step) { assert(emela_task_complete_int(tasks[1], 0)); drain(); }
+      test_cancel(fiber); drain(); emela_fiber_release(fiber); assert(test_heap_empty());
+    }
+  }
+  return 0;
+}
+"#,
+    );
 }
 
 #[test]
@@ -233,6 +318,9 @@ int main(void) {{ for(unsigned i=0;i<1000;i++) {{
     );
 }
 
+#[path = "../../examples/support/shared_cell_cycle.rs"]
+mod cycle_fixture;
+
 #[test]
 fn cycles_through_captured_cells_preserve_live_callbacks_and_reclaim_the_last_root() {
     let output = with_heap_check(
@@ -422,6 +510,104 @@ fn nested_cells_and_cells_in_enum_loop_values_keep_shared_identity() {
 int test_heap_empty(void);
 _Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m); abort(); }
 int main(void){for(unsigned i=0;i<1000;i++){assert(emela_export_run_0()==42);assert(test_heap_empty());}return 0;}
+"#,
+    );
+}
+
+#[test]
+fn cell_references_in_native_error_payloads_outlive_the_failing_frame() {
+    let mut core = emela_core::Module::new();
+    let cell = core.types.intern(Type::Cell(TypeId::INT));
+    let error_id = core.add_enum(EnumDef {
+        name: "Stored".into(),
+        params: 0,
+        variants: vec![VariantDef::positional("Stored", vec![cell])],
+        error: true,
+        external: false,
+    });
+    let error_ty = core.enum_type(error_id, vec![]);
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "raise");
+    b.set_fails();
+    let cell_value = b.assign(
+        "cell",
+        cell,
+        Value::Builtin {
+            op: Builtin::CellNew,
+            args: vec![Const::Int(42).into()],
+        },
+    );
+    let error = b.assign(
+        "error",
+        error_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: error_id,
+                variant: 0,
+            },
+            args: vec![cell_value.into()],
+        },
+    );
+    b.term(Term::Fail(error.into()));
+    let raise = flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "run");
+    b.set_exported().set_ret(TypeId::INT);
+    let caught = b.var("caught", TypeId::ANY);
+    b.block(Some(caught), "caught", |b, exit| {
+        b.let_(
+            None,
+            Value::Call {
+                callee: Callee::Direct(raise),
+                args: vec![],
+                suspends: false,
+                on_fail: Some(OnFail::Break(exit)),
+            },
+        );
+        b.term(Term::Unreachable);
+    });
+    let concrete = b.assign(
+        "concrete",
+        error_ty,
+        Value::AsError {
+            error: caught,
+            enum_id: error_id,
+        },
+    );
+    let stored = b.assign(
+        "stored",
+        cell,
+        Value::Field {
+            base: concrete,
+            ctor: CtorRef {
+                enum_id: error_id,
+                variant: 0,
+            },
+            index: 0,
+        },
+    );
+    let result = b.assign(
+        "result",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::CellGet,
+            args: vec![stored.into()],
+        },
+    );
+    b.term(Term::Return(Some(result.into())));
+    flow.add(b.finish());
+    let output =
+        with_heap_check(compile_flow(&flow, &Options::default().with_heap_bytes(1024)).unwrap());
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char *m,uint16_t n) { fprintf(stderr,"%d: %.*s\n",k,n,m); abort(); }
+int main(void){for(unsigned i=0;i<1000;i++){assert(emela_export_run_1()==42);assert(test_heap_empty());}return 0;}
 "#,
     );
 }

@@ -33,7 +33,7 @@ fn list_successes_keep_their_owned_elements_after_input_and_board_refs_are_relea
     b.term(Term::Return(Some(length.into())));
     flow.add(b.finish());
     let mut output = compile_flow(&flow, &options().with_heap_bytes(1024)).unwrap();
-    add_heap_check(&mut output);
+    managed::add_heap_check(&mut output);
     compile_and_run(
         output,
         &format!(
@@ -83,7 +83,7 @@ fn boxed_any_successes_use_the_generated_ownership_representation() {
     b.term(Term::Return(Some(n.into())));
     flow.add(b.finish());
     let mut output = compile_flow(&flow, &options().with_heap_bytes(1024)).unwrap();
-    add_heap_check(&mut output);
+    managed::add_heap_check(&mut output);
     compile_and_run(
         output,
         &format!(

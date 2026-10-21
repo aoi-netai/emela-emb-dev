@@ -36,7 +36,7 @@ fn non_scalar_arguments_work_with_the_existing_scalar_completion_abi() {
             .contents
             .contains("#define EMELA_TASK_VALUE_RUNTIME")
     );
-    add_heap_check(&mut output);
+    managed::add_heap_check(&mut output);
     compile_and_run(
         output,
         r#"

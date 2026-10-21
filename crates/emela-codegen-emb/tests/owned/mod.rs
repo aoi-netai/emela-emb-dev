@@ -331,3 +331,103 @@ int main(void) {{
         ),
     );
 }
+
+#[test]
+fn promoted_any_payload_is_reclaimed_when_its_waiting_frame_is_cancelled() {
+    let mut core = emela_core::Module::new();
+    let tuple_ty = core.tuple(vec![TypeId::STRING]);
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "store");
+    b.set_exported().set_ret(TypeId::ANY);
+    let text = b.param("text", TypeId::STRING);
+    let tuple = b.assign("tuple", tuple_ty, Value::Tuple(vec![text.into()]));
+    let any = b.assign("any", TypeId::ANY, Value::Coerce(tuple));
+    b.term(Term::Return(Some(any.into())));
+    flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "wait");
+    b.set_suspends().set_ret(TypeId::INT);
+    b.param("n", TypeId::INT);
+    let wait = flow.add(b.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".into(),
+            host: HostRef::Global("host_wait".into()),
+        }],
+    }));
+    let mut b = FnBuilder::new(&flow.core, "keep");
+    b.set_exported().set_suspends().set_ret(TypeId::ANY);
+    let any = b.param("any", TypeId::ANY);
+    b.protect(
+        None,
+        |b| {
+            b.assign(
+                "waited",
+                TypeId::INT,
+                Value::Call {
+                    callee: Callee::Direct(wait),
+                    args: vec![Const::Int(1).into()],
+                    suspends: true,
+                    on_fail: None,
+                },
+            );
+            b.term(Term::Yield(None));
+        },
+        |b| b.term(Term::Yield(None)),
+    );
+    b.term(Term::Return(Some(any.into())));
+    flow.add(b.finish());
+    let mut output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_fiber_capacity(1)
+            .with_frame_capacity(3)
+            .with_frame_bytes(512)
+            .with_task_capacity(1)
+            .with_event_capacity(1)
+            .with_task_adapter("host_wait", "board_wait_start"),
+    )
+    .unwrap();
+    add_heap_probe(&mut output);
+    // Exercise the internal cancellation boundary without adding a public cancellation API.
+    append_source(
+        &mut output,
+        "void test_cancel(EmelaFiber handle) { emela_fiber_get(handle)->cancelled = 1; }\n",
+    );
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static EmelaTask task;
+static int started;
+size_t test_heap_used(void);
+void test_cancel(EmelaFiber handle);
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) { (void)k; (void)m; (void)n; abort(); }
+void board_wait_start(EmelaTask t, int32_t n) { assert(n == 1); task = t; started = 1; }
+int main(void) {
+  for (int i = 0; i < 1000; ++i) {
+    char bytes[] = "abc";
+    EmelaAny value = emela_export_store_0((EmelaString){.data = bytes, .length = 3});
+    EmelaAny result = {0}; started = 0;
+    EmelaFiber fiber = emela_export_keep_2_start(value, &result);
+    emela_embedded_release(value.payload.any_box);
+    memset(bytes, 'x', 3);
+    while (!started) assert(emela_scheduler_run(1));
+    if (i % 2) test_cancel(fiber);
+    else assert(emela_task_complete_int(task, 1));
+    while (!emela_fiber_done(fiber)) emela_scheduler_run(1);
+    emela_fiber_release(fiber);
+    if (i % 2) assert(!result.payload.any_box);
+    else { assert(result.payload.any_box); emela_embedded_release(result.payload.any_box); }
+    assert(!emela_task_complete_int(task, 1));
+    assert(test_heap_used() == 0);
+  }
+}
+"#,
+    );
+}
