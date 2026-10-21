@@ -293,6 +293,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.line(include_str!("runtime/scheduler.h"));
     }
     if has_tasks {
+        header.line("#define EMELA_HAS_TASK_RUNTIME 1");
         header.line(include_str!("runtime/task.h"));
         if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
             header.line(include_str!("runtime/task_context.h"));
@@ -910,7 +911,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
                 ConstOutcome::Value(value) => {
-                    let expression = constant_expression(&value).map_err(|kind| {
+                    let expression = constant_expression(value).map_err(|kind| {
                         unsupported(&function.name, &format!("{kind} in a const value"))
                     })?;
                     let Some(expression) = expression else {
@@ -1745,7 +1746,7 @@ impl StringBufferPlan {
                 .body
                 .map(|body| &function.seqs[body].term)
                 .and_then(|term| match term {
-                    Term::Return(Some(Operand::Var(variable))) => roots.get(&variable).copied(),
+                    Term::Return(Some(Operand::Var(variable))) => roots.get(variable).copied(),
                     _ => None,
                 })
         } else {
@@ -2362,6 +2363,8 @@ fn validate_isr_entries(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn validate_isr_function(
     flow: &emela_lir::Module,
     id: FnId,
@@ -2513,10 +2516,9 @@ fn function_needs_heap(
                 },
             ..
         } = statement
+            && empty_list_functions.contains(target)
         {
-            if empty_list_functions.contains(target) {
-                known_empty.insert(*dst);
-            }
+            known_empty.insert(*dst);
         }
         let Stmt::Let {
             dst: Some(dst),
@@ -3581,6 +3583,8 @@ fn emit_cell_builtin(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_indirect_call(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -4390,12 +4394,11 @@ fn emit_runtime(
 
     let expression = match &args[0] {
         Operand::Const(Const::String(value)) => {
-            let shown = constant_expression(&Const::String(show_string(value)))
+            constant_expression(&Const::String(show_string(value)))
                 .map_err(|variant| unsupported(&function.name, variant))?
                 .ok_or_else(|| {
                     invalid_flow_ir(&function.name, "RuntimeOp::ShowString has no C expression")
-                })?;
-            shown
+                })?
         }
         operand => {
             let input = operand_expression(operand)
@@ -4815,6 +4818,8 @@ fn emit_string_join_helper(writer: &mut Writer) {
     writer.blank();
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_statement(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -4934,6 +4939,8 @@ fn emit_statement(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_statement_inner(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -5583,6 +5590,8 @@ fn emit_statement_inner(
     }
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_switch(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6068,6 +6077,8 @@ fn emit_string_split(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_string_split_push(
     writer: &mut Writer,
     node_name: &str,
@@ -6199,6 +6210,8 @@ fn emit_string_chars(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_string_join(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6312,6 +6325,8 @@ fn emit_list_tail(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_loop(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6367,6 +6382,8 @@ fn emit_loop(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_compound_sequence(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6589,6 +6606,8 @@ fn emit_recur(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_call_failure_edge(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6832,6 +6851,8 @@ fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
     writer.blank();
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_protect(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6888,6 +6909,8 @@ fn emit_protect(
     cleanup_result
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_pending_cleanups(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -7243,6 +7266,8 @@ fn emit_tuple_get(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_aggregate_field_store(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -9281,7 +9306,7 @@ impl<'a> TypeLayouts<'a> {
     fn validate_finite_types(
         &mut self,
         ty: TypeId,
-        function: &str,
+        _function: &str,
         active: &mut HashSet<TypeId>,
         validated: &mut HashSet<TypeId>,
     ) -> Result<(), Vec<Error>> {
@@ -9306,7 +9331,7 @@ impl<'a> TypeLayouts<'a> {
             if lazy_fields && self.type_repr(dependency) == Repr::Ref {
                 continue;
             }
-            self.validate_finite_types(dependency, function, active, validated)?;
+            self.validate_finite_types(dependency, _function, active, validated)?;
         }
         active.remove(&ty);
         validated.insert(ty);

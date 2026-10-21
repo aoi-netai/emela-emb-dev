@@ -343,12 +343,34 @@ impl EmbeddedProject {
         }
         if !input.single_file {
             files.push(input.base.join("Pome.toml"));
+            let lock = input.base.join("Pome.lock");
+            if lock.is_file() {
+                files.push(lock);
+            }
         }
+        files.extend(
+            input
+                .dependencies
+                .pomes
+                .iter()
+                .map(|pome| pome.dir.join("Pome.toml")),
+        );
+        let dependencies: Vec<_> = input
+            .dependencies
+            .pomes
+            .iter()
+            .map(|pome| {
+                serde_json::json!({
+                    "name": pome.name, "directory": pome.dir, "version": pome.version,
+                })
+            })
+            .collect();
         Ok(serde_json::json!({
             "board": self.board_id(), "settings": self,
             "project": input.base, "entry": input.entry, "source_root": input.root,
             "single_file": input.single_file,
             "output": out_dir, "explicit_config": explicit_config, "files": files,
+            "dependencies": dependencies,
             "bsp_files": boards::package(self.board_id().unwrap_or("")).map(|package| package.assets.iter().map(|asset| asset.name).chain(std::iter::once("build_state.py")).collect::<Vec<_>>()),
         }))
     }

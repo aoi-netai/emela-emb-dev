@@ -29,7 +29,7 @@ pub struct Manifest {
 }
 
 /// The targets `[pome].targets` may name (spec chapter 16).
-pub const TARGETS: [&str; 3] = ["js", "wasm", "c"];
+pub const TARGETS: [&str; 4] = ["js", "wasm", "c", "c-embedded"];
 
 /// An entry of `[dependencies]` or `[dev-dependencies]`: "this version or above".
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +246,8 @@ target = "c"
             "[pome]\nname = \"github.com/acme/x\"\nversion = \"0.1.0\"\nemela = \"0.21.0\"\n";
         let m = Manifest::parse(&format!("{base}targets = [\"js\"]\n\n[external]\nallow = [\"github.com/emela-lang/x/platform-cloudflare\"]\n")).unwrap();
         assert_eq!(m.targets, Some(vec!["js".to_string()]));
+        let embedded = Manifest::parse(&format!("{base}targets = [\"c-embedded\"]\n")).unwrap();
+        assert_eq!(embedded.targets, Some(vec!["c-embedded".to_string()]));
         assert_eq!(
             m.external,
             [SourcePath::parse("github.com/emela-lang/x/platform-cloudflare").unwrap()]

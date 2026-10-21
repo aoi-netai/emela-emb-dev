@@ -29,6 +29,11 @@ def snapshot(spec, artifacts=True):
     for path in candidates:
         if path.is_file() and path.suffix in (".emel", ".c", ".h", ".S", ".toml"):
             paths.add(path.resolve())
+    for dependency in spec.get("dependencies", []):
+        source = Path(dependency["directory"]).resolve() / "src"
+        for path in walk_inputs(source, output):
+            if path.is_file() and path.suffix in (".emel", ".c", ".h", ".S", ".toml"):
+                paths.add(path.resolve())
     for name in spec["files"]:
         path = Path(name).resolve()
         if not path.is_file():

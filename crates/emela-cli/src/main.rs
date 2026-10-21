@@ -294,6 +294,11 @@ fn build(
                 "a selected embedded board requires target `c-embedded`",
             ));
         }
+        let unsupported = emela_driver::check_dependency_targets(&input.dependencies, target);
+        if !unsupported.is_empty() {
+            print_diagnostics(&unsupported, &SourceDb::new());
+            return ExitCode::from(DIAGNOSTIC_FAILURE);
+        }
         target
     } else {
         let Some(target) = resolve_target(&input, target) else {
@@ -327,6 +332,7 @@ fn build(
         Err(diagnostic) => return report_error(diagnostic),
     };
     if project.board_id().is_some()
+        && !input.library_only
         && let Err(diagnostic) = project.prepare_build(&input, &out_dir, config_flag.as_deref())
     {
         return report_error(diagnostic);
@@ -356,7 +362,7 @@ fn build(
         Target::Wasm => emela_driver::build(&OsFs, &input, &mut frontend, &mut CoreWasm, &out_dir),
     };
     let result = report(&analysis);
-    if analysis.has_errors() {
+    if analysis.has_errors() || input.library_only {
         return result;
     }
     if project.board_id().is_some()

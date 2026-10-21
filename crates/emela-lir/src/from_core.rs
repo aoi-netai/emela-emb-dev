@@ -74,12 +74,6 @@ pub trait Deriver {
         ty: TypeId,
         name: &str,
     ) -> Option<Function>;
-
-    /// Override the automatic error-display eligibility test when the backend represents
-    /// recursive types without fully expanding their generic applications.
-    fn showable(&mut self, _core: &emela_core::Module, _ty: TypeId) -> Option<bool> {
-        None
-    }
 }
 
 struct DefaultDeriver;

@@ -70,6 +70,7 @@ fn optional_backend_deriver_preserves_default_and_can_replace_selected_structura
                     b.set_ret(TypeId::STRING);
                     "show"
                 }
+                DeriveKind::ErrorName => return None,
             };
             Some(b.finish_external(External {
                 bindings: vec![ExternalBinding {
@@ -83,7 +84,7 @@ fn optional_backend_deriver_preserves_default_and_can_replace_selected_structura
         &[(
             "main.emel",
             r##"
-enum Point { Point(Int) }
+enum Point { Point(Int) } derive Eq, Show
 pub fn show(n: Int) -> String {"#{Point(n)}"}
 pub fn equal(n: Int) -> Bool { Point(n) == Point(42) }
 "##,

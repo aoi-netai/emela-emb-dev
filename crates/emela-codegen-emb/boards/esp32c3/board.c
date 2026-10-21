@@ -54,7 +54,7 @@ static uint32_t configured_inputs;
 #endif
 static unsigned event_locked;
 static volatile unsigned in_trap;
-#ifdef BOARD_CLOCK
+#if defined(BOARD_CLOCK) && defined(EMELA_HAS_TASK_RUNTIME)
 static volatile EmelaTask sleeping_task;
 static volatile uint32_t remaining_ms;
 #endif
@@ -298,6 +298,7 @@ int64_t emela_board_clock_now(void) {
     return (int64_t)(ticks / TICKS_PER_MS);
 }
 
+#ifdef EMELA_HAS_TASK_RUNTIME
 void emela_board_clock_sleep(EmelaTask task, int32_t milliseconds) {
     require_main();
     if (milliseconds <= 0) {
@@ -320,6 +321,7 @@ void emela_board_clock_sleep(EmelaTask task, int32_t milliseconds) {
     irq_restore(previous);
 }
 #endif
+#endif
 
 void board_trap(uint32_t cause, uint32_t pc, uintptr_t sp) {
     in_trap = 1;
@@ -327,7 +329,7 @@ void board_trap(uint32_t cause, uint32_t pc, uintptr_t sp) {
     board_trap_pc = pc;
     uint32_t used = (uint32_t)((uintptr_t)_stack_top - sp);
     if (used > board_stack_used) board_stack_used = used;
-#ifdef BOARD_CLOCK
+#if defined(BOARD_CLOCK) && defined(EMELA_HAS_TASK_RUNTIME)
     if ((cause & UINT32_C(0x80000fff)) != (UINT32_C(0x80000000) | CPU_IRQ)
         || !(TIMER(0x70u) & 1u) || !remaining_ms) FAIL("unexpected CPU trap");
     TIMER(0x6cu) = 1;

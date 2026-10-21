@@ -55,8 +55,10 @@ static unsigned event_locked;
 static uint32_t output_pins[EMELA_GPIO_PORT_COUNT];
 static bool uart_ready;
 static volatile uint64_t elapsed_ms;
+#ifdef EMELA_HAS_TASK_RUNTIME
 static volatile uint32_t remaining_ms;
 static volatile EmelaTask sleeping_task;
+#endif
 
 void _init(void) {}
 void _fini(void) {}
@@ -273,6 +275,7 @@ int64_t emela_board_clock_now(void) {
     return (int64_t)value;
 }
 
+#ifdef EMELA_HAS_TASK_RUNTIME
 void emela_board_clock_sleep(EmelaTask task, int32_t milliseconds) {
     main_context();
     if (milliseconds <= 0) {
@@ -286,16 +289,19 @@ void emela_board_clock_sleep(EmelaTask task, int32_t milliseconds) {
     remaining_ms = (uint32_t)milliseconds;
     __asm volatile("msr primask, %0" :: "r"(previous) : "memory");
 }
+#endif
 
 void SysTick_Handler(void) {
     emela_validation_stack_record_sp();
     board_ticks++;
     elapsed_ms++;
+#ifdef EMELA_HAS_TASK_RUNTIME
     if (remaining_ms != 0 && --remaining_ms == 0) {
         /* Cancellation can invalidate a task before the physical timer expires. */
         if (emela_task_complete_unit(sleeping_task)) board_notifications++;
         else board_rejected_notifications++;
     }
+#endif
 }
 
 int main(void) {

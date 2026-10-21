@@ -30,7 +30,7 @@ fn gpio_enable_interrupt(pin: GpioPin, edge: Edge) -> ()
 fn gpio_disable_interrupt(pin: GpioPin) -> ()
 
 ## GPIO operations on the selected board. Pin IDs are logical board IDs.
-pub handler BoardGpio implements Gpio {
+pub handler BoardGpio: Gpio {
   fn configure(pin, mode, pull) { gpio_configure(pin, mode, pull) }
   fn read(pin) { gpio_read(pin) }
   fn write(pin, state) { gpio_write(pin, state) }
@@ -49,7 +49,7 @@ fn uart_transmit(id: UartId, data: List[Int], timeout_ms: Int64) -> (Int, ())
 fn uart_receive(id: UartId, size: Int, timeout_ms: Int64) -> (Int, List[Int])
 
 ## Synchronous UART operations on the selected board.
-pub handler BoardUart implements Uart {
+pub handler BoardUart: Uart {
   fn configure(id, config) { checked(uart_configure(id, config)) }
   fn transmit(id, data, timeout_ms) { checked(uart_transmit(id, data, timeout_ms)) }
   fn receive(id, size, timeout_ms) { checked(uart_receive(id, size, timeout_ms)) }
@@ -103,7 +103,7 @@ fn i2c_is_device_ready(
 ) -> (Int, Bool)
 
 ## Synchronous I2C master operations on the selected board.
-pub handler BoardI2c implements I2c {
+pub handler BoardI2c: I2c {
   fn configure(id, config) { checked(i2c_configure(id, config)) }
   fn master_transmit(id, address, data, timeout_ms) {
     checked(i2c_master_transmit(id, address, data, timeout_ms))
@@ -135,7 +135,7 @@ fn spi_receive(id: SpiId, size: Int, timeout_ms: Int64) -> (Int, List[Int])
 fn spi_transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> (Int, List[Int])
 
 ## Synchronous SPI operations on the selected board. Use GPIO for chip select.
-pub handler BoardSpi implements Spi {
+pub handler BoardSpi: Spi {
   fn configure(id, config) { checked(spi_configure(id, config)) }
   fn transmit(id, data, timeout_ms) { checked(spi_transmit(id, data, timeout_ms)) }
   fn receive(id, size, timeout_ms) { checked(spi_receive(id, size, timeout_ms)) }
@@ -155,7 +155,7 @@ suspend fn clock_sleep(ms: Int) -> ()
 fn clock_now() -> Int64
 
 ## The selected board's clock. Sleep completion is delivered by the embedded task API.
-pub handler BoardClock implements Clock {
+pub handler BoardClock: Clock {
   suspend fn sleep(ms, resume) {
     clock_sleep(if ms < 0 { 0 } else { ms })
     resume(())
@@ -170,7 +170,7 @@ fn console_print_line(text: String) -> () use {}
 fn console_print_error_line(text: String) -> () use {}
 
 ## The selected board's console. Board code adds the line terminator.
-pub handler BoardConsole implements Console {
+pub handler BoardConsole: Console {
   fn print_line(text) { console_print_line(text) }
   fn print_error_line(text) { console_print_error_line(text) }
 }

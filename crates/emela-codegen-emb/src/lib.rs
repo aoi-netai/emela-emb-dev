@@ -383,7 +383,11 @@ pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
                     op:
                         op @ (emela_core::Builtin::Panic
                         | emela_core::Builtin::Todo
-                        | emela_core::Builtin::Dbg),
+                        | emela_core::Builtin::Dbg
+                        | emela_core::Builtin::Inspect
+                        | emela_core::Builtin::ShowNested
+                        | emela_core::Builtin::ShowString
+                        | emela_core::Builtin::DebugPrint),
                     ..
                 } => Some(format!(
                     "unlowered builtin `{}` at stage Flow",

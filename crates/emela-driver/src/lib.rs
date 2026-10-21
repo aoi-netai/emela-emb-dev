@@ -11,9 +11,9 @@ mod dependencies;
 pub use dependencies::check_dependency_targets;
 mod diagnostic;
 mod doc;
+mod documentation;
 mod embedded;
 mod embedded_board;
-mod documentation;
 mod fmt;
 mod frontend;
 mod hints;
@@ -59,9 +59,9 @@ pub use nav::{
 };
 pub use output::{BuildOutput, OutputFile, write_files, write_output};
 pub use pipeline::{
-    Analysis, Backend, C_EMBEDDED_OUT_DIR, C_OUT_DIR, CORE_DIR, Checked, CoreSource, DOC_OUT_DIR, Dependencies,
-    DependencyPome, DependencyRef, ENTRY_FILE, Frontend, Input, JS_OUT_DIR, LexOnly, NoJsBackend,
-    Parsed, RunOptions, Runner, SOURCE_DIR, TEST_DIR, WASM_OUT_DIR, build, check, run,
+    Analysis, Backend, C_EMBEDDED_OUT_DIR, C_OUT_DIR, CORE_DIR, Checked, CoreSource, DOC_OUT_DIR,
+    Dependencies, DependencyPome, DependencyRef, ENTRY_FILE, Frontend, Input, JS_OUT_DIR, LexOnly,
+    NoJsBackend, Parsed, RunOptions, Runner, SOURCE_DIR, TEST_DIR, WASM_OUT_DIR, build, check, run,
 };
 pub use pome::project_dependencies;
 pub use render::{render, render_one, summary};

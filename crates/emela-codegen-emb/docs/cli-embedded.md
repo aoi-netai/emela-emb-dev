@@ -120,9 +120,13 @@ Board = "../boards/{board}/board.emel"
 
 `entry`の既定値は`main`である。CLIが`board_main_start`という公開aliasを登録し、BSPがそのentryを呼び出す。独自のC-only生成を続ける場合はボードを省略でき、従来の`[exports]`と任意の公開関数signatureを利用できる。
 
+Pome依存の`[pome].targets`には`"c-embedded"`を指定できる。省略した依存は全targetで利用できる。`"c"`はhost C向けの指定なので、組み込みC向けの依存指定とは区別する。基板を選んだ場合も依存targetの一致を検査する。`src/lib.emel`のみのプロジェクトは、上流CLIと同様にbuildで型検査だけを行い、firmwareを生成しない。
+
 ### 書き込み対象の確認
 
 `flash`は直前の成功buildに対して、選択ボード・entry・設定・ソース・overlay・追加C・生成C・同梱BSP・firmwareのSHA-256を照合する。別ボードの成果物、変更されたimage、build後に変更したアプリは書き込み前に診断し、再buildを要求する。失敗した再buildは古い成功記録を無効にする。
+
+Pomeを使う場合は、projectの`Pome.lock`、依存のidentity・directory・version・manifestと`src/`内のEmela・C・header等も照合する。依存moduleの追加・削除も再buildを要求する。依存の外部C実装は従来どおり`[embedded].sources`で明示し、実際に使うCソースとそのdirectory内のheaderを記録する。
 
 `--dry-run`も同じ照合を行い、書き込みtoolへ渡すargvを表示する。デバイスへの接続や書き込みは行わない。実際の書き込みではSTM32はOpenOCD、ESP32-C3はesptoolを使用する。CLIはshellを介さず、ファイルpathやserial portを個別の引数として渡す。
 

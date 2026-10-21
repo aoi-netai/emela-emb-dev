@@ -460,7 +460,7 @@ pub fn failing(bad: Bool) -> Int fails Boom {
   APPLY(fn() { if bad { fail Boom } else { 42 } })
 }
 effect Read { fn get() -> Int }
-handler Answer implements Read { fn get() { 42 } }
+handler Answer: Read { fn get() { 42 } }
 pub fn evidence() -> Int { with Answer { APPLY(fn() { (use Read).get() }) } }
 pub fn asynchronous() -> Int use Async {
   Fiber.scope(fn() {
