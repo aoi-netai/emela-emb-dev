@@ -1,6 +1,8 @@
-# ESP32-C3のRenode導入
+# ESP32-C3のRenode導入とFlash起動
 
 STM32以外への移植を進めるため、RISC-VのESP32-C3を対象にする。[独立したC probe・setup・runner](../examples/renode-esp32c3/README.md)に加え、[共通Emela温度調節器](../examples/temperature-controller/README.md#esp32-c3renodeで実行する)をCLIから生成し、標準effect・schedulerを接続するrunnerを提供する。
+
+現在は[汎用ESP32-C3ボードpackage](../boards/esp32c3/README.md)も追加した。`emela build --board esp32c3`による最終firmware生成と`emela flash --board esp32c3`による書き込みに対応する。従来RenodeのSRAM実行に加え、Espressif公式QEMUでは実ROMによるFlash segmentのloadからEmelaプログラム完了まで確認する。
 
 ## 基礎probeの境界
 
@@ -94,6 +96,41 @@ O2継続運転は26秒相当で26sample、120秒相当で120sampleまで確認�
 
 共有の期待値checkerはpin maskと出力名を引数化し、STM32では従来値を既定にした。同じ変更後にSTM32F446のO2温度調節器と旧ESP32-C3の独立O2 probeを再実行し、従来の観測条件が通ることも確認した。
 
+## CLIによるFlash firmware生成とROM起動
+
+`Pome.toml`の`[embedded].board = "esp32c3"`、またはCLIの`--board esp32c3`でボードを選ぶ。core・syntax・Flow IRを変更せず、CLIが同梱するBSP assetと通常の生成Cをcross compile・linkする。ソース・生成物・BSP・firmwareのhashをbuild metadataへ保存し、`flash`では同じboard・同じ成功成果物を照合する。設定・手順は[組み込みCLI](cli-embedded.md)と[温度調節器firmware project](../examples/temperature-controller/firmware/)を参照する。
+
+Flash offset 0x0の標準ESP imageをROMが読み、IRAM/DRAM segmentsをSRAMへ配置してentryへ移る。全コードがSRAMに収まるためsecond-stage bootloaderを必要としない。[Espressifの公式説明](https://github.com/espressif/esp32c3-direct-boot-example#alternatives-to-direct-boot)に従う。Flashから直接命令を実行するXIPへの移行ではなく、電源投入後にROMがFlashからSRAMへ復元できる形にしたものである。
+
+汎用BSPはSRAM128KiB slice、stack16KiB、IRQの通知とmainのschedulerという構成を引き継ぐ。自分で`mtvec` mode 1と32entry vector tableを設定し、ROMのMIE設定を引き継ぐ。RTC/TG/Super watchdogの停止、GPIO IO_MUX、UART0のXTAL clockと115200/8N1、SysTimer・interrupt matrixの初期化もBSPが行う。温度入力と配線moduleはアプリ側に置く。
+
+Flash imageは公式esptool 4.8.1の`elf2image`で生成し、`image_info`と独立したheader/segment/checksum/SHA-256検査を通す。ESP32-C3 chip ID 5、entry、load先、Flash offset 0x0を検査する。書き込みも同版esptoolの`write_flash`へ接続し、DIO/40MHz/4MBとして扱う。今回、実機portへの書き込みは行わず`--dry-run`のargvと成果物照合まで確認する。
+
+### Flash resetの検証
+
+[QEMU runner](../examples/temperature-controller/firmware/qemu_esp32c3.py)はEspressif公式`esp-develop-9.2.2-20260417`に固定する。cache取得・公開SHA-256・Linux library・実行commandは[BSP README](../boards/esp32c3/README.md#emulatorとの境界)に記録する。
+
+SPI Flashへ渡すのはCLIが生成した`firmware.bin`を末尾`0xff`で4MBへ補完したものだけである。QEMU内蔵ROMのpower-onから起動し、app ELFの事前load・PC/CSR/pendingの注入・CPU dispatch hookは使わない。`SPI_FAST_FLASH_BOOT`・`load:0x40380000`・`entry 0x40380000`をROMのUARTログで確認し、その後にEmelaの24行の温度ログと完了を確認する。QMPはstdioを通じて観測値を読む。
+
+最小アプリでもGPIO設定・Consoleの開始ログ・10ms sleep・IRQ10回・通知1回・完了ログ・結果42を確認した。本命温度調節器ではO0/O2とも24sample・UART944byte・23,000tick・通知23回・結果24・正常終了を確認し、board failure・stale通知拒否は0、stack guardは正常だった。実CPUの`mcause`は`0x80000001`で、`mtvec`のmodeは1である。
+
+最終版BSPの測定値は次のとおり。O2はrepo外へコピーしたCLIから共通温度projectをbuildした成果物を使い、O0は同じCLI生成Cを最終BSPでcompileした。生成Cを手修正していない。
+
+| Flash起動版の資源（byte） | O0 | O2 |
+| --- | ---: | ---: |
+| Flash image | 54,384 | 34,512 |
+| code・定数のSRAM | 54,316 | 34,436 |
+| 静的data SRAM（固定heap・poolを含む） | 7,076 | 7,084 |
+| stack予約（guard 256byteを含む） | 16,384 | 16,384 |
+| SRAM割当合計 | 77,776 | 57,904 |
+| 観測stack | 2,140 | 1,384 |
+
+固定heapは2,048byte、frame poolは3,200byte、O2のfiber poolは240byte、task poolは28byte、event ringは16byte。libcの動的heap allocatorはlinkしていない。heapの使用ピークは測定していない。ROM load方式ではcode・定数もSRAMを使い、Flash imageの容量とは別に上表のSRAM量へ数える。
+
+`--verify-temperature`を付けた実行では、既存checkerの温度入力系列と状態遷移関数を使って24行の連番・温度値・modeを照合し、944byteがアプリUARTの実byte数と一致することも確認した。100ms pollのGPIO readbackも保存したが、[固定QEMUのGPIO model](https://github.com/espressif/qemu/blob/esp-develop-9.2.2-20260417/hw/gpio/esp32_gpio.c)はstrap以外のreadを0としwriteを無視するため、reportの`gpio_verification.status`は`unavailable`である。この0を出力正常・終了OFF・同時ON無しの根拠に使わない。
+
+Renodeの外部GPIO endpointの26遷移の確認と、QEMUのROM/Flash loadの確認は役割が異なる。QEMUの結果からpadの電気特性・実配線・serial書き込みの成否を推定しない。GPIO interrupt、I²C/SPI、ADC、無線、USB Console、secure boot・暗号化・OTAはこのBSPの未対応範囲である。
+
 ## 制限と次の作業
 
 | 項目 | 今回の状態 | 次の作業 |
@@ -103,8 +140,9 @@ O2継続運転は26秒相当で26sample、120秒相当で120sampleまで確認�
 | I²C / 汎用SPI | probeへmodelを含めない。上流はplaceholder | model・実driverの対応範囲を固めてから追加 |
 | Wi-Fi / BLE / ADC / DMA等 | 今回の対象外 | 必要な機能ごとに実装・検証 |
 | ESP-IDF SDK Hello | 別caseで上流prebuiltを実行 | 固定PC hookやRAM拡張を量産用board構成へ持ち込まない |
-| CLIのboard選択 | 温度調節器runnerでboard moduleとconfigを選ぶ | configの`board`によるパッケージ選択・build/書き込み契約を設計 |
+| CLIのboard選択 | `Pome.toml`の`embedded.board`または`--board`でpackageを選び、firmwareを生成する | 追加ボードのpackage・対応周辺機器を同じ契約で実装 |
+| Flash起動・書き込み | 標準ESP image、公式ROMによるFlash load、esptool書き込みcommandとdry-runを確認 | 実機serial送信・電気的条件は別途確認 |
 
 SDK HelloはROM entryから上流の固定PC hookでfirmwareへ移り、固定interrupt dispatch hookを使う。480 KiB RAMと23 placeholderを含むため、通常probeと分ける。SDK Helloが起動しても、未実装の周辺機器が動く根拠にはしない。
 
-次はこの[共通周辺機器ABI](embedded-peripherals.md)への接続をボード支援パッケージに整理し、board選択・配線設定・toolchainによる最終build・flash書き込みの契約を固める。I²C・SPI等はmodelとdriverの双方が動く根拠を揃えてから対応を広げる。
+この[共通周辺機器ABI](embedded-peripherals.md)とboard packageを使い、I²C・SPI等はmodelとdriverの双方が動く根拠を揃えてから対応を広げる。
