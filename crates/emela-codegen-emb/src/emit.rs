@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use emela_core::{Builtin, CtorRef, EnumId, Type, TypeId, TypeTable};
 use emela_lir::{
-    Callee, CaseKey, Const, FnId, Function, LabelId, Operand, PrimOp, PrimTy, Repr, Stmt, SwitchOn,
-    Term, Value, VarId,
+    Callee, CaseKey, Const, FnId, Function, LabelId, OnFail, Operand, PrimOp, PrimTy, Repr,
+    RuntimeOp, SeqId, Stmt, StmtId, SwitchOn, Term, Value, VarId,
 };
 
+use crate::const_eval::{self, Outcome as ConstOutcome};
 use crate::writer::Writer;
 use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
@@ -12,43 +14,74 @@ const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
-pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Output, Vec<Error>> {
-    let mut names = HashMap::new();
-    for (id, function) in flow.functions.iter() {
-        for ty in function
-            .vars
-            .iter()
-            .map(|(_, v)| v.ty)
-            .chain([function.ret])
-        {
-            if !matches!(
-                flow.core.ty(ty),
-                emela_core::Type::Unit
-                    | emela_core::Type::Never
-                    | emela_core::Type::Int
-                    | emela_core::Type::Int64
-                    | emela_core::Type::Float
-                    | emela_core::Type::Bool
-            ) {
+pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    if !(1..=512).contains(&options.string_capacity()) {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidOptions,
+            message: format!(
+                "string capacity must be between 1 and 512 bytes, found {}",
+                options.string_capacity()
+            ),
+        }]);
+    }
+    let emitted_functions = runtime_reachable(flow);
+    let layouts = TypeLayouts::new(flow, &emitted_functions)?;
+    let mut const_outcomes = HashMap::new();
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, function)| emitted_functions.contains(id) && function.constant)
+    {
+        match const_eval::evaluate(flow, id) {
+            Ok(outcome) => {
+                const_outcomes.insert(id, outcome);
+            }
+            Err(reason) => {
+                let caller = flow.functions.iter().find_map(|(caller_id, caller)| {
+                    (emitted_functions.contains(&caller_id)
+                        && !caller.constant
+                        && directly_calls(caller, id))
+                    .then_some(caller)
+                });
+                let location = caller.map_or(function.name.as_str(), |caller| caller.name.as_str());
                 return Err(unsupported(
-                    &function.name,
-                    "non-scalar value representation",
+                    location,
+                    &format!(
+                        "const `{}` cannot be evaluated statically: {reason}",
+                        function.name
+                    ),
                 ));
             }
         }
-        if function.external.is_some() {
-            return Err(unsupported(
-                &function.name,
-                "external C bindings (introduced in the synchronous ABI stage)",
-            ));
-        }
-        let name = function_name(id, function);
-        names.insert(id, name);
     }
-    let main_entry = flow
+
+    let mut names = HashMap::new();
+    let mut public_names = HashMap::new();
+    for (id, function) in flow
         .functions
         .iter()
-        .find(|(_, function)| function.exported && function.name == "main");
+        .filter(|(id, _)| emitted_functions.contains(id))
+    {
+        let name = if function.external.is_some() {
+            if function.exported {
+                return Err(unsupported(&function.name, "exported external functions"));
+            }
+            validate_external(flow, function)?
+        } else {
+            function_name(id, function)
+        };
+        public_names.insert(id, name.clone());
+        let implementation_name = if function.exported && function.fails {
+            format!("{name}_impl")
+        } else {
+            name
+        };
+        names.insert(id, implementation_name);
+    }
+    let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
+    let main_entry = flow.functions.iter().find(|(id, function)| {
+        emitted_functions.contains(id) && function.exported && function.name == "main"
+    });
     if let Some((_, function)) = main_entry
         && !function.params.is_empty()
     {
@@ -63,17 +96,35 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     header.line("#define EMELA_EMBEDDED_H");
     header.blank();
     header.line("#include <stdint.h>");
+    header.line("#include <stddef.h>");
     header.blank();
+    layouts.emit_string_declaration(&mut header);
+    layouts.emit_declarations(&mut header);
+    layouts.emit_error_declaration(&mut header);
+    if !layouts.aggregates.is_empty() {
+        header.blank();
+    }
 
-    for (id, function) in flow.functions.iter().filter(|(_, f)| f.exported) {
-        if function.fails || function.suspends {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted_functions.contains(id) && f.exported)
+    {
+        if function.suspends {
             return Err(unsupported(
                 &function.name,
-                "fallible or suspending function signatures",
+                "suspending function signatures",
             ));
         }
-        let name = &names[&id];
-        header.line(&format!("{};", signature(flow, function, name, false)));
+        let name = &public_names[&id];
+        let takes_string_output = string_output_functions.contains(&id);
+        if takes_string_output {
+            header.line("/* Caller provides this output buffer; the returned EmelaString points into it. */");
+        }
+        header.line(&format!(
+            "{};",
+            signature(&layouts, function, name, false, false, takes_string_output)
+        ));
     }
     if main_entry.is_some() {
         header.line("void emela_embedded_start(void);");
@@ -110,13 +161,72 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem])
-        || has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem])
-        || flow.functions.iter().any(|(_, function)| {
-            function
-                .seqs
-                .iter()
-                .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
+    let needs_defect_hook = has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I32,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) || has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I64,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) || const_outcomes.values().any(|outcome| {
+        matches!(
+            outcome,
+            ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+        )
+    }) || has_runtime_string_append(flow, &emitted_functions)
+        || has_runtime_string_show(flow, &emitted_functions)
+        || has_runtime_int_string(flow, &emitted_functions)
+        || has_runtime_float_to_string(flow, &emitted_functions)
+        || !string_output_functions.is_empty()
+        || has_builtin(flow, &emitted_functions, &[Builtin::StringLength])
+        || has_runtime_string_from_code_point(flow, &emitted_functions)
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[
+                Builtin::FloatFloor,
+                Builtin::FloatCeil,
+                Builtin::FloatRound,
+                Builtin::FloatTruncate,
+            ],
+        )
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[
+                Builtin::IntShiftLeft,
+                Builtin::IntShiftRight,
+                Builtin::IntShiftRightUnsigned,
+                Builtin::Int64ShiftLeft,
+                Builtin::Int64ShiftRight,
+                Builtin::Int64ShiftRightUnsigned,
+            ],
+        )
+        || flow.functions.iter().any(|(id, function)| {
+            if !emitted_functions.contains(&id) {
+                return false;
+            }
+            if function.exported && function.fails {
+                return true;
+            }
+            !function.constant
+                && (function
+                    .seqs
+                    .iter()
+                    .any(|(_, sequence)| matches!(&sequence.term, Term::Defect(_)))
+                    || function.stmts.iter().any(|(_, statement)| {
+                        matches!(
+                            statement,
+                            Stmt::Switch {
+                                on: SwitchOn::Tag(_),
+                                default: None,
+                                ..
+                            }
+                        )
+                    }))
         });
     if needs_defect_hook {
         board_header.line(
@@ -126,6 +236,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     if main_entry.is_some() {
         board_header.line("void emela_board_init(void);");
         board_header.line("void emela_board_idle(void);");
+    }
+    if has_runtime_op(flow, &emitted_functions, RuntimeOp::DebugPrint) {
+        board_header.line("void emela_board_debug(const char *bytes, uint16_t length);");
     }
     board_header.blank();
     board_header.line("#endif");
@@ -137,9 +250,46 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     source.blank();
     if has_prim(
         flow,
+        &emitted_functions,
+        PrimTy::String,
+        &[
+            PrimOp::Eq,
+            PrimOp::Ne,
+            PrimOp::Lt,
+            PrimOp::Le,
+            PrimOp::Gt,
+            PrimOp::Ge,
+        ],
+    ) {
+        emit_string_comparison_helper(&mut source);
+    }
+    let has_int_shift = has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::IntShiftLeft,
+            Builtin::IntShiftRight,
+            Builtin::IntShiftRightUnsigned,
+        ],
+    );
+    let has_i64_shift = has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::Int64ShiftLeft,
+            Builtin::Int64ShiftRight,
+            Builtin::Int64ShiftRightUnsigned,
+        ],
+    );
+    let has_shift = has_int_shift || has_i64_shift;
+    if has_prim(
+        flow,
+        &emitted_functions,
         PrimTy::I32,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
-    ) {
+    ) || has_int_shift
+        || has_builtin(flow, &emitted_functions, &[Builtin::Int64ToInt])
+    {
         source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
         source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
         source.line("return (int32_t)bits;");
@@ -148,39 +298,145 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         source.end_block();
         source.blank();
     }
-    if has_prim(flow, PrimTy::I32, &[PrimOp::Div, PrimOp::Rem]) {
+    if has_int_shift {
+        emit_i32_shift_helpers(&mut source);
+    }
+    if has_shift {
+        emit_negative_shift_helper(&mut source);
+    }
+    if has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I32,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) {
         emit_i32_division_helpers(&mut source);
     }
     if has_prim(
         flow,
+        &emitted_functions,
         PrimTy::I64,
         &[PrimOp::Add, PrimOp::Sub, PrimOp::Mul, PrimOp::Neg],
-    ) {
+    ) || has_i64_shift
+    {
         emit_i64_wrap_helper(&mut source);
     }
-    if has_prim(flow, PrimTy::I64, &[PrimOp::Div, PrimOp::Rem]) {
+    if has_i64_shift {
+        emit_i64_shift_helpers(&mut source);
+    }
+    if has_prim(
+        flow,
+        &emitted_functions,
+        PrimTy::I64,
+        &[PrimOp::Div, PrimOp::Rem],
+    ) {
         emit_i64_division_helpers(&mut source);
     }
+    if has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::FloatFloor,
+            Builtin::FloatCeil,
+            Builtin::FloatRound,
+            Builtin::FloatTruncate,
+        ],
+    ) {
+        emit_float_to_int_helper(&mut source);
+    }
+    if has_dynamic_defect(flow, &emitted_functions) {
+        emit_dynamic_defect_kind_helper(&mut source);
+    }
+    if has_builtin(
+        flow,
+        &emitted_functions,
+        &[
+            Builtin::StringContains,
+            Builtin::StringStartsWith,
+            Builtin::StringEndsWith,
+        ],
+    ) {
+        emit_string_matches_at_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringContains]) {
+        emit_string_contains_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringStartsWith]) {
+        emit_string_starts_with_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
+        emit_string_ends_with_helper(&mut source);
+    }
+    if has_builtin(
+        flow,
+        &emitted_functions,
+        &[Builtin::StringTrim, Builtin::StringLength],
+    ) {
+        emit_utf8_decode_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
+        emit_string_trim_helper(&mut source);
+    }
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringLength]) {
+        crate::unicode_grapheme::emit_runtime(&mut source);
+    }
+    if has_runtime_string_append(flow, &emitted_functions) {
+        emit_string_append_helper(&mut source);
+    }
+    if has_runtime_string_show(flow, &emitted_functions) {
+        emit_string_show_helpers(&mut source);
+    }
+    if has_runtime_int_string(flow, &emitted_functions) {
+        emit_int_to_string_helper(&mut source);
+    }
+    if has_runtime_int_parse(flow, &emitted_functions) {
+        emit_int_parse_helper(&mut source);
+    }
+    if has_runtime_float_parse(flow, &emitted_functions) {
+        crate::float_parse::emit_runtime(&mut source);
+    }
+    if has_runtime_float_to_string(flow, &emitted_functions) {
+        crate::float_to_string::emit_runtime(&mut source);
+    }
+    if !string_output_functions.is_empty() {
+        emit_string_output_helper(&mut source);
+    }
 
-    for (id, function) in flow.functions.iter() {
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, _)| emitted_functions.contains(id))
+    {
         let name = &names[&id];
+        let takes_string_output = string_output_functions.contains(&id);
         if function.external.is_some() {
             source.line(&format!(
                 "extern {};",
-                signature(flow, function, name, false)
+                signature(&layouts, function, name, false, false, false)
             ));
-        } else if !function.exported {
-            source.line(&format!("{};", signature(flow, function, name, true)));
+        } else if !function.exported || function.fails {
+            source.line(&format!(
+                "{};",
+                signature(
+                    &layouts,
+                    function,
+                    name,
+                    true,
+                    function.fails,
+                    takes_string_output
+                )
+            ));
         }
     }
     source.blank();
 
-    for (id, function) in flow.functions.iter() {
-        if function.fails || function.suspends {
-            return Err(unsupported(
-                &function.name,
-                "fallible or suspending function bodies",
-            ));
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, _)| emitted_functions.contains(id))
+    {
+        if function.suspends {
+            return Err(unsupported(&function.name, "suspending function bodies"));
         }
 
         if function.external.is_some() {
@@ -200,30 +456,139 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         };
         let sequence = &function.seqs[body];
         let name = &names[&id];
-        source.begin_block(&signature(flow, function, name, !function.exported));
-        emit_local_declarations(function, &mut source);
+        let is_static = !function.exported || function.fails;
+        let takes_string_output = string_output_functions.contains(&id);
+        source.begin_block(&signature(
+            &layouts,
+            function,
+            name,
+            is_static,
+            function.fails,
+            takes_string_output,
+        ));
+        if function.constant {
+            match &const_outcomes[&id] {
+                ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
+                ConstOutcome::Value(value) => {
+                    let expression = constant_expression(&value).map_err(|kind| {
+                        unsupported(&function.name, &format!("{kind} in a const value"))
+                    })?;
+                    let Some(expression) = expression else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "non-Unit const value has no C expression",
+                        ));
+                    };
+                    source.ret(Some(&expression));
+                }
+                ConstOutcome::Defect { kind, message } => {
+                    let length = u16::try_from(message.len()).map_err(|_| {
+                        unsupported(
+                            &function.name,
+                            "a const defect message longer than the embedded C ABI supports",
+                        )
+                    })?;
+                    source.line(&format!(
+                        "emela_board_defect(EMELA_DEFECT_{kind}, {}, UINT16_C({length}));",
+                        c_string_literal(message.as_bytes())
+                    ));
+                }
+                ConstOutcome::SelfReference { message } => {
+                    let length = u16::try_from(message.len()).map_err(|_| {
+                        unsupported(
+                            &function.name,
+                            "a const defect message longer than the embedded C ABI supports",
+                        )
+                    })?;
+                    source.line(&format!(
+                        "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        c_string_literal(message.as_bytes())
+                    ));
+                }
+            }
+            source.end_block();
+            source.blank();
+            continue;
+        }
+        if function.fails {
+            source.line("*emela_error_out = (EmelaError){0};");
+        }
+        if takes_string_output {
+            source.decl(
+                "uint16_t",
+                "emela_emb_string_output_capacity",
+                Some(&format!(
+                    "emela_string_capacity < UINT16_C({}) ? emela_string_capacity : UINT16_C({})",
+                    options.string_capacity(),
+                    options.string_capacity()
+                )),
+            );
+        }
+        let string_buffers = StringBufferPlan::new(
+            &layouts,
+            function,
+            options.string_capacity(),
+            &string_output_functions,
+            takes_string_output,
+        );
+        if !string_buffers.declarations.is_empty()
+            && (type_contains_string(&layouts, function.ret, &mut HashSet::new())
+                || failure_value_contains_string(&layouts, function))
+            && !takes_string_output
+        {
+            return Err(unsupported(
+                &function.name,
+                "a String scratch buffer that could outlive its function stack frame",
+            ));
+        }
+        emit_local_declarations(&layouts, function, &string_buffers, &mut source);
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
+        let mut protects = Vec::new();
         let mut next_temp = 0;
         let mut next_label = 0;
         for &statement in &sequence.stmts {
             emit_statement(
+                &layouts,
                 function,
                 &function.stmts[statement],
                 &mut source,
                 &names,
+                &string_buffers,
                 &mut loops,
                 &mut blocks,
+                &mut protects,
                 &mut next_temp,
                 &mut next_label,
             )?;
         }
-        emit_return(flow, function, &sequence.term, &mut source)?;
+        emit_return(
+            &layouts,
+            function,
+            &sequence.term,
+            &string_buffers,
+            &mut source,
+        )?;
         source.end_block();
         source.blank();
     }
+    for (id, function) in flow
+        .functions
+        .iter()
+        .filter(|(id, f)| emitted_functions.contains(id) && f.exported && f.fails)
+    {
+        emit_fallible_wrapper(
+            &layouts,
+            function,
+            &public_names[&id],
+            &names[&id],
+            string_output_functions.contains(&id),
+            &mut source,
+        );
+        source.blank();
+    }
     if let Some((id, _function)) = main_entry {
-        let main_name = &names[&id];
+        let main_name = &public_names[&id];
         source.begin_block("void emela_embedded_start(void)");
         source.line("emela_board_init();");
         source.line(&format!("(void){main_name}();"));
@@ -252,21 +617,1860 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
     })
 }
 
-fn emit_local_declarations(function: &Function, writer: &mut Writer) {
+fn emit_local_declarations(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
-            writer.decl(c_type(variable.repr), &variable_name(id), None);
+            writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
         }
+    }
+    for (name, capacity) in &string_buffers.declarations {
+        writer.line(&format!("char {name}[{capacity}];"));
     }
 }
 
+struct StringBufferPlan {
+    buffers: HashMap<VarId, (Option<usize>, u16)>,
+    declarations: Vec<(String, usize)>,
+    output_calls: HashSet<FnId>,
+    returns_to_caller: bool,
+    capacity: u16,
+}
+
+impl StringBufferPlan {
+    fn new(
+        layouts: &TypeLayouts<'_>,
+        function: &Function,
+        capacity: u16,
+        output_calls: &HashSet<FnId>,
+        returns_to_caller: bool,
+    ) -> Self {
+        let mut append_args = HashMap::new();
+        let mut buffer_producers = HashSet::new();
+        let mut producer_positions = HashMap::new();
+        for (statement_id, statement) in function.stmts.iter() {
+            let Stmt::Let {
+                dst: Some(dst),
+                value,
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            match value {
+                Value::Builtin {
+                    op: Builtin::StringAppend,
+                    args,
+                } if args.len() == 2
+                    && !append_is_static(args)
+                    && !append_has_empty_constant(args)
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    append_args.insert(*dst, args.clone());
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Runtime {
+                    op: RuntimeOp::ShowString,
+                    args,
+                } if args.len() == 1
+                    && !matches!(args[0], Operand::Const(Const::String(_)))
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Builtin {
+                    op: Builtin::IntToString | Builtin::Int64ToString,
+                    args,
+                } if args.len() == 1
+                    && matches!(args[0], Operand::Var(_))
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Builtin {
+                    op: Builtin::FloatToString,
+                    args,
+                } if args.len() == 1
+                    && matches!(args[0], Operand::Var(_))
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Builtin {
+                    op: Builtin::StringFromCodePoint,
+                    args,
+                } if args.len() == 1
+                    && matches!(args[0], Operand::Var(_))
+                    && option_payload_type(layouts, function.vars[*dst].ty)
+                        .is_some_and(|ty| matches!(layouts.types[ty], Type::String)) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                Value::Call {
+                    callee: Callee::Direct(id),
+                    ..
+                } if output_calls.contains(id)
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
+                _ => {}
+            }
+        }
+
+        let mut uses = HashMap::new();
+        let mut count = |variable| *uses.entry(variable).or_insert(0usize) += 1;
+        for (_, statement) in function.stmts.iter() {
+            match statement {
+                Stmt::Let { value, .. } => value.for_each_var(&mut count),
+                Stmt::If { cond, .. } => count_operand(cond, &mut count),
+                Stmt::Switch { on, .. } => match on {
+                    SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => count(*variable),
+                },
+                Stmt::Loop { inits, .. } => {
+                    for operand in inits {
+                        count_operand(operand, &mut count);
+                    }
+                }
+                Stmt::Dup(variable) | Stmt::Drop(variable) => count(*variable),
+                Stmt::Block { .. } | Stmt::Protect { .. } => {}
+            }
+        }
+        for (_, sequence) in function.seqs.iter() {
+            match &sequence.term {
+                Term::Yield(Some(operand))
+                | Term::Return(Some(operand))
+                | Term::Fail(operand)
+                | Term::Defect(operand) => count_operand(operand, &mut count),
+                Term::Yield(None) | Term::Return(None) => {}
+                Term::Break { value, .. } => {
+                    if let Some(value) = value {
+                        count_operand(value, &mut count);
+                    }
+                }
+                Term::Recur(args) => {
+                    for operand in args {
+                        count_operand(operand, &mut count);
+                    }
+                }
+                Term::Unreachable | Term::Unwind => {}
+            }
+        }
+        drop(count);
+
+        let (statement_positions, sequence_positions) = function_positions(function);
+        let mut last_uses = HashMap::new();
+        let mut non_reusable_variables = HashSet::new();
+        for (statement_id, statement) in function.stmts.iter() {
+            let position = statement_positions.get(&statement_id).copied().unwrap_or(0);
+            let mut mark_use = |variable| {
+                last_uses
+                    .entry(variable)
+                    .and_modify(|last: &mut usize| *last = (*last).max(position))
+                    .or_insert(position);
+            };
+            match statement {
+                Stmt::Let { value, .. } => {
+                    value.for_each_var(&mut mark_use);
+                    let reusable_consumer = match value {
+                        Value::Builtin {
+                            op:
+                                Builtin::StringByteSize
+                                | Builtin::StringContains
+                                | Builtin::StringStartsWith
+                                | Builtin::StringEndsWith
+                                | Builtin::StringAppend,
+                            args,
+                        } => !append_has_empty_constant(args),
+                        Value::Runtime {
+                            op: RuntimeOp::ShowString | RuntimeOp::DebugPrint,
+                            ..
+                        } => true,
+                        _ => false,
+                    };
+                    if !reusable_consumer {
+                        value.for_each_var(|variable| {
+                            non_reusable_variables.insert(variable);
+                        });
+                    }
+                    if let Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    } = value
+                        && append_has_empty_constant(args)
+                    {
+                        value.for_each_var(|variable| {
+                            non_reusable_variables.insert(variable);
+                        });
+                    }
+                }
+                Stmt::If { cond, .. } => {
+                    count_operand(cond, &mut mark_use);
+                    if let Operand::Var(variable) = cond {
+                        non_reusable_variables.insert(*variable);
+                    }
+                }
+                Stmt::Switch { on, .. } => {
+                    let variable = match on {
+                        SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
+                    };
+                    mark_use(variable);
+                    non_reusable_variables.insert(variable);
+                }
+                Stmt::Loop { inits, .. } => {
+                    for operand in inits {
+                        count_operand(operand, &mut mark_use);
+                        if let Operand::Var(variable) = operand {
+                            non_reusable_variables.insert(*variable);
+                        }
+                    }
+                }
+                Stmt::Dup(variable) | Stmt::Drop(variable) => {
+                    mark_use(*variable);
+                    non_reusable_variables.insert(*variable);
+                }
+                Stmt::Block { .. } | Stmt::Protect { .. } => {}
+            }
+        }
+        for (sequence_id, sequence) in function.seqs.iter() {
+            let position = sequence_positions.get(&sequence_id).copied().unwrap_or(0);
+            let mut mark_use = |variable| {
+                last_uses
+                    .entry(variable)
+                    .and_modify(|last: &mut usize| *last = (*last).max(position))
+                    .or_insert(position);
+                non_reusable_variables.insert(variable);
+            };
+            match &sequence.term {
+                Term::Yield(Some(operand))
+                | Term::Return(Some(operand))
+                | Term::Fail(operand)
+                | Term::Defect(operand) => count_operand(operand, &mut mark_use),
+                Term::Yield(None) | Term::Return(None) => {}
+                Term::Break { value, .. } => {
+                    if let Some(value) = value {
+                        count_operand(value, &mut mark_use);
+                    }
+                }
+                Term::Recur(args) => {
+                    for operand in args {
+                        count_operand(operand, &mut mark_use);
+                    }
+                }
+                Term::Unreachable | Term::Unwind => {}
+            }
+        }
+
+        let mut bounds: HashMap<VarId, usize> = function
+            .vars
+            .iter()
+            .filter_map(|(id, variable)| {
+                matches!(layouts.types[variable.ty], Type::String)
+                    .then_some((id, usize::from(capacity)))
+            })
+            .collect();
+        for _ in 0..=function.vars.len() {
+            let mut changed = false;
+            for (_, statement) in function.stmts.iter() {
+                let Stmt::Let {
+                    dst: Some(dst),
+                    value,
+                    ..
+                } = statement
+                else {
+                    continue;
+                };
+                let is_string = matches!(layouts.types[function.vars[*dst].ty], Type::String);
+                let is_codepoint_option = matches!(
+                    value,
+                    Value::Builtin {
+                        op: Builtin::StringFromCodePoint,
+                        ..
+                    }
+                ) && option_payload_type(layouts, function.vars[*dst].ty)
+                    .is_some_and(|ty| matches!(layouts.types[ty], Type::String));
+                if !is_string && !is_codepoint_option {
+                    continue;
+                }
+                let bound = match value {
+                    Value::Const(Const::String(value)) => value.len(),
+                    Value::Builtin {
+                        op: Builtin::StringTrim,
+                        args,
+                    } if args.len() == 1 => operand_string_bound(&args[0], &bounds, capacity),
+                    Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    } if args.len() == 2 => {
+                        let left = operand_string_bound(&args[0], &bounds, capacity);
+                        let right = operand_string_bound(&args[1], &bounds, capacity);
+                        if append_is_static(args) {
+                            left.saturating_add(right)
+                        } else if append_has_empty_constant(args) {
+                            left.max(right)
+                        } else {
+                            left.saturating_add(right).min(usize::from(capacity))
+                        }
+                    }
+                    Value::Builtin {
+                        op: op @ (Builtin::IntToString | Builtin::Int64ToString),
+                        args,
+                    } if args.len() == 1 => match (&args[0], op) {
+                        (Operand::Const(Const::Int(value)), _) => value.to_string().len(),
+                        (Operand::Const(Const::Int64(value)), _) => value.to_string().len(),
+                        (_, Builtin::IntToString) => 11.min(usize::from(capacity)),
+                        (_, Builtin::Int64ToString) => 20.min(usize::from(capacity)),
+                        _ => unreachable!(),
+                    },
+                    Value::Builtin {
+                        op: Builtin::FloatToString,
+                        args,
+                    } if args.len() == 1 => match &args[0] {
+                        Operand::Const(Const::Float(value)) => {
+                            const_eval::format_float(*value).len()
+                        }
+                        _ => crate::float_to_string::MAX_OUTPUT_BYTES.min(usize::from(capacity)),
+                    },
+                    Value::Builtin {
+                        op: Builtin::StringFromCodePoint,
+                        ..
+                    } => 4.min(usize::from(capacity)),
+                    _ => usize::from(capacity),
+                };
+                let bound = match value {
+                    Value::Runtime {
+                        op: RuntimeOp::ShowString,
+                        args,
+                    } if args.len() == 1 => match &args[0] {
+                        Operand::Const(Const::String(value)) => show_string(value).len(),
+                        operand => operand_string_bound(operand, &bounds, capacity)
+                            .saturating_mul(6)
+                            .saturating_add(2)
+                            .min(usize::from(capacity)),
+                    },
+                    _ => bound,
+                };
+                if bounds.get(dst).copied() != Some(bound) {
+                    bounds.insert(*dst, bound);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut roots: HashMap<VarId, VarId> =
+            buffer_producers.iter().map(|&id| (id, id)).collect();
+        for _ in 0..=append_args.len() {
+            let mut changed = false;
+            for (&dst, args) in &append_args {
+                let Some(Operand::Var(left)) = args.first() else {
+                    continue;
+                };
+                if uses.get(left).copied() != Some(1) || !roots.contains_key(left) {
+                    continue;
+                }
+                let root = roots[left];
+                if roots.get(&dst).copied() != Some(root) {
+                    roots.insert(dst, root);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let returned_root = if returns_to_caller {
+            function
+                .body
+                .map(|body| &function.seqs[body].term)
+                .and_then(|term| match term {
+                    Term::Return(Some(Operand::Var(variable))) => roots.get(&variable).copied(),
+                    _ => None,
+                })
+        } else {
+            None
+        };
+
+        let mut root_capacities: HashMap<VarId, usize> = HashMap::new();
+        let mut root_intervals: HashMap<VarId, (usize, usize)> = HashMap::new();
+        let mut non_reusable_roots = HashSet::new();
+        for (&variable, &root) in &roots {
+            let bound = bounds
+                .get(&variable)
+                .copied()
+                .unwrap_or(usize::from(capacity))
+                .min(usize::from(capacity));
+            root_capacities
+                .entry(root)
+                .and_modify(|current| *current = (*current).max(bound))
+                .or_insert(bound);
+            let definition = producer_positions
+                .get(&variable)
+                .and_then(|statement| statement_positions.get(statement))
+                .copied()
+                .unwrap_or(0);
+            let end = last_uses.get(&variable).copied().unwrap_or(definition);
+            root_intervals
+                .entry(root)
+                .and_modify(|(start, last)| {
+                    *start = (*start).min(definition);
+                    *last = (*last).max(end);
+                })
+                .or_insert((definition, end));
+            if non_reusable_variables.contains(&variable) {
+                non_reusable_roots.insert(root);
+            }
+        }
+        let mut groups: Vec<_> = root_capacities
+            .iter()
+            .filter(|(root, _)| Some(**root) != returned_root)
+            .map(|(&root, &size)| {
+                let (start, end) = root_intervals.get(&root).copied().unwrap_or((0, 0));
+                (root, start, end, size, !non_reusable_roots.contains(&root))
+            })
+            .collect();
+        groups.sort_by_key(|(root, start, _, _, _)| (*start, format!("{root:?}")));
+
+        let mut slot_ends: Vec<Option<usize>> = Vec::new();
+        let mut slot_sizes: Vec<usize> = Vec::new();
+        let mut root_slots = HashMap::new();
+        for (root, start, end, size, reusable) in groups {
+            let slot = reusable
+                .then(|| {
+                    slot_ends
+                        .iter()
+                        .position(|last| last.is_some_and(|last| last < start))
+                })
+                .flatten();
+            let slot = if let Some(slot) = slot {
+                slot_ends[slot] = Some(end);
+                slot_sizes[slot] = slot_sizes[slot].max(size.max(1));
+                slot
+            } else {
+                let slot = slot_ends.len();
+                slot_ends.push(reusable.then_some(end));
+                slot_sizes.push(size.max(1));
+                slot
+            };
+            root_slots.insert(root, slot);
+        }
+        let declarations = slot_sizes
+            .iter()
+            .enumerate()
+            .map(|(slot, size)| (string_buffer_name(slot), *size))
+            .collect();
+        let buffers = roots
+            .into_iter()
+            .map(|(variable, root)| {
+                let buffer_capacity = root_capacities[&root] as u16;
+                (
+                    variable,
+                    (
+                        (Some(root) != returned_root).then(|| root_slots[&root]),
+                        buffer_capacity,
+                    ),
+                )
+            })
+            .collect();
+        Self {
+            buffers,
+            declarations,
+            output_calls: output_calls.clone(),
+            returns_to_caller,
+            capacity,
+        }
+    }
+
+    fn buffer(&self, variable: VarId) -> Option<(String, String)> {
+        self.buffers
+            .get(&variable)
+            .map(|(slot, capacity)| match slot {
+                Some(slot) => (string_buffer_name(*slot), format!("UINT16_C({capacity})")),
+                None => (
+                    "emela_string_output".to_owned(),
+                    "emela_emb_string_output_capacity".to_owned(),
+                ),
+            })
+    }
+
+    fn has_string_output_call(&self, function: FnId) -> bool {
+        self.output_calls.contains(&function)
+    }
+}
+
+pub(crate) fn function_positions(
+    function: &Function,
+) -> (HashMap<StmtId, usize>, HashMap<SeqId, usize>) {
+    fn visit(
+        function: &Function,
+        sequence: SeqId,
+        next: &mut usize,
+        visited: &mut HashSet<SeqId>,
+        statement_positions: &mut HashMap<StmtId, usize>,
+        sequence_positions: &mut HashMap<SeqId, usize>,
+    ) {
+        if !visited.insert(sequence) {
+            return;
+        }
+        for &statement_id in &function.seqs[sequence].stmts {
+            *next += 1;
+            statement_positions.insert(statement_id, *next);
+            match &function.stmts[statement_id] {
+                Stmt::If { then, else_, .. } => {
+                    visit(
+                        function,
+                        *then,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                    visit(
+                        function,
+                        *else_,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                }
+                Stmt::Switch { cases, default, .. } => {
+                    for case in cases {
+                        visit(
+                            function,
+                            case.body,
+                            next,
+                            visited,
+                            statement_positions,
+                            sequence_positions,
+                        );
+                    }
+                    if let Some(default) = default {
+                        visit(
+                            function,
+                            *default,
+                            next,
+                            visited,
+                            statement_positions,
+                            sequence_positions,
+                        );
+                    }
+                }
+                Stmt::Loop { body, .. } | Stmt::Block { body, .. } => visit(
+                    function,
+                    *body,
+                    next,
+                    visited,
+                    statement_positions,
+                    sequence_positions,
+                ),
+                Stmt::Protect { body, cleanup, .. } => {
+                    visit(
+                        function,
+                        *body,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                    visit(
+                        function,
+                        *cleanup,
+                        next,
+                        visited,
+                        statement_positions,
+                        sequence_positions,
+                    );
+                }
+                Stmt::Let { .. } | Stmt::Dup(_) | Stmt::Drop(_) => {}
+            }
+        }
+        *next += 1;
+        sequence_positions.insert(sequence, *next);
+    }
+
+    let mut statement_positions = HashMap::new();
+    let mut sequence_positions = HashMap::new();
+    let mut visited = HashSet::new();
+    let mut next = 0;
+    if let Some(body) = function.body {
+        visit(
+            function,
+            body,
+            &mut next,
+            &mut visited,
+            &mut statement_positions,
+            &mut sequence_positions,
+        );
+    }
+    (statement_positions, sequence_positions)
+}
+
+fn count_operand(operand: &Operand, count: &mut impl FnMut(VarId)) {
+    if let Operand::Var(variable) = operand {
+        count(*variable);
+    }
+}
+
+fn operand_string_bound(operand: &Operand, bounds: &HashMap<VarId, usize>, fallback: u16) -> usize {
+    match operand {
+        Operand::Const(Const::String(value)) => value.len(),
+        Operand::Var(variable) => bounds
+            .get(variable)
+            .copied()
+            .unwrap_or(usize::from(fallback)),
+        _ => usize::from(fallback),
+    }
+}
+
+fn append_is_static(args: &[Operand]) -> bool {
+    matches!(
+        args,
+        [
+            Operand::Const(Const::String(_)),
+            Operand::Const(Const::String(_))
+        ]
+    )
+}
+
+fn append_has_empty_constant(args: &[Operand]) -> bool {
+    matches!(args.first(), Some(Operand::Const(Const::String(value))) if value.is_empty())
+        || matches!(args.get(1), Some(Operand::Const(Const::String(value))) if value.is_empty())
+}
+
+fn string_buffer_name(slot: usize) -> String {
+    format!("emela_string_buffer_{slot}")
+}
+
+fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+    let mut types = layouts.types.clone();
+    type_contains_string_with_types(layouts, &mut types, ty, seen)
+}
+
+fn failure_value_contains_string(layouts: &TypeLayouts<'_>, function: &Function) -> bool {
+    function.seqs.iter().any(|(_, sequence)| {
+        let Term::Fail(operand) = &sequence.term else {
+            return false;
+        };
+        match operand {
+            Operand::Var(variable) => {
+                type_contains_string(layouts, function.vars[*variable].ty, &mut HashSet::new())
+            }
+            Operand::Const(Const::String(_)) => true,
+            Operand::Const(_) => false,
+        }
+    })
+}
+
+fn type_contains_string_with_types(
+    layouts: &TypeLayouts<'_>,
+    types: &mut TypeTable,
+    ty: TypeId,
+    seen: &mut HashSet<TypeId>,
+) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types[ty].clone() {
+        Type::String | Type::Any => true,
+        Type::Tuple(fields) => fields
+            .into_iter()
+            .any(|field| type_contains_string_with_types(layouts, types, field, seen)),
+        Type::List(element) | Type::Cell(element) => {
+            type_contains_string_with_types(layouts, types, element, seen)
+        }
+        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
+            variant.tys.iter().any(|&field| {
+                let field = types.subst(field, &args);
+                type_contains_string_with_types(layouts, types, field, seen)
+            })
+        }),
+        _ => false,
+    }
+}
+
+fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
+    let mut pending: Vec<FnId> = flow
+        .functions
+        .iter()
+        .filter_map(|(id, function)| function.exported.then_some(id))
+        .collect();
+    if pending.is_empty() {
+        pending.extend(
+            flow.functions
+                .iter()
+                .filter_map(|(id, function)| (!function.constant).then_some(id)),
+        );
+    }
+
+    let mut reachable = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        let function = &flow.functions[id];
+        if function.constant {
+            continue;
+        }
+        for (_, statement) in function.stmts.iter() {
+            if let Stmt::Let {
+                value:
+                    Value::Call {
+                        callee: Callee::Direct(callee),
+                        ..
+                    },
+                ..
+            } = statement
+            {
+                pending.push(*callee);
+            }
+        }
+    }
+    reachable
+}
+
+fn directly_calls(caller: &Function, target: FnId) -> bool {
+    caller.stmts.iter().any(|(_, statement)| {
+        matches!(
+            statement,
+            Stmt::Let {
+                value: Value::Call {
+                    callee: Callee::Direct(id),
+                    ..
+                },
+                ..
+            } if *id == target
+        )
+    })
+}
+
+fn operand_is_string(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::String(_)) => true,
+        Operand::Var(variable) => {
+            matches!(layouts.types[function.vars[*variable].ty], Type::String)
+        }
+        _ => false,
+    }
+}
+
+fn operand_is_int(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::Int(_)) => true,
+        Operand::Var(variable) => matches!(layouts.types[function.vars[*variable].ty], Type::Int),
+        _ => false,
+    }
+}
+
+fn operand_is_int64(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::Int64(_)) => true,
+        Operand::Var(variable) => {
+            matches!(layouts.types[function.vars[*variable].ty], Type::Int64)
+        }
+        _ => false,
+    }
+}
+
+fn operand_is_float(layouts: &TypeLayouts<'_>, function: &Function, operand: &Operand) -> bool {
+    match operand {
+        Operand::Const(Const::Float(_)) => true,
+        Operand::Var(variable) => matches!(layouts.types[function.vars[*variable].ty], Type::Float),
+        _ => false,
+    }
+}
+
+fn option_payload_type(layouts: &TypeLayouts<'_>, ty: TypeId) -> Option<TypeId> {
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return None;
+    };
+    let definition = &layouts.core.enums[enum_id];
+    if definition.name != "Option" {
+        return None;
+    }
+    let some_index = definition
+        .variants
+        .iter()
+        .position(|variant| variant.name == "Some")?;
+    let fields = layouts.enum_fields(ty)?.get(some_index)?;
+    (fields.len() == 1).then_some(fields[0])
+}
+
+fn option_variant_expression(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    ty: TypeId,
+    variant_name: &str,
+    value: Option<&str>,
+) -> Result<String, Vec<Error>> {
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option builtin result is not an enum",
+        ));
+    };
+    let definition = &layouts.core.enums[enum_id];
+    if definition.name != "Option" {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option builtin result has the wrong enum type",
+        ));
+    }
+    let Some(variant_index) = definition
+        .variants
+        .iter()
+        .position(|variant| variant.name == variant_name)
+    else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option enum is missing a required variant",
+        ));
+    };
+    let Some(fields) = layouts
+        .enum_fields(ty)
+        .and_then(|variants| variants.get(variant_index))
+    else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Option result has no inline enum layout",
+        ));
+    };
+    let mut initializers = vec![format!(".tag = {}", int32_literal(variant_index as i32))];
+    match value {
+        Some(value) if fields.len() == 1 && layouts.type_repr(fields[0]) != Repr::Void => {
+            initializers.push(format!(".payload.v{variant_index}.f0 = {value}"));
+        }
+        Some(_) => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "Option Some payload does not match its runtime representation",
+            ));
+        }
+        None if fields
+            .iter()
+            .all(|field| layouts.type_repr(*field) == Repr::Void) =>
+        {
+            initializers.push(format!(".payload.v{variant_index}._unit = UINT8_C(0)"));
+        }
+        None => {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "Option None variant unexpectedly carries a runtime payload",
+            ));
+        }
+    }
+    Ok(format!(
+        "({}){{ {} }}",
+        layouts.c_type(ty),
+        initializers.join(", ")
+    ))
+}
+
+fn emit_builtin(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    op: Builtin,
+    args: &[Operand],
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let (arity, result_type) = match op {
+        Builtin::StringLength => (1, Type::Int),
+        Builtin::StringAppend => (2, Type::String),
+        Builtin::StringByteSize => (1, Type::Int),
+        Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
+            (2, Type::Bool)
+        }
+        Builtin::StringTrim => (1, Type::String),
+        Builtin::StringFromCodePoint => (1, Type::String),
+        Builtin::IntToString => (1, Type::String),
+        Builtin::IntParse => (1, Type::Int),
+        Builtin::IntBitAnd | Builtin::IntBitOr | Builtin::IntBitXor => (2, Type::Int),
+        Builtin::IntBitNot => (1, Type::Int),
+        Builtin::IntCheckedAdd => (2, Type::Int),
+        Builtin::IntShiftLeft | Builtin::IntShiftRight | Builtin::IntShiftRightUnsigned => {
+            (2, Type::Int)
+        }
+        Builtin::Int64BitAnd | Builtin::Int64BitOr | Builtin::Int64BitXor => (2, Type::Int64),
+        Builtin::Int64BitNot => (1, Type::Int64),
+        Builtin::Int64ToString => (1, Type::String),
+        Builtin::FloatToString => (1, Type::String),
+        Builtin::FloatFromInt => (1, Type::Float),
+        Builtin::FloatParse => (1, Type::Float),
+        Builtin::FloatFloor | Builtin::FloatCeil | Builtin::FloatRound | Builtin::FloatTruncate => {
+            (1, Type::Int)
+        }
+        Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
+            (2, Type::Int64)
+        }
+        Builtin::Int64FromInt => (1, Type::Int64),
+        Builtin::Int64ToInt => (1, Type::Int),
+        _ => return Err(unsupported(&function.name, &format!("builtin {op:?}"))),
+    };
+    if args.len() != arity {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!(
+                "builtin {op:?} has {} arguments, expected {arity}",
+                args.len()
+            ),
+        ));
+    }
+    let arguments_match = match op {
+        Builtin::IntBitAnd
+        | Builtin::IntBitOr
+        | Builtin::IntBitXor
+        | Builtin::IntBitNot
+        | Builtin::IntShiftLeft
+        | Builtin::IntShiftRight
+        | Builtin::IntShiftRightUnsigned => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntCheckedAdd => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntToString => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::FloatFromInt => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::FloatToString => operand_is_float(layouts, function, &args[0]),
+        Builtin::FloatParse => operand_is_string(layouts, function, &args[0]),
+        Builtin::FloatFloor | Builtin::FloatCeil | Builtin::FloatRound | Builtin::FloatTruncate => {
+            operand_is_float(layouts, function, &args[0])
+        }
+        Builtin::StringFromCodePoint => args
+            .iter()
+            .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::IntParse => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
+        Builtin::Int64ShiftLeft | Builtin::Int64ShiftRight | Builtin::Int64ShiftRightUnsigned => {
+            operand_is_int64(layouts, function, &args[0])
+                && operand_is_int(layouts, function, &args[1])
+        }
+        Builtin::Int64BitAnd
+        | Builtin::Int64BitOr
+        | Builtin::Int64BitXor
+        | Builtin::Int64BitNot => args
+            .iter()
+            .all(|operand| operand_is_int64(layouts, function, operand)),
+        Builtin::Int64FromInt => operand_is_int(layouts, function, &args[0]),
+        Builtin::Int64ToInt => operand_is_int64(layouts, function, &args[0]),
+        Builtin::Int64ToString => args
+            .iter()
+            .all(|operand| operand_is_int64(layouts, function, operand)),
+        _ => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
+    };
+    if !arguments_match {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has an argument with the wrong type"),
+        ));
+    }
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has no result destination"),
+        ));
+    };
+    let result_matches = if matches!(op, Builtin::IntCheckedAdd | Builtin::IntParse) {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::Int))
+    } else if op == Builtin::FloatParse {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::Float))
+    } else if op == Builtin::StringFromCodePoint {
+        option_payload_type(layouts, function.vars[dst].ty)
+            .is_some_and(|ty| matches!(layouts.types[ty], Type::String))
+    } else {
+        layouts.types[function.vars[dst].ty] == result_type
+    };
+    if !result_matches {
+        return Err(invalid_flow_ir(
+            &function.name,
+            &format!("builtin {op:?} has a result with the wrong type"),
+        ));
+    }
+
+    let expressions = args
+        .iter()
+        .map(operand_expression)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|variant| unsupported(&function.name, variant))?;
+    if op == Builtin::IntCheckedAdd {
+        let ty = function.vars[dst].ty;
+        let sum_name = format!("{}_checked_sum", variable_name(dst));
+        writer.decl(
+            "int64_t",
+            &sum_name,
+            Some(&format!(
+                "((int64_t)({}) + (int64_t)({}))",
+                expressions[0], expressions[1]
+            )),
+        );
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        let some = option_variant_expression(
+            layouts,
+            function,
+            ty,
+            "Some",
+            Some(&format!("(int32_t){sum_name}")),
+        )?;
+        writer.begin_block(&format!(
+            "if ({sum_name} < (int64_t)INT32_MIN || {sum_name} > (int64_t)INT32_MAX)"
+        ));
+        writer.assign(&variable_name(dst), &none);
+        writer.end_block();
+        writer.begin_block("else");
+        writer.assign(&variable_name(dst), &some);
+        writer.end_block();
+        return Ok(());
+    }
+    if op == Builtin::IntParse {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        let parsed_name = format!("{}_parsed", variable_name(dst));
+        let some = option_variant_expression(layouts, function, ty, "Some", Some(&parsed_name))?;
+        if let Operand::Const(Const::String(value)) = &args[0] {
+            let expression = match value.parse::<i32>() {
+                Ok(parsed) => option_variant_expression(
+                    layouts,
+                    function,
+                    ty,
+                    "Some",
+                    Some(&int32_literal(parsed)),
+                )?,
+                Err(_) => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            writer.decl("int32_t", &parsed_name, None);
+            writer.begin_block(&format!(
+                "if (emela_emb_int_parse({}, &{parsed_name}))",
+                expressions[0]
+            ));
+            writer.assign(&variable_name(dst), &some);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+        }
+        return Ok(());
+    }
+    if op == Builtin::StringLength {
+        emit_string_length(dst, &expressions[0], writer);
+        return Ok(());
+    }
+    if op == Builtin::FloatParse {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        if let Some(Operand::Const(Const::String(value))) = args.first() {
+            let expression = match const_eval::parse_float(value) {
+                Some(parsed) => option_variant_expression(
+                    layouts,
+                    function,
+                    ty,
+                    "Some",
+                    Some(&float_literal(parsed)),
+                )?,
+                None => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            let parsed_name = format!("{}_parsed", variable_name(dst));
+            let some =
+                option_variant_expression(layouts, function, ty, "Some", Some(&parsed_name))?;
+            writer.decl("double", &parsed_name, None);
+            writer.begin_block(&format!(
+                "if (emela_emb_float_parse({}, &{parsed_name}))",
+                expressions[0]
+            ));
+            writer.assign(&variable_name(dst), &some);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+        }
+        return Ok(());
+    }
+    if op == Builtin::StringFromCodePoint {
+        let ty = function.vars[dst].ty;
+        let none = option_variant_expression(layouts, function, ty, "None", None)?;
+        if let Operand::Const(Const::Int(value)) = &args[0] {
+            let expression = match u32::try_from(*value).ok().and_then(char::from_u32) {
+                Some(character) => {
+                    let string = constant_expression(&Const::String(character.to_string()))
+                        .map_err(|variant| unsupported(&function.name, variant))?
+                        .ok_or_else(|| {
+                            invalid_flow_ir(
+                                &function.name,
+                                "String.from_code_point constant has no C expression",
+                            )
+                        })?;
+                    option_variant_expression(layouts, function, ty, "Some", Some(&string))?
+                }
+                None => none,
+            };
+            writer.assign(&variable_name(dst), &expression);
+        } else {
+            let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "dynamic String.from_code_point has no planned output buffer",
+                ));
+            };
+            let codepoint = &expressions[0];
+            let value_name = format!("{}_code_point", variable_name(dst));
+            let length_name = format!("{}_byte_length", variable_name(dst));
+            let string_value =
+                format!("(EmelaString){{ .data = {buffer}, .length = (uint16_t){length_name} }}");
+            let some =
+                option_variant_expression(layouts, function, ty, "Some", Some(&string_value))?;
+            writer.begin_block(&format!(
+                "if ({codepoint} < INT32_C(0) || {codepoint} > INT32_C(0x10ffff) || ({codepoint} >= INT32_C(0xd800) && {codepoint} <= INT32_C(0xdfff)))"
+            ));
+            writer.assign(&variable_name(dst), &none);
+            writer.end_block();
+            writer.begin_block("else");
+            writer.decl(
+                "uint32_t",
+                &value_name,
+                Some(&format!("(uint32_t)({codepoint})")),
+            );
+            writer.decl("uint16_t", &length_name, None);
+            writer.begin_block(&format!("if ({value_name} <= UINT32_C(0x7f))"));
+            writer.assign(&length_name, "UINT16_C(1)");
+            writer.end_block();
+            writer.begin_block(&format!("else if ({value_name} <= UINT32_C(0x7ff))"));
+            writer.assign(&length_name, "UINT16_C(2)");
+            writer.end_block();
+            writer.begin_block(&format!("else if ({value_name} <= UINT32_C(0xffff))"));
+            writer.assign(&length_name, "UINT16_C(3)");
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(&length_name, "UINT16_C(4)");
+            writer.end_block();
+            writer.begin_block(&format!("if ({length_name} > {capacity})"));
+            writer.line(
+                "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+            );
+            writer.end_block();
+            writer.begin_block(&format!("if ({length_name} == UINT16_C(1))"));
+            writer.assign(&format!("{buffer}[0]"), &format!("(char){value_name}"));
+            writer.end_block();
+            writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[2]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.begin_block("else");
+            writer.assign(
+                &format!("{buffer}[0]"),
+                &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
+            );
+            writer.assign(
+                &format!("{buffer}[1]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[2]"),
+                &format!(
+                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                ),
+            );
+            writer.assign(
+                &format!("{buffer}[3]"),
+                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+            );
+            writer.end_block();
+            writer.assign(&variable_name(dst), &some);
+            writer.end_block();
+        }
+        return Ok(());
+    }
+    if matches!(
+        op,
+        Builtin::IntShiftLeft
+            | Builtin::IntShiftRight
+            | Builtin::IntShiftRightUnsigned
+            | Builtin::Int64ShiftLeft
+            | Builtin::Int64ShiftRight
+            | Builtin::Int64ShiftRightUnsigned
+    ) {
+        writer.begin_block(&format!("if ({} < INT32_C(0))", expressions[1]));
+        writer.line(&format!(
+            "emela_emb_negative_shift_defect({});",
+            expressions[1]
+        ));
+        writer.end_block();
+    }
+    let expression = match op {
+        Builtin::StringAppend => {
+            if let [
+                Operand::Const(Const::String(left)),
+                Operand::Const(Const::String(right)),
+            ] = args
+            {
+                constant_expression(&Const::String(format!("{left}{right}")))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .ok_or_else(|| {
+                        invalid_flow_ir(&function.name, "String append has no C expression")
+                    })?
+            } else if let [Operand::Const(Const::String(value)), other] = args
+                && value.is_empty()
+            {
+                operand_expression(other).map_err(|variant| unsupported(&function.name, variant))?
+            } else if let [other, Operand::Const(Const::String(value))] = args
+                && value.is_empty()
+            {
+                operand_expression(other).map_err(|variant| unsupported(&function.name, variant))?
+            } else {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic String append has no planned output buffer",
+                    ));
+                };
+                let copy_left = if matches!(args[0], Operand::Const(Const::String(_))) {
+                    "INT32_C(1)".to_owned()
+                } else {
+                    format!("(({}).data != {buffer})", expressions[0])
+                };
+                format!(
+                    "emela_emb_string_append({}, {}, {buffer}, {capacity}, {copy_left})",
+                    expressions[0], expressions[1]
+                )
+            }
+        }
+        Builtin::StringByteSize => format!("(int32_t)(({}).length)", expressions[0]),
+        Builtin::IntToString => match &args[0] {
+            Operand::Const(Const::Int(value)) => {
+                constant_expression(&Const::String(value.to_string()))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic Int.to_string has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_int_to_string((int64_t)({}), {buffer}, {capacity})",
+                    expressions[0]
+                )
+            }
+        },
+        Builtin::IntBitAnd => format!("({} & {})", expressions[0], expressions[1]),
+        Builtin::IntBitOr => format!("({} | {})", expressions[0], expressions[1]),
+        Builtin::IntBitXor => format!("({} ^ {})", expressions[0], expressions[1]),
+        Builtin::IntBitNot => format!("(~{})", expressions[0]),
+        Builtin::IntShiftLeft => format!(
+            "emela_i32_shift_left({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::IntShiftRight => format!(
+            "emela_i32_shift_right({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::IntShiftRightUnsigned => format!(
+            "emela_i32_shift_right_unsigned({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftLeft => format!(
+            "emela_i64_shift_left({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftRight => format!(
+            "emela_i64_shift_right({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64ShiftRightUnsigned => format!(
+            "emela_i64_shift_right_unsigned({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::Int64BitAnd => format!("({} & {})", expressions[0], expressions[1]),
+        Builtin::Int64BitOr => format!("({} | {})", expressions[0], expressions[1]),
+        Builtin::Int64BitXor => format!("({} ^ {})", expressions[0], expressions[1]),
+        Builtin::Int64BitNot => format!("(~{})", expressions[0]),
+        Builtin::Int64FromInt => format!("((int64_t)({}))", expressions[0]),
+        Builtin::Int64ToInt => {
+            format!("emela_i32_from_bits((uint32_t)({}))", expressions[0])
+        }
+        Builtin::Int64ToString => match &args[0] {
+            Operand::Const(Const::Int64(value)) => {
+                constant_expression(&Const::String(value.to_string()))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic Int64.to_string has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_int_to_string({}, {buffer}, {capacity})",
+                    expressions[0]
+                )
+            }
+        },
+        Builtin::FloatToString => match &args[0] {
+            Operand::Const(Const::Float(value)) => {
+                constant_expression(&Const::String(const_eval::format_float(*value)))
+                    .map_err(|variant| unsupported(&function.name, variant))?
+                    .expect("String constant has an expression")
+            }
+            _ => {
+                let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "dynamic Float.to_string has no planned output buffer",
+                    ));
+                };
+                format!(
+                    "emela_emb_float_to_string({}, {buffer}, {capacity})",
+                    expressions[0]
+                )
+            }
+        },
+        Builtin::FloatFromInt => format!("((double)({}))", expressions[0]),
+        Builtin::FloatFloor => format!("emela_emb_float_to_int({}, UINT8_C(0))", expressions[0]),
+        Builtin::FloatCeil => format!("emela_emb_float_to_int({}, UINT8_C(1))", expressions[0]),
+        Builtin::FloatRound => format!("emela_emb_float_to_int({}, UINT8_C(2))", expressions[0]),
+        Builtin::FloatTruncate => format!("emela_emb_float_to_int({}, UINT8_C(3))", expressions[0]),
+        Builtin::StringContains => format!(
+            "emela_emb_string_contains({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::StringStartsWith => format!(
+            "emela_emb_string_starts_with({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::StringEndsWith => format!(
+            "emela_emb_string_ends_with({}, {})",
+            expressions[0], expressions[1]
+        ),
+        Builtin::StringTrim => format!("emela_emb_string_trim({})", expressions[0]),
+        _ => unreachable!("builtin was validated above"),
+    };
+    writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn emit_runtime(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    op: RuntimeOp,
+    args: &[Operand],
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    if op == RuntimeOp::DebugPrint {
+        if args.len() != 1 || !operand_is_string(layouts, function, &args[0]) {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "RuntimeOp::DebugPrint must have one String argument",
+            ));
+        }
+        if dst.is_some() {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "RuntimeOp::DebugPrint has a result destination",
+            ));
+        }
+        let value =
+            operand_expression(&args[0]).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.line(&format!(
+            "emela_board_debug(({value}).data, ({value}).length);"
+        ));
+        return Ok(());
+    }
+    if op != RuntimeOp::ShowString {
+        return Err(unsupported(&function.name, &format!("RuntimeOp::{op:?}")));
+    }
+    if args.len() != 1 || !operand_is_string(layouts, function, &args[0]) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString must have one String argument",
+        ));
+    }
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString has no String destination",
+        ));
+    };
+    if !matches!(layouts.types[function.vars[dst].ty], Type::String) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "RuntimeOp::ShowString destination is not String",
+        ));
+    }
+
+    let expression = match &args[0] {
+        Operand::Const(Const::String(value)) => {
+            let shown = constant_expression(&Const::String(show_string(value)))
+                .map_err(|variant| unsupported(&function.name, variant))?
+                .ok_or_else(|| {
+                    invalid_flow_ir(&function.name, "RuntimeOp::ShowString has no C expression")
+                })?;
+            shown
+        }
+        operand => {
+            let input = operand_expression(operand)
+                .map_err(|variant| unsupported(&function.name, variant))?;
+            let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "dynamic RuntimeOp::ShowString has no planned output buffer",
+                ));
+            };
+            format!("emela_emb_string_show({input}, {buffer}, {capacity})")
+        }
+    };
+    writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn show_string(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().saturating_add(2));
+    output.push('"');
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\t' => output.push_str("\\t"),
+            '\r' => output.push_str("\\r"),
+            '#' if characters.peek() == Some(&'{') => output.push_str("\\#"),
+            control if control <= '\u{1f}' || control == '\u{7f}' => {
+                output.push_str(&format!("\\u{{{:x}}}", control as u32));
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+    output
+}
+
+fn emit_string_matches_at_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
+    );
+    writer.begin_block(
+        "if (offset > (uint32_t)value.length || (uint32_t)needle.length > (uint32_t)value.length - offset)",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = 0; i < (uint32_t)needle.length; ++i)");
+    writer.begin_block("if (value.data[offset + i] != needle.data[i])");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_contains_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
+    );
+    writer.begin_block("if (needle.length > value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t last = (uint32_t)value.length - needle.length;");
+    writer.begin_block("for (uint32_t offset = 0; offset <= last; ++offset)");
+    writer.begin_block("if (emela_emb_string_matches_at(value, needle, offset))");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_starts_with_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
+    );
+    writer.line("return emela_emb_string_matches_at(value, prefix, UINT32_C(0));");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_ends_with_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
+    );
+    writer.begin_block("if (suffix.length > value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t offset = (uint32_t)value.length - suffix.length;");
+    writer.line("return emela_emb_string_matches_at(value, suffix, offset);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_append_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
+    );
+    writer.begin_block(
+        "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",
+    );
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.begin_block("if (copy_left)");
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)left.length; ++i)");
+    writer.line("buffer[i] = left.data[i];");
+    writer.end_block();
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)right.length; ++i)");
+    writer.line("buffer[(uint32_t)left.length + i] = right.data[i];");
+    writer.end_block();
+    writer.line(
+        "return (EmelaString){ .data = buffer, .length = (uint16_t)(left.length + right.length) };",
+    );
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_int_to_string_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
+    );
+    writer.line("uint64_t magnitude = value < INT64_C(0) ? (uint64_t)(-(value + INT64_C(1))) + UINT64_C(1) : (uint64_t)value;");
+    writer.line("uint32_t digit_count = UINT32_C(1);");
+    writer.begin_block("for (uint64_t remaining = magnitude; remaining >= UINT64_C(10); remaining /= UINT64_C(10))");
+    writer.line("++digit_count;");
+    writer.end_block();
+    writer
+        .line("uint32_t length = digit_count + (value < INT64_C(0) ? UINT32_C(1) : UINT32_C(0));");
+    writer.begin_block("if (length > (uint32_t)capacity)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.line("uint32_t cursor = length;");
+    writer.begin_block("do");
+    writer.line("buffer[--cursor] = (char)('0' + magnitude % UINT64_C(10));");
+    writer.line("magnitude /= UINT64_C(10);");
+    writer.end_block();
+    writer.line("while (magnitude != UINT64_C(0));");
+    writer.begin_block("if (value < INT64_C(0))");
+    writer.line("buffer[0] = '-';");
+    writer.end_block();
+    writer.line("return (EmelaString){ .data = buffer, .length = (uint16_t)length };");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_output_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline EmelaString emela_emb_string_copy_to_output(EmelaString value, char *output, uint16_t capacity, uint16_t maximum_length)",
+    );
+    writer.begin_block(
+        "if (value.length > capacity || value.length > maximum_length || (value.length != UINT16_C(0) && (output == NULL || value.data == NULL)))",
+    );
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.begin_block("if (value.data != output && value.length != UINT16_C(0))");
+    writer.line("const uintptr_t source_address = (uintptr_t)value.data;");
+    writer.line("const uintptr_t output_address = (uintptr_t)output;");
+    writer.begin_block(
+        "if (output_address > source_address && output_address - source_address < (uintptr_t)value.length)",
+    );
+    writer.line(
+        "for (uint32_t index = (uint32_t)value.length; index > UINT32_C(0); --index) output[index - UINT32_C(1)] = value.data[index - UINT32_C(1)];",
+    );
+    writer.end_block();
+    writer.begin_block("else");
+    writer.line(
+        "for (uint32_t index = UINT32_C(0); index < (uint32_t)value.length; ++index) output[index] = value.data[index];",
+    );
+    writer.end_block();
+    writer.end_block();
+    writer.line("return (EmelaString){ .data = output, .length = value.length, .owner = NULL };");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_int_parse_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int emela_emb_int_parse(EmelaString value, int32_t *result)");
+    writer.begin_block("if (value.length == UINT16_C(0))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("uint32_t index = UINT32_C(0);");
+    writer.line("int negative = 0;");
+    writer.line("const uint8_t first = (uint8_t)value.data[index];");
+    writer.begin_block("if (first == UINT8_C(0x2b) || first == UINT8_C(0x2d))");
+    writer.line("negative = first == UINT8_C(0x2d);");
+    writer.line("++index;");
+    writer.end_block();
+    writer.begin_block("if (index >= (uint32_t)value.length)");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("uint64_t limit = negative ? UINT64_C(2147483648) : UINT64_C(2147483647);");
+    writer.line("uint64_t magnitude = UINT64_C(0);");
+    writer.begin_block("for (; index < (uint32_t)value.length; ++index)");
+    writer.line("const uint8_t byte = (uint8_t)value.data[index];");
+    writer.begin_block("if (byte < UINT8_C(0x30) || byte > UINT8_C(0x39))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("const uint64_t digit = (uint64_t)(byte - UINT8_C(0x30));");
+    writer.begin_block("if (magnitude > (limit - digit) / UINT64_C(10))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.line("magnitude = magnitude * UINT64_C(10) + digit;");
+    writer.end_block();
+    writer.begin_block("if (negative && magnitude == UINT64_C(2147483648))");
+    writer.line("*result = INT32_MIN;");
+    writer.end_block();
+    writer.line("else if (negative)");
+    writer.begin_block("");
+    writer.line("*result = -(int32_t)magnitude;");
+    writer.end_block();
+    writer.line("else");
+    writer.begin_block("");
+    writer.line("*result = (int32_t)magnitude;");
+    writer.end_block();
+    writer.line("return 1;");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_show_helpers(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
+    );
+    writer.begin_block("if (*length >= (uint32_t)capacity)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.line("buffer[*length] = (char)byte;");
+    writer.line("++*length;");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
+    );
+    writer.line("uint32_t length = UINT32_C(0);");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
+    writer.begin_block("for (uint32_t i = UINT32_C(0); i < (uint32_t)value.length; ++i)");
+    writer.line("const uint8_t byte = (uint8_t)value.data[i];");
+    writer.begin_block("if (byte == UINT8_C(0x22) || byte == UINT8_C(0x5c))");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.begin_block(
+        "else if (byte == UINT8_C(0x23) && i + UINT32_C(1) < (uint32_t)value.length && value.data[i + UINT32_C(1)] == '{')",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.begin_block(
+        "else if (byte == UINT8_C(0x0a) || byte == UINT8_C(0x09) || byte == UINT8_C(0x0d))",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("const uint8_t escaped = byte == UINT8_C(0x0a) ? UINT8_C(0x6e) : (byte == UINT8_C(0x09) ? UINT8_C(0x74) : UINT8_C(0x72));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, escaped);");
+    writer.end_block();
+    writer.begin_block("else if (byte < UINT8_C(0x20) || byte == UINT8_C(0x7f))");
+    writer.line("static const char digits[] = \"0123456789abcdef\";");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x5c));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x75));");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x7b));");
+    writer.begin_block("if (byte >= UINT8_C(0x10))");
+    writer
+        .line("emela_emb_string_show_put(buffer, capacity, &length, (uint8_t)digits[byte >> 4]);");
+    writer.end_block();
+    writer.line(
+        "emela_emb_string_show_put(buffer, capacity, &length, (uint8_t)digits[byte & UINT8_C(0x0f)]);",
+    );
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x7d));");
+    writer.end_block();
+    writer.begin_block("else");
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, byte);");
+    writer.end_block();
+    writer.end_block();
+    writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
+    writer.line("return (EmelaString){ .data = buffer, .length = (uint16_t)length };");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_utf8_decode_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
+    );
+    writer.begin_block("if (offset >= (uint32_t)value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("const uint8_t first = (uint8_t)value.data[offset];");
+    writer.begin_block("if (first <= UINT8_C(0x7f))");
+    writer.line("*code_point = first;");
+    writer.line("*width = UINT32_C(1);");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.line("uint32_t count;");
+    writer.line("uint32_t decoded;");
+    writer.begin_block("if (first >= UINT8_C(0xc2) && first <= UINT8_C(0xdf))");
+    writer.line("count = UINT32_C(2);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x1f));");
+    writer.end_block();
+    writer.line("else if (first >= UINT8_C(0xe0) && first <= UINT8_C(0xef))");
+    writer.begin_block("");
+    writer.line("count = UINT32_C(3);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x0f));");
+    writer.end_block();
+    writer.line("else if (first >= UINT8_C(0xf0) && first <= UINT8_C(0xf4))");
+    writer.begin_block("");
+    writer.line("count = UINT32_C(4);");
+    writer.line("decoded = (uint32_t)(first & UINT8_C(0x07));");
+    writer.end_block();
+    writer.line("else");
+    writer.begin_block("");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("if (offset + count > (uint32_t)value.length)");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block("for (uint32_t i = UINT32_C(1); i < count; ++i)");
+    writer.line("const uint8_t next = (uint8_t)value.data[offset + i];");
+    writer.begin_block("if ((next & UINT8_C(0xc0)) != UINT8_C(0x80))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("decoded = (decoded << 6) | (uint32_t)(next & UINT8_C(0x3f));");
+    writer.end_block();
+    writer.begin_block(
+        "if (count == UINT32_C(3) && (decoded < UINT32_C(0x800) || (decoded >= UINT32_C(0xd800) && decoded <= UINT32_C(0xdfff))))",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.begin_block(
+        "if (count == UINT32_C(4) && (decoded < UINT32_C(0x10000) || decoded > UINT32_C(0x10ffff)))",
+    );
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("*code_point = decoded;");
+    writer.line("*width = count;");
+    writer.line("return INT32_C(1);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_trim_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
+    writer.line(
+        "return (code_point >= UINT32_C(0x0009) && code_point <= UINT32_C(0x000d)) || code_point == UINT32_C(0x0020) || code_point == UINT32_C(0x0085) || code_point == UINT32_C(0x00a0) || code_point == UINT32_C(0x1680) || (code_point >= UINT32_C(0x2000) && code_point <= UINT32_C(0x200a)) || code_point == UINT32_C(0x2028) || code_point == UINT32_C(0x2029) || code_point == UINT32_C(0x202f) || code_point == UINT32_C(0x205f) || code_point == UINT32_C(0x3000);",
+    );
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline EmelaString emela_emb_string_trim(EmelaString value)");
+    writer.begin_block("if (value.length == UINT16_C(0))");
+    writer.line("return value;");
+    writer.end_block();
+    writer.line("uint32_t start = UINT32_C(0);");
+    writer.line("uint32_t end = (uint32_t)value.length;");
+    writer.line("uint32_t code_point;");
+    writer.line("uint32_t width;");
+    writer.begin_block("while (start < end)");
+    writer.begin_block("if (!emela_emb_utf8_decode(value, start, &code_point, &width))");
+    writer.line("break;");
+    writer.end_block();
+    writer.begin_block("if (!emela_emb_is_white_space(code_point))");
+    writer.line("break;");
+    writer.end_block();
+    writer.line("start += width;");
+    writer.end_block();
+    writer.begin_block("while (end > start)");
+    writer.line("uint32_t begin = end - UINT32_C(1);");
+    writer.begin_block(
+        "while (begin > start && ((uint8_t)value.data[begin] & UINT8_C(0xc0)) == UINT8_C(0x80))",
+    );
+    writer.line("--begin;");
+    writer.end_block();
+    writer.begin_block(
+        "if (!emela_emb_utf8_decode(value, begin, &code_point, &width) || begin + width != end)",
+    );
+    writer.line("break;");
+    writer.end_block();
+    writer.begin_block("if (!emela_emb_is_white_space(code_point))");
+    writer.line("break;");
+    writer.end_block();
+    writer.line("end = begin;");
+    writer.end_block();
+    writer.line(
+        "return (EmelaString){ .data = value.data + start, .length = (uint16_t)(end - start), .owner = value.owner };",
+    );
+    writer.end_block();
+    writer.blank();
+}
+
 fn emit_statement(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -313,34 +2517,174 @@ fn emit_statement(
                         .map_err(|variant| unsupported(&function.name, variant))?;
                     if let Some(dst) = dst {
                         writer.assign(&variable_name(*dst), &expression);
+                    } else {
+                        writer.line(&format!("(void)({expression});"));
                     }
+                }
+                Value::Builtin { op, args } => {
+                    emit_builtin(layouts, function, *dst, *op, args, string_buffers, writer)?;
+                }
+                Value::Runtime { op, args } => {
+                    emit_runtime(layouts, function, *dst, *op, args, string_buffers, writer)?;
                 }
                 Value::Call {
                     callee: Callee::Direct(id),
                     args,
                     suspends: false,
-                    on_fail: None,
+                    on_fail,
                 } => {
                     let name = names
                         .get(id)
                         .ok_or_else(|| unsupported(&function.name, "call to missing function"))?;
-                    let args = args
+                    let mut args = args
                         .iter()
                         .map(operand_expression)
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|variant| unsupported(&function.name, variant))?;
-                    let expression = format!("{name}({})", args.join(", "));
-                    if let Some(dst) = dst {
-                        writer.assign(&variable_name(*dst), &expression);
+                    let mut output_scope = false;
+                    let mut string_output_args = None;
+                    if string_buffers.has_string_output_call(*id) {
+                        if let Some(dst) = dst {
+                            let Some((buffer, capacity)) = string_buffers.buffer(*dst) else {
+                                return Err(invalid_flow_ir(
+                                    &function.name,
+                                    "String-returning call has no planned output buffer",
+                                ));
+                            };
+                            string_output_args = Some((buffer, capacity));
+                        } else {
+                            let suffix = *next_temp;
+                            *next_temp += 1;
+                            let buffer = format!("emela_call_string_discard_{suffix}");
+                            writer.begin_block("");
+                            writer.line(&format!("char {buffer}[{}];", string_buffers.capacity));
+                            string_output_args =
+                                Some((buffer, format!("UINT16_C({})", string_buffers.capacity)));
+                            output_scope = true;
+                        }
+                    }
+                    if let Some(edge) = on_fail {
+                        let error_name = format!("emela_call_error_{}", *next_temp);
+                        *next_temp += 1;
+                        writer.begin_block("");
+                        writer.decl("EmelaError", &error_name, Some("{0}"));
+                        args.push(format!("&{error_name}"));
+                        if let Some((buffer, capacity)) = string_output_args {
+                            args.push(buffer);
+                            args.push(capacity);
+                        }
+                        let expression = format!("{name}({})", args.join(", "));
+                        if let Some(dst) = dst {
+                            writer.assign(&variable_name(*dst), &expression);
+                        } else {
+                            writer.line(&format!("{expression};"));
+                        }
+                        writer.begin_block(&format!("if ({error_name}.tag != UINT32_C(0))"));
+                        emit_call_failure_edge(
+                            layouts,
+                            function,
+                            *edge,
+                            &error_name,
+                            writer,
+                            names,
+                            string_buffers,
+                            loops,
+                            blocks,
+                            protects,
+                            next_temp,
+                            next_label,
+                        )?;
+                        writer.end_block();
+                        writer.end_block();
                     } else {
-                        writer.line(&format!("{expression};"));
+                        if let Some((buffer, capacity)) = string_output_args {
+                            args.push(buffer);
+                            args.push(capacity);
+                        }
+                        let expression = format!("{name}({})", args.join(", "));
+                        if let Some(dst) = dst {
+                            writer.assign(&variable_name(*dst), &expression);
+                        } else {
+                            writer.line(&format!("{expression};"));
+                        }
+                    }
+                    if output_scope {
+                        writer.end_block();
                     }
                 }
                 Value::Call { .. } => {
-                    return Err(unsupported(
-                        &function.name,
-                        "indirect, failing, or suspending calls",
-                    ));
+                    return Err(unsupported(&function.name, "indirect or suspending calls"));
+                }
+                Value::Make { ctor, args } => {
+                    emit_make(layouts, function, *dst, *ctor, args, writer)?;
+                }
+                Value::Field { base, ctor, index } => {
+                    emit_field(layouts, function, *dst, *base, *ctor, *index, writer)?;
+                }
+                Value::Tag(base) => {
+                    emit_tag(layouts, function, *dst, *base, writer)?;
+                }
+                Value::Tuple(args) => {
+                    emit_tuple(layouts, function, *dst, args, writer)?;
+                }
+                Value::TupleGet { base, index } => {
+                    emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
+                }
+                Value::IsError { error, enum_id } => {
+                    if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError operand is not an EmelaError value",
+                        ));
+                    }
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError has no Bool destination",
+                        ));
+                    };
+                    if !layouts.core.enums[*enum_id].error {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "IsError target is not an error enum",
+                        ));
+                    }
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "({}).tag == UINT32_C({}) ? INT32_C(1) : INT32_C(0)",
+                            variable_name(*error),
+                            enum_index(*enum_id) + 1
+                        ),
+                    );
+                }
+                Value::AsError { error, enum_id } => {
+                    if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError operand is not an EmelaError value",
+                        ));
+                    }
+                    let Some(dst) = dst else {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError has no error enum destination",
+                        ));
+                    };
+                    if layouts.error_enum(function.vars[*dst].ty) != Some(*enum_id) {
+                        return Err(invalid_flow_ir(
+                            &function.name,
+                            "AsError destination does not match its error enum",
+                        ));
+                    }
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "{}.payload.e{}",
+                            variable_name(*error),
+                            enum_index(*enum_id)
+                        ),
+                    );
                 }
                 other => return Err(unsupported(&function.name, value_name(other))),
             }
@@ -356,12 +2700,34 @@ fn emit_statement(
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
             writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
             emit_compound_sequence(
-                function, *then, *dst, writer, names, loops, blocks, next_temp, next_label,
+                layouts,
+                function,
+                *then,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             )?;
             writer.end_block();
             writer.begin_block("else");
             emit_compound_sequence(
-                function, *else_, *dst, writer, names, loops, blocks, next_temp, next_label,
+                layouts,
+                function,
+                *else_,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             )?;
             writer.end_block();
             Ok(())
@@ -372,7 +2738,19 @@ fn emit_statement(
             cases,
             default,
         } => emit_switch(
-            function, *dst, *on, cases, *default, writer, names, loops, blocks, next_temp,
+            layouts,
+            function,
+            *dst,
+            *on,
+            cases,
+            *default,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
             next_label,
         ),
         Stmt::Loop {
@@ -381,7 +2759,20 @@ fn emit_statement(
             inits,
             body,
         } => emit_loop(
-            function, *dst, vars, inits, *body, writer, names, loops, blocks, next_temp, next_label,
+            layouts,
+            function,
+            *dst,
+            vars,
+            inits,
+            *body,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         ),
         Stmt::Block { dst, label, body } => {
             let exit = format!("emela_block_exit_{}", *next_label);
@@ -392,9 +2783,21 @@ fn emit_statement(
                 dst: *dst,
                 exit: exit.clone(),
                 used: false,
+                protect_depth: protects.len(),
             });
             let result = emit_compound_sequence(
-                function, *body, *dst, writer, names, loops, blocks, next_temp, next_label,
+                layouts,
+                function,
+                *body,
+                *dst,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
             );
             let block = blocks.pop().expect("block target stack underflow");
             writer.end_block();
@@ -403,11 +2806,27 @@ fn emit_statement(
             }
             result
         }
+        Stmt::Protect { dst, body, cleanup } => emit_protect(
+            layouts,
+            function,
+            *dst,
+            *body,
+            *cleanup,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        ),
         other => Err(unsupported(&function.name, statement_name(other))),
     }
 }
 
 fn emit_switch(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     dst: Option<VarId>,
     on: SwitchOn,
@@ -415,32 +2834,78 @@ fn emit_switch(
     default: Option<emela_lir::SeqId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
-    let SwitchOn::Lit(value) = on else {
-        return Err(unsupported(&function.name, "enum tag Switch"));
+    let (scrutinee, tag_switch) = match on {
+        SwitchOn::Tag(value) => {
+            let ty = function.vars[value].ty;
+            let Type::Enum(enum_id, _) = layouts.types[ty] else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "tag switch scrutinee is not an enum",
+                ));
+            };
+            if layouts.enum_is_i32(enum_id) {
+                (variable_name(value), true)
+            } else if layouts.enum_fields(ty).is_some() {
+                (format!("{}.tag", variable_name(value)), true)
+            } else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "tag switch enum has no supported C representation",
+                ));
+            }
+        }
+        SwitchOn::Lit(value) => {
+            let ty = function.vars[value].ty;
+            if !matches!(layouts.types[ty], Type::Int | Type::Int64) {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "literal switch scrutinee is not Int or Int64",
+                ));
+            }
+            (variable_name(value), false)
+        }
     };
-    let repr = function.vars[value].repr;
-    if !matches!(repr, Repr::I32 | Repr::I64) || default.is_none() {
+
+    if !tag_switch && default.is_none() {
         return Err(invalid_flow_ir(
             &function.name,
-            "literal Switch needs an integer scrutinee and default",
+            "literal switch has no default sequence",
         ));
     }
-    let scrutinee = variable_name(value);
+
     writer.begin_block(&format!("switch ({scrutinee})"));
     for case in cases {
         let label = match (&case.key, on) {
+            (CaseKey::Variant(variant), SwitchOn::Tag(value)) => {
+                let ty = function.vars[value].ty;
+                let Type::Enum(enum_id, _) = layouts.types[ty] else {
+                    unreachable!("tag switch was validated above")
+                };
+                if *variant >= layouts.core.enums[enum_id].variants.len() {
+                    return Err(invalid_flow_ir(
+                        &function.name,
+                        "tag switch variant is out of range",
+                    ));
+                }
+                let tag = i32::try_from(*variant).map_err(|_| {
+                    invalid_flow_ir(&function.name, "tag switch variant does not fit Int32")
+                })?;
+                int32_literal(tag)
+            }
             (CaseKey::Lit(Const::Int(value)), SwitchOn::Lit(scrutinee))
-                if function.vars[scrutinee].repr == Repr::I32 =>
+                if matches!(layouts.types[function.vars[scrutinee].ty], Type::Int) =>
             {
                 int32_literal(*value)
             }
             (CaseKey::Lit(Const::Int64(value)), SwitchOn::Lit(scrutinee))
-                if function.vars[scrutinee].repr == Repr::I64 =>
+                if matches!(layouts.types[function.vars[scrutinee].ty], Type::Int64) =>
             {
                 int64_literal(*value)
             }
@@ -453,7 +2918,18 @@ fn emit_switch(
         };
         writer.begin_block(&format!("case {label}:"));
         emit_compound_sequence(
-            function, case.body, dst, writer, names, loops, blocks, next_temp, next_label,
+            layouts,
+            function,
+            case.body,
+            dst,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         )?;
         writer.line("break;");
         writer.end_block();
@@ -462,9 +2938,24 @@ fn emit_switch(
     if let Some(default) = default {
         writer.begin_block("default:");
         emit_compound_sequence(
-            function, default, dst, writer, names, loops, blocks, next_temp, next_label,
+            layouts,
+            function,
+            default,
+            dst,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
         )?;
         writer.line("break;");
+        writer.end_block();
+    } else {
+        writer.begin_block("default:");
+        writer.line("emela_board_defect(EMELA_DEFECT_NO_MATCH, \"no match\", UINT16_C(8));");
         writer.end_block();
     }
     writer.end_block();
@@ -479,6 +2970,7 @@ fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
 }
 
 fn emit_loop(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     dst: Option<VarId>,
     vars: &[VarId],
@@ -486,8 +2978,10 @@ fn emit_loop(
     body: emela_lir::SeqId,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
@@ -505,7 +2999,18 @@ fn emit_loop(
     writer.begin_block("for (;;)");
     loops.push(vars.to_vec());
     let result = emit_compound_sequence(
-        function, body, dst, writer, names, loops, blocks, next_temp, next_label,
+        layouts,
+        function,
+        body,
+        dst,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
     );
     loops.pop();
     result?;
@@ -515,25 +3020,31 @@ fn emit_loop(
 }
 
 fn emit_compound_sequence(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     sequence: emela_lir::SeqId,
     dst: Option<VarId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
     loops: &mut Vec<Vec<VarId>>,
     blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
     next_temp: &mut usize,
     next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
     let sequence = &function.seqs[sequence];
     for &statement in &sequence.stmts {
         emit_statement(
+            layouts,
             function,
             &function.stmts[statement],
             writer,
             names,
+            string_buffers,
             loops,
             blocks,
+            protects,
             next_temp,
             next_label,
         )?;
@@ -553,7 +3064,7 @@ fn emit_compound_sequence(
             }
             (None, _) => {}
         },
-        Term::Recur(args) => emit_recur(function, args, loops, writer, next_temp)?,
+        Term::Recur(args) => emit_recur(layouts, function, args, loops, writer, next_temp)?,
         Term::Break { label, value } => {
             let Some(target_index) = blocks.iter().rposition(|target| target.label == *label)
             else {
@@ -564,6 +3075,7 @@ fn emit_compound_sequence(
             };
             let target_dst = blocks[target_index].dst;
             let exit = blocks[target_index].exit.clone();
+            let protect_depth = blocks[target_index].protect_depth;
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
                     let expression = operand_expression(value)
@@ -578,9 +3090,62 @@ fn emit_compound_sequence(
                 }
                 (None, _) => {}
             }
+            emit_pending_cleanups(
+                layouts,
+                function,
+                protect_depth,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
             blocks[target_index].used = true;
             writer.line(&format!("goto {exit};"));
         }
+        Term::Return(_) => {
+            emit_pending_cleanups(
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
+            emit_return(layouts, function, &sequence.term, string_buffers, writer)?;
+        }
+        Term::Fail(error) => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "Fail appears in a function without a failure channel",
+                ));
+            }
+            emit_pending_cleanups(
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
+            emit_failure_return(layouts, function, writer);
+        }
+        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
         other => return Err(unsupported(&function.name, term_name(other))),
     }
     Ok(())
@@ -591,9 +3156,16 @@ struct BlockTarget {
     dst: Option<VarId>,
     exit: String,
     used: bool,
+    protect_depth: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ProtectTarget {
+    cleanup: emela_lir::SeqId,
 }
 
 fn emit_recur(
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     args: &[Operand],
     loops: &[Vec<VarId>],
@@ -620,7 +3192,7 @@ fn emit_recur(
         let temporary = format!("emela_recur_tmp_{}", *next_temp);
         *next_temp += 1;
         writer.decl(
-            c_type(function.vars[variable].repr),
+            &layouts.c_type(function.vars[variable].ty),
             &temporary,
             Some(&expression),
         );
@@ -633,6 +3205,735 @@ fn emit_recur(
     Ok(())
 }
 
+fn emit_call_failure_edge(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    edge: OnFail,
+    error_name: &str,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    match edge {
+        OnFail::Break(label) => {
+            let Some(target_index) = blocks.iter().rposition(|target| target.label == label) else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target is not an enclosing emitted block",
+                ));
+            };
+            let target_dst = blocks[target_index].dst;
+            let protect_depth = blocks[target_index].protect_depth;
+            let Some(target_dst) = target_dst else {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target block has no error destination",
+                ));
+            };
+            if !matches!(layouts.types[function.vars[target_dst].ty], Type::Any) {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failing call target does not use the EmelaError representation",
+                ));
+            }
+            writer.assign(&variable_name(target_dst), error_name);
+            emit_pending_cleanups(
+                layouts,
+                function,
+                protect_depth,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
+            blocks[target_index].used = true;
+            writer.line(&format!("goto {};", blocks[target_index].exit));
+            Ok(())
+        }
+        OnFail::Propagate => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "failure propagates through a function without a failure channel",
+                ));
+            }
+            emit_pending_cleanups(
+                layouts,
+                function,
+                0,
+                writer,
+                names,
+                string_buffers,
+                loops,
+                blocks,
+                protects,
+                next_temp,
+                next_label,
+            )?;
+            writer.assign("*emela_error_out", error_name);
+            emit_failure_return(layouts, function, writer);
+            Ok(())
+        }
+        OnFail::Handle { .. } => Err(invalid_flow_ir(
+            &function.name,
+            "Heap IR failure landing appears in Flow IR",
+        )),
+    }
+}
+
+fn emit_error_assignment(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    error: &Operand,
+    target: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Operand::Var(variable) = error else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand is not an error variable",
+        ));
+    };
+    let ty = function.vars[*variable].ty;
+    if matches!(layouts.types[ty], Type::Any) {
+        writer.assign(target, &variable_name(*variable));
+        return Ok(());
+    }
+    let Some(enum_id) = layouts.error_enum(ty) else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand is not an error enum or propagated EmelaError",
+        ));
+    };
+    if layouts.error_type(enum_id).is_none() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Fail operand error enum is missing from EmelaError layout",
+        ));
+    }
+    let object = format!("({target})");
+    writer.assign(
+        &format!("{object}.tag"),
+        &format!("UINT32_C({})", enum_index(enum_id) + 1),
+    );
+    writer.assign(
+        &format!("{object}.payload.e{}", enum_index(enum_id)),
+        &variable_name(*variable),
+    );
+    Ok(())
+}
+
+fn emit_failure_return(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.ret(None);
+    } else {
+        writer.ret(Some(&format!("({}){{0}}", layouts.c_type(function.ret))));
+    }
+}
+
+fn emit_defect(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    message: &Operand,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    match message {
+        Operand::Const(Const::String(message)) => {
+            let length = u16::try_from(message.len()).map_err(|_| {
+                unsupported(
+                    &function.name,
+                    "a defect message longer than the embedded C ABI supports",
+                )
+            })?;
+            writer.line(&format!(
+                "emela_board_defect(EMELA_DEFECT_{}, {}, UINT16_C({length}));",
+                defect_kind_for_message(message),
+                c_string_literal(message.as_bytes())
+            ));
+            Ok(())
+        }
+        Operand::Var(variable)
+            if matches!(layouts.types[function.vars[*variable].ty], Type::String) =>
+        {
+            let value = variable_name(*variable);
+            writer.line(&format!(
+                "emela_board_defect(emela_emb_defect_kind({value}), {value}.data, {value}.length);"
+            ));
+            Ok(())
+        }
+        _ => Err(invalid_flow_ir(
+            &function.name,
+            "Defect message is not a String value",
+        )),
+    }
+}
+
+fn defect_kind_for_message(message: &str) -> &'static str {
+    if message == "not yet implemented" {
+        "TODO"
+    } else if message.starts_with("unreachable: no match arm matched") {
+        "NO_MATCH"
+    } else if message.starts_with("assertion failed") {
+        "ASSERT"
+    } else {
+        "PANIC"
+    }
+}
+
+fn has_dynamic_defect(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.seqs.iter().any(|(_, sequence)| {
+                matches!(
+                    &sequence.term,
+                    Term::Defect(Operand::Var(variable))
+                        if matches!(flow.core.ty(function.vars[*variable].ty), Type::String)
+                )
+            })
+    })
+}
+
+fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
+    );
+    writer.begin_block("if (value.length < length || (exact && value.length != length))");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.begin_block("for (uint16_t i = 0; i < length; ++i)");
+    writer.begin_block("if (value.data[i] != expected[i])");
+    writer.line("return 0;");
+    writer.end_block();
+    writer.end_block();
+    writer.line("return 1;");
+    writer.end_block();
+    writer.blank();
+    writer.begin_block("static inline EmelaDefectKind emela_emb_defect_kind(EmelaString message)");
+    for (message, kind, exact) in [
+        ("not yet implemented", "TODO", "1"),
+        ("unreachable: no match arm matched", "NO_MATCH", "1"),
+        ("assertion failed", "ASSERT", "0"),
+    ] {
+        writer.begin_block(&format!(
+            "if (emela_emb_string_matches(message, {}, UINT16_C({}), {exact}))",
+            c_string_literal(message.as_bytes()),
+            message.len(),
+        ));
+        writer.line(&format!("return EMELA_DEFECT_{kind};"));
+        writer.end_block();
+    }
+    writer.line("return EMELA_DEFECT_PANIC;");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_protect(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    body: emela_lir::SeqId,
+    cleanup: emela_lir::SeqId,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let body_yields = matches!(function.seqs[body].term, Term::Yield(_));
+    writer.begin_block("");
+    protects.push(ProtectTarget { cleanup });
+    let body_result = emit_compound_sequence(
+        layouts,
+        function,
+        body,
+        dst,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
+    );
+    protects.pop();
+    let cleanup_result = if body_result.is_ok() && body_yields {
+        emit_compound_sequence(
+            layouts,
+            function,
+            cleanup,
+            None,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        )
+    } else {
+        Ok(())
+    };
+    writer.end_block();
+    body_result?;
+    cleanup_result
+}
+
+fn emit_pending_cleanups(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    keep_depth: usize,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    if keep_depth > protects.len() {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "control transfer escapes a block outside the active protect stack",
+        ));
+    }
+    let saved = protects.clone();
+    for index in (keep_depth..saved.len()).rev() {
+        protects.truncate(index);
+        let result = emit_compound_sequence(
+            layouts,
+            function,
+            saved[index].cleanup,
+            None,
+            writer,
+            names,
+            string_buffers,
+            loops,
+            blocks,
+            protects,
+            next_temp,
+            next_label,
+        );
+        *protects = saved.clone();
+        result?;
+    }
+    Ok(())
+}
+
+fn emit_make(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    ctor: CtorRef,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let ty = function.vars[dst].ty;
+    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor defines a non-enum value",
+                function.name
+            ),
+        }]);
+    };
+    if enum_id != ctor.enum_id {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor and destination types differ",
+                function.name
+            ),
+        }]);
+    }
+    let Some(variant) = layouts.core.enums[enum_id].variants.get(ctor.variant) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    if args.len() != variant.tys.len() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum constructor has {} arguments, expected {}",
+                function.name,
+                args.len(),
+                variant.tys.len()
+            ),
+        }]);
+    }
+
+    let target = variable_name(dst);
+    if layouts.enum_is_i32(enum_id) {
+        let tag = i32::try_from(ctor.variant)
+            .map_err(|_| unsupported(&function.name, "enum with too many variants"))?;
+        writer.assign(&target, &int32_literal(tag));
+        return Ok(());
+    }
+
+    let Some(fields) = layouts
+        .enum_fields(ty)
+        .and_then(|variants| variants.get(ctor.variant))
+    else {
+        return Err(unsupported(
+            &function.name,
+            "enum value without an inline C layout",
+        ));
+    };
+    let tag = i32::try_from(ctor.variant)
+        .map_err(|_| unsupported(&function.name, "enum with too many variants"))?;
+    writer.assign(&format!("{target}.tag"), &int32_literal(tag));
+
+    let mut represented = false;
+    for (index, (field_ty, arg)) in fields.iter().zip(args).enumerate() {
+        if layouts.type_repr(*field_ty) == Repr::Void {
+            continue;
+        }
+        represented = true;
+        let expression =
+            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.assign(
+            &format!("{target}.payload.v{}.f{index}", ctor.variant),
+            &expression,
+        );
+    }
+    if !represented {
+        writer.assign(
+            &format!("{target}.payload.v{}._unit", ctor.variant),
+            "UINT8_C(0)",
+        );
+    }
+    Ok(())
+}
+
+fn emit_field(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    base: VarId,
+    ctor: CtorRef,
+    index: usize,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let base_ty = function.vars[base].ty;
+    let Type::Enum(enum_id, _) = layouts.types[base_ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field base is not an enum",
+                function.name
+            ),
+        }]);
+    };
+    if enum_id != ctor.enum_id {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field constructor and base types differ",
+                function.name
+            ),
+        }]);
+    }
+    let Some(fields) = layouts
+        .enum_fields(base_ty)
+        .and_then(|variants| variants.get(ctor.variant))
+    else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: field base has no inline enum layout",
+                function.name
+            ),
+        }]);
+    };
+    let Some(&field_ty) = fields.get(index) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum field index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    let has_repr = layouts.type_repr(field_ty) != Repr::Void;
+    if dst.is_some() && !has_repr {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: enum field destination does not match its representation",
+                function.name
+            ),
+        }]);
+    }
+    if let Some(dst) = dst {
+        writer.assign(
+            &variable_name(dst),
+            &format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant),
+        );
+    }
+    Ok(())
+}
+
+fn emit_tag(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    base: VarId,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let base_ty = function.vars[base].ty;
+    let Type::Enum(enum_id, _) = layouts.types[base_ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tag base is not an enum",
+                function.name
+            ),
+        }]);
+    };
+    let expression = if layouts.enum_is_i32(enum_id) {
+        variable_name(base)
+    } else if layouts.enum_fields(base_ty).is_some() {
+        format!("{}.tag", variable_name(base))
+    } else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tag base has no supported enum representation",
+                function.name
+            ),
+        }]);
+    };
+    writer.assign(&variable_name(dst), &expression);
+    Ok(())
+}
+
+fn emit_tuple(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let ty = function.vars[dst].ty;
+    let Type::Tuple(fields) = &layouts.types[ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple value defines a non-tuple variable",
+                function.name
+            ),
+        }]);
+    };
+    if args.len() != fields.len() {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple has {} elements, expected {}",
+                function.name,
+                args.len(),
+                fields.len()
+            ),
+        }]);
+    }
+
+    let target = variable_name(dst);
+    let mut represented = false;
+    for (index, (&field_ty, arg)) in fields.iter().zip(args).enumerate() {
+        if layouts.type_repr(field_ty) == Repr::Void {
+            continue;
+        }
+        represented = true;
+        let expression =
+            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
+        writer.assign(&format!("{target}.f{index}"), &expression);
+    }
+    if !represented {
+        writer.assign(&format!("{target}._unit"), "UINT8_C(0)");
+    }
+    Ok(())
+}
+
+fn emit_tuple_get(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    base: VarId,
+    index: usize,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let base_ty = function.vars[base].ty;
+    let Type::Tuple(fields) = &layouts.types[base_ty] else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple projection base is not a tuple",
+                function.name
+            ),
+        }]);
+    };
+    let Some(&field_ty) = fields.get(index) else {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple field index is out of range",
+                function.name
+            ),
+        }]);
+    };
+    let has_repr = layouts.type_repr(field_ty) != Repr::Void;
+    if dst.is_some() && !has_repr {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "invalid Flow IR in function `{}`: tuple projection destination does not match its representation",
+                function.name
+            ),
+        }]);
+    }
+    if let Some(dst) = dst {
+        writer.assign(
+            &variable_name(dst),
+            &format!("{}.f{index}", variable_name(base)),
+        );
+    }
+    Ok(())
+}
+
+fn validate_external(flow: &emela_lir::Module, function: &Function) -> Result<String, Vec<Error>> {
+    let Some(external) = &function.external else {
+        return Err(unsupported(&function.name, "missing external binding"));
+    };
+    let Some(binding) = external.binding("c") else {
+        return Err(unsupported(
+            &function.name,
+            "external function without a C binding",
+        ));
+    };
+    let symbol = match &binding.host {
+        emela_core::HostRef::Global(name) => name.clone(),
+        emela_core::HostRef::Import { name, .. } => name.clone(),
+    };
+    if !is_c_identifier(&symbol) {
+        return Err(unsupported(
+            &function.name,
+            "external function with an invalid C symbol",
+        ));
+    }
+
+    let supported_type = |ty| {
+        matches!(
+            flow.core.ty(ty),
+            emela_core::Type::Int
+                | emela_core::Type::Int64
+                | emela_core::Type::Float
+                | emela_core::Type::Bool
+                | emela_core::Type::Unit
+                | emela_core::Type::Never
+        )
+    };
+    if function
+        .params
+        .iter()
+        .any(|&param| !supported_type(function.vars[param].ty))
+        || !supported_type(function.ret)
+    {
+        return Err(unsupported(
+            &function.name,
+            "external function with a non-scalar signature",
+        ));
+    }
+    Ok(symbol)
+}
+
+fn is_c_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    !matches!(
+        value,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Alignas"
+            | "_Alignof"
+            | "_Atomic"
+            | "_Bool"
+            | "_Complex"
+            | "_Generic"
+            | "_Imaginary"
+            | "_Noreturn"
+            | "_Static_assert"
+            | "_Thread_local"
+    )
+}
+
 fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<String, &'static str> {
     let args: Vec<String> = args
         .iter()
@@ -642,7 +3943,7 @@ fn primitive_expression(op: PrimOp, ty: PrimTy, args: &[Operand]) -> Result<Stri
         PrimTy::I32 => primitive_i32_expression(op, args.as_slice()),
         PrimTy::I64 => primitive_i64_expression(op, args.as_slice()),
         PrimTy::F64 => primitive_f64_expression(op, args.as_slice()),
-        _ => Err("unsupported Value::Prim type"),
+        PrimTy::String => primitive_string_expression(op, args.as_slice()),
     }
 }
 
@@ -719,6 +4020,97 @@ fn primitive_f64_expression(op: PrimOp, args: &[String]) -> Result<String, &'sta
     }
 }
 
+fn emit_i32_shift_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_i32_shift_left(int32_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits((uint32_t)value << (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int32_t emela_i32_shift_right(int32_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return value < INT32_C(0) ? -INT32_C(1) : INT32_C(0);");
+    writer.end_block();
+    writer.line("uint32_t shifted = (uint32_t)value >> (uint32_t)by;");
+    writer.begin_block("if (by > INT32_C(0) && value < INT32_C(0))");
+    writer.line("shifted |= UINT32_MAX << (UINT32_C(32) - (uint32_t)by);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits(shifted);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline int32_t emela_i32_shift_right_unsigned(int32_t value, int32_t by)",
+    );
+    writer.begin_block("if (by >= INT32_C(32))");
+    writer.line("return INT32_C(0);");
+    writer.end_block();
+    writer.line("return emela_i32_from_bits((uint32_t)value >> (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_i64_shift_helpers(writer: &mut Writer) {
+    writer.begin_block("static inline int64_t emela_i64_shift_left(int64_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return INT64_C(0);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits((uint64_t)value << (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("static inline int64_t emela_i64_shift_right(int64_t value, int32_t by)");
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return value < INT64_C(0) ? -INT64_C(1) : INT64_C(0);");
+    writer.end_block();
+    writer.line("uint64_t shifted = (uint64_t)value >> (uint32_t)by;");
+    writer.begin_block("if (by > INT32_C(0) && value < INT64_C(0))");
+    writer.line("shifted |= UINT64_MAX << (UINT32_C(64) - (uint32_t)by);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits(shifted);");
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block(
+        "static inline int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
+    );
+    writer.begin_block("if (by >= INT32_C(64))");
+    writer.line("return INT64_C(0);");
+    writer.end_block();
+    writer.line("return emela_i64_from_bits((uint64_t)value >> (uint32_t)by);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_negative_shift_helper(writer: &mut Writer) {
+    writer.begin_block("static inline void emela_emb_negative_shift_defect(int32_t amount)");
+    writer.line("char message[48];");
+    writer.line("static const char prefix[] = \"negative shift amount: \";");
+    writer.line("uint16_t prefix_length = (uint16_t)(sizeof prefix - 1);");
+    writer.line("uint32_t magnitude = (uint32_t)(-(amount + INT32_C(1))) + UINT32_C(1);");
+    writer.line("char *digits = message + sizeof message;");
+    writer.begin_block("do");
+    writer.line("*--digits = (char)('0' + magnitude % UINT32_C(10));");
+    writer.line("magnitude /= UINT32_C(10);");
+    writer.end_block();
+    writer.line("while (magnitude != UINT32_C(0));");
+    writer.line("*--digits = '-';");
+    writer.line("uint16_t number_length = (uint16_t)((message + sizeof message) - digits);");
+    writer.begin_block("for (uint16_t i = 0; i < prefix_length; ++i)");
+    writer.line("message[i] = prefix[i];");
+    writer.end_block();
+    writer.begin_block("for (uint16_t i = 0; i < number_length; ++i)");
+    writer.line("message[prefix_length + i] = digits[i];");
+    writer.end_block();
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_NEGATIVE_SHIFT, message, (uint16_t)(prefix_length + number_length));",
+    );
+    writer.end_block();
+    writer.blank();
+}
+
 fn emit_i32_division_helpers(writer: &mut Writer) {
     writer.begin_block("static inline int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
@@ -785,20 +4177,289 @@ fn emit_i64_division_helpers(writer: &mut Writer) {
     writer.blank();
 }
 
-fn has_prim(flow: &emela_lir::Module, ty: PrimTy, ops: &[PrimOp]) -> bool {
-    flow.functions.iter().any(|(_, function)| {
-        function.stmts.iter().any(|(_, statement)| {
-            matches!(
-                statement,
-                Stmt::Let {
-                    value: Value::Prim {
-                        op, ty: found_ty, ..
-                    },
-                    ..
-                } if *found_ty == ty && ops.contains(op)
-            )
-        })
+fn emit_float_to_int_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline int32_t emela_emb_float_to_int(double value, uint8_t operation)",
+    );
+    writer.begin_block("if (!(value > -2147483649.0 && value < 2147483648.0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_FLOAT_TO_INT, \"cannot convert Float to Int\", UINT16_C(27));",
+    );
+    writer.end_block();
+    writer.line("int64_t rounded = (int64_t)value;");
+    writer.begin_block("if (operation == UINT8_C(0) && (double)rounded > value)");
+    writer.line("--rounded;");
+    writer.end_block();
+    writer.begin_block("else if (operation == UINT8_C(1) && (double)rounded < value)");
+    writer.line("++rounded;");
+    writer.end_block();
+    writer.begin_block("else if (operation == UINT8_C(2))");
+    writer.begin_block("if (value >= 0.0 && value - (double)rounded >= 0.5)");
+    writer.line("++rounded;");
+    writer.end_block();
+    writer.begin_block("else if (value < 0.0 && (double)rounded - value >= 0.5)");
+    writer.line("--rounded;");
+    writer.end_block();
+    writer.end_block();
+    writer.begin_block("if (rounded < INT32_MIN || rounded > INT32_MAX)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_FLOAT_TO_INT, \"cannot convert Float to Int\", UINT16_C(27));",
+    );
+    writer.end_block();
+    writer.line("return (int32_t)rounded;");
+    writer.end_block();
+    writer.blank();
+}
+
+fn has_prim(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ty: PrimTy, ops: &[PrimOp]) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Prim {
+                            op, ty: found_ty, ..
+                        },
+                        ..
+                    } if *found_ty == ty && ops.contains(op)
+                )
+            })
     })
+}
+
+fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin]) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        emitted.contains(&id)
+            && !function.constant
+            && function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin { op, .. },
+                        ..
+                    } if ops.contains(op)
+                )
+            })
+    })
+}
+
+fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::StringAppend,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 2 && !append_is_static(args) && !append_has_empty_constant(args)
+                )
+            })
+        })
+}
+
+fn has_runtime_int_string(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::IntToString | Builtin::Int64ToString,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_float_to_string(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::FloatToString,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn functions_with_string_output(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    layouts: &TypeLayouts<'_>,
+) -> HashSet<FnId> {
+    let mut result = HashSet::new();
+    loop {
+        let mut changed = false;
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id)
+                || function.constant
+                || function.external.is_some()
+                || !matches!(layouts.types[function.ret], Type::String)
+                || result.contains(&id)
+            {
+                continue;
+            }
+            let has_output_producer = function.stmts.iter().any(|(_, statement)| {
+                let Stmt::Let { value, .. } = statement else {
+                    return false;
+                };
+                match value {
+                    Value::Builtin {
+                        op: Builtin::StringAppend,
+                        args,
+                    } => {
+                        args.len() == 2
+                            && !append_is_static(args)
+                            && !append_has_empty_constant(args)
+                    }
+                    Value::Builtin {
+                        op:
+                            Builtin::IntToString
+                            | Builtin::Int64ToString
+                            | Builtin::FloatToString
+                            | Builtin::StringFromCodePoint,
+                        args,
+                    } => args.len() == 1 && matches!(args[0], Operand::Var(_)),
+                    Value::Runtime {
+                        op: RuntimeOp::ShowString,
+                        args,
+                    } => args.len() == 1 && !matches!(args[0], Operand::Const(Const::String(_))),
+                    Value::Call {
+                        callee: Callee::Direct(callee),
+                        ..
+                    } => result.contains(callee),
+                    _ => false,
+                }
+            });
+            if has_output_producer {
+                result.insert(id);
+                changed = true;
+            }
+        }
+        if !changed {
+            return result;
+        }
+    }
+}
+
+fn has_runtime_int_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::IntParse,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_float_parse(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::FloatParse,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_string_from_code_point(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Builtin {
+                            op: Builtin::StringFromCodePoint,
+                            args,
+                        },
+                        ..
+                    } if args.len() == 1 && matches!(args[0], Operand::Var(_))
+                )
+            })
+        })
+}
+
+fn has_runtime_string_show(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Runtime {
+                            op: RuntimeOp::ShowString,
+                            args,
+                        },
+                        ..
+                    } if !matches!(args.as_slice(), [Operand::Const(Const::String(_))])
+                )
+            })
+        })
+}
+
+fn has_runtime_op(flow: &emela_lir::Module, emitted: &HashSet<FnId>, op: RuntimeOp) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                matches!(
+                    statement,
+                    Stmt::Let {
+                        value: Value::Runtime { op: found, .. },
+                        ..
+                    } if *found == op
+                )
+            })
+        })
 }
 
 fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'static str> {
@@ -806,22 +4467,42 @@ fn comparison_expression(lhs: &str, op: &str, rhs: &str) -> Result<String, &'sta
 }
 
 fn emit_return(
-    flow: &emela_lir::Module,
+    layouts: &TypeLayouts<'_>,
     function: &Function,
     term: &Term,
+    string_buffers: &StringBufferPlan,
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     match term {
         Term::Return(None) => writer.ret(None),
         Term::Return(Some(operand)) => {
-            let expression = operand_expression(operand)
+            let mut expression = operand_expression(operand)
                 .map_err(|variant| unsupported(&function.name, variant))?;
+            if string_buffers.returns_to_caller
+                && matches!(layouts.types[function.ret], Type::String)
+            {
+                expression = format!(
+                    "emela_emb_string_copy_to_output({expression}, emela_string_output, emela_emb_string_output_capacity, UINT16_C({}))",
+                    string_buffers.capacity
+                );
+            }
             writer.ret(Some(&expression));
         }
+        Term::Fail(error) => {
+            if !function.fails {
+                return Err(invalid_flow_ir(
+                    &function.name,
+                    "Fail appears in a function without a failure channel",
+                ));
+            }
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
+            emit_failure_return(layouts, function, writer);
+        }
+        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
         other => return Err(unsupported(&function.name, term_name(other))),
     }
 
-    let return_repr = emela_lir::repr_of(&flow.core, function.ret);
+    let return_repr = layouts.type_repr(function.ret);
     if return_repr == Repr::Void && matches!(term, Term::Return(Some(_))) {
         return Err(vec![Error {
             kind: ErrorKind::InvalidFlowIr,
@@ -852,8 +4533,22 @@ fn constant_expression(value: &emela_lir::Const) -> Result<Option<String>, &'sta
         emela_lir::Const::Unit => Ok(None),
         emela_lir::Const::Int64(value) => Ok(Some(int64_literal(*value))),
         emela_lir::Const::Float(value) => Ok(Some(float_literal(*value))),
-        emela_lir::Const::String(_) => Err("String constant"),
+        emela_lir::Const::String(value) => {
+            let length = u16::try_from(value.len()).map_err(|_| "String constant is too long")?;
+            Ok(Some(format!(
+                "(EmelaString){{ .data = {}, .length = UINT16_C({length}) }}",
+                c_string_literal(value.as_bytes())
+            )))
+        }
     }
+}
+
+fn c_string_literal(bytes: &[u8]) -> String {
+    let escaped = bytes
+        .iter()
+        .map(|byte| format!("\\x{byte:02x}"))
+        .collect::<String>();
+    format!("\"{escaped}\"")
 }
 
 fn int32_literal(value: i32) -> String {
@@ -891,16 +4586,30 @@ fn float_literal(value: f64) -> String {
     }
 }
 
-fn signature(flow: &emela_lir::Module, function: &Function, name: &str, is_static: bool) -> String {
-    let return_type = c_type(emela_lir::repr_of(&flow.core, function.ret));
-    let params = function
+fn signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    is_static: bool,
+    takes_error_out: bool,
+    takes_string_output: bool,
+) -> String {
+    let return_type = layouts.c_type(function.ret);
+    let mut params: Vec<String> = function
         .params
         .iter()
         .map(|&variable| {
             let data = &function.vars[variable];
-            format!("{} {}", c_type(data.repr), variable_name(variable))
+            format!("{} {}", layouts.c_type(data.ty), variable_name(variable))
         })
         .collect::<Vec<_>>();
+    if takes_error_out {
+        params.push("EmelaError *emela_error_out".to_owned());
+    }
+    if takes_string_output {
+        params.push("char *emela_string_output".to_owned());
+        params.push("uint16_t emela_string_capacity".to_owned());
+    }
     let params = if params.is_empty() {
         "void".to_owned()
     } else {
@@ -908,6 +4617,323 @@ fn signature(flow: &emela_lir::Module, function: &Function, name: &str, is_stati
     };
     let linkage = if is_static { "static " } else { "" };
     format!("{linkage}{return_type} {name}({params})")
+}
+
+fn emit_fallible_wrapper(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    public_name: &str,
+    implementation_name: &str,
+    takes_string_output: bool,
+    writer: &mut Writer,
+) {
+    writer.begin_block(&signature(
+        layouts,
+        function,
+        public_name,
+        false,
+        false,
+        takes_string_output,
+    ));
+    writer.decl("EmelaError", "emela_error", Some("{0}"));
+    let mut args: Vec<String> = function
+        .params
+        .iter()
+        .map(|&variable| variable_name(variable))
+        .collect();
+    args.push("&emela_error".to_owned());
+    if takes_string_output {
+        args.push("emela_string_output".to_owned());
+        args.push("emela_string_capacity".to_owned());
+    }
+    let call = format!("{implementation_name}({})", args.join(", "));
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.line(&format!("{call};"));
+    } else {
+        writer.decl(&layouts.c_type(function.ret), "emela_result", Some(&call));
+    }
+    writer.begin_block("if (emela_error.tag != UINT32_C(0))");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_UNHANDLED_ERROR, \"unhandled error\", UINT16_C(15));",
+    );
+    writer.end_block();
+    if layouts.type_repr(function.ret) == Repr::Void {
+        writer.ret(None);
+    } else {
+        writer.ret(Some("emela_result"));
+    }
+    writer.end_block();
+}
+
+#[derive(Debug)]
+struct AggregateLayout {
+    ty: TypeId,
+    kind: AggregateKind,
+}
+
+#[derive(Debug)]
+enum AggregateKind {
+    Tuple(Vec<TypeId>),
+    Enum(Vec<Vec<TypeId>>),
+}
+
+struct TypeLayouts<'a> {
+    core: &'a emela_core::Module,
+    types: TypeTable,
+    aggregates: Vec<AggregateLayout>,
+    aggregate_ids: HashMap<TypeId, usize>,
+    error_types: Vec<(EnumId, TypeId)>,
+    has_error_abi: bool,
+}
+
+impl<'a> TypeLayouts<'a> {
+    fn new(flow: &'a emela_lir::Module, emitted: &HashSet<FnId>) -> Result<Self, Vec<Error>> {
+        let mut layouts = TypeLayouts {
+            core: &flow.core,
+            types: flow.core.types.clone(),
+            aggregates: Vec::new(),
+            aggregate_ids: HashMap::new(),
+            error_types: Vec::new(),
+            has_error_abi: flow.functions.iter().any(|(id, function)| {
+                emitted.contains(&id)
+                    && (function.fails
+                        || function
+                            .seqs
+                            .iter()
+                            .any(|(_, sequence)| matches!(sequence.term, Term::Fail(_)))
+                        || function.stmts.iter().any(|(_, statement)| match statement {
+                            Stmt::Let { value, .. } => match value {
+                                Value::Call { on_fail, .. } => on_fail.is_some(),
+                                Value::IsError { .. } | Value::AsError { .. } => true,
+                                _ => false,
+                            },
+                            _ => false,
+                        }))
+            }),
+        };
+        let mut states = HashMap::new();
+        if layouts.has_error_abi {
+            let error_ids: Vec<EnumId> = flow
+                .core
+                .enums
+                .iter()
+                .filter_map(|(id, def)| def.error.then_some(id))
+                .collect();
+            for id in error_ids {
+                let ty = layouts.types.enum_type(id, Vec::new());
+                layouts.collect(ty, "EmelaError", &mut states)?;
+                layouts.error_types.push((id, ty));
+            }
+        }
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
+            layouts.collect(function.ret, &function.name, &mut states)?;
+            for (_, variable) in function.vars.iter() {
+                layouts.collect(variable.ty, &function.name, &mut states)?;
+            }
+        }
+        Ok(layouts)
+    }
+
+    fn collect(
+        &mut self,
+        ty: TypeId,
+        function: &str,
+        states: &mut HashMap<TypeId, u8>,
+    ) -> Result<(), Vec<Error>> {
+        let kind = match self.types[ty].clone() {
+            Type::Tuple(fields) => Some(AggregateKind::Tuple(fields)),
+            Type::Enum(id, args) if self.enum_layout_required(id) => {
+                let raw_fields: Vec<Vec<TypeId>> = self.core.enums[id]
+                    .variants
+                    .iter()
+                    .map(|variant| variant.tys.clone())
+                    .collect();
+                let fields = raw_fields
+                    .iter()
+                    .map(|variant| {
+                        variant
+                            .iter()
+                            .map(|&field| self.types.subst(field, &args))
+                            .collect()
+                    })
+                    .collect();
+                Some(AggregateKind::Enum(fields))
+            }
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            return Ok(());
+        };
+
+        match states.get(&ty) {
+            Some(2) => return Ok(()),
+            Some(1) => {
+                return Err(unsupported(
+                    function,
+                    &format!("recursive inline aggregate type {}", type_name(ty)),
+                ));
+            }
+            _ => {}
+        }
+        states.insert(ty, 1);
+
+        let fields: Vec<TypeId> = match &kind {
+            AggregateKind::Tuple(fields) => fields.clone(),
+            AggregateKind::Enum(variants) => variants.iter().flatten().copied().collect(),
+        };
+        for field in fields {
+            if self.type_repr(field) != Repr::Void {
+                self.collect(field, function, states)?;
+            }
+        }
+
+        let index = self.aggregates.len();
+        self.aggregate_ids.insert(ty, index);
+        self.aggregates.push(AggregateLayout { ty, kind });
+        states.insert(ty, 2);
+        Ok(())
+    }
+
+    fn enum_is_i32(&self, id: emela_core::EnumId) -> bool {
+        let def = &self.core.enums[id];
+        !def.error
+            && !def.external
+            && !def.variants.is_empty()
+            && def.variants.iter().all(|variant| variant.fields.is_empty())
+    }
+
+    fn enum_layout_required(&self, id: emela_core::EnumId) -> bool {
+        let def = &self.core.enums[id];
+        !def.external && !def.variants.is_empty() && !self.enum_is_i32(id)
+    }
+
+    fn type_repr(&self, ty: TypeId) -> Repr {
+        match self.types[ty] {
+            Type::Int | Type::Bool => Repr::I32,
+            Type::Int64 => Repr::I64,
+            Type::Float => Repr::F64,
+            Type::Unit | Type::Never | Type::Set(_) => Repr::Void,
+            Type::Enum(id, _) if self.enum_is_i32(id) => Repr::I32,
+            _ => Repr::Ref,
+        }
+    }
+
+    fn c_type(&self, ty: TypeId) -> String {
+        match self.types[ty] {
+            Type::Int | Type::Bool => "int32_t".to_owned(),
+            Type::Int64 => "int64_t".to_owned(),
+            Type::Float => "double".to_owned(),
+            Type::Unit | Type::Never | Type::Set(_) => "void".to_owned(),
+            Type::String => "EmelaString".to_owned(),
+            Type::Tuple(_) => type_name(ty),
+            Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
+            Type::Enum(id, _) if self.enum_layout_required(id) => type_name(ty),
+            Type::Any if self.has_error_abi => "EmelaError".to_owned(),
+            _ => c_type(self.type_repr(ty)).to_owned(),
+        }
+    }
+
+    fn error_enum(&self, ty: TypeId) -> Option<EnumId> {
+        match self.types[ty] {
+            Type::Enum(id, _) if self.core.enums[id].error => Some(id),
+            _ => None,
+        }
+    }
+
+    fn error_type(&self, enum_id: EnumId) -> Option<TypeId> {
+        self.error_types
+            .iter()
+            .find_map(|(id, ty)| (*id == enum_id).then_some(*ty))
+    }
+
+    fn enum_fields(&self, ty: TypeId) -> Option<&[Vec<TypeId>]> {
+        let index = *self.aggregate_ids.get(&ty)?;
+        match &self.aggregates[index].kind {
+            AggregateKind::Enum(variants) => Some(variants),
+            AggregateKind::Tuple(_) => None,
+        }
+    }
+
+    fn emit_declarations(&self, writer: &mut Writer) {
+        for aggregate in &self.aggregates {
+            writer.line("typedef struct {");
+            match &aggregate.kind {
+                AggregateKind::Tuple(fields) => {
+                    let mut represented = false;
+                    for (index, &field) in fields.iter().enumerate() {
+                        if self.type_repr(field) == Repr::Void {
+                            continue;
+                        }
+                        represented = true;
+                        writer.line(&format!("  {} f{index};", self.c_type(field)));
+                    }
+                    if !represented {
+                        writer.line("  uint8_t _unit;");
+                    }
+                }
+                AggregateKind::Enum(variants) => {
+                    writer.line("  int32_t tag;");
+                    writer.line("  union {");
+                    for (variant_index, fields) in variants.iter().enumerate() {
+                        let represented_fields = fields
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, field)| self.type_repr(**field) != Repr::Void)
+                            .map(|(field_index, field)| {
+                                format!("{} f{field_index};", self.c_type(*field))
+                            })
+                            .collect::<Vec<_>>();
+                        let body = if represented_fields.is_empty() {
+                            "uint8_t _unit;".to_owned()
+                        } else {
+                            represented_fields.join(" ")
+                        };
+                        writer.line(&format!("    struct {{ {body} }} v{variant_index};"));
+                    }
+                    writer.line("  } payload;");
+                }
+            }
+            writer.line(&format!("}} {};", type_name(aggregate.ty)));
+            writer.blank();
+        }
+    }
+
+    fn emit_string_declaration(&self, writer: &mut Writer) {
+        writer.line(
+            "typedef struct { const char *data; uint16_t length; void *owner; } EmelaString;",
+        );
+        writer.blank();
+    }
+
+    fn emit_error_declaration(&self, writer: &mut Writer) {
+        if !self.has_error_abi {
+            return;
+        }
+        writer.line("typedef struct {");
+        writer.line("  uint32_t tag;");
+        writer.line("  union {");
+        if self.error_types.is_empty() {
+            writer.line("    uint8_t _empty;");
+        } else {
+            for (enum_id, ty) in &self.error_types {
+                writer.line(&format!(
+                    "    {} e{};",
+                    self.c_type(*ty),
+                    enum_index(*enum_id)
+                ));
+            }
+        }
+        writer.line("  } payload;");
+        writer.line("} EmelaError;");
+        writer.blank();
+    }
+}
+
+fn type_name(ty: TypeId) -> String {
+    format!("emela_type_{}", ty.index())
 }
 
 fn c_type(repr: Repr) -> &'static str {
@@ -927,6 +4953,10 @@ fn function_name(id: FnId, function: &Function) -> String {
     } else {
         format!("emela_fn_{index}")
     }
+}
+
+fn enum_index(id: EnumId) -> u32 {
+    u32::from(id.into_raw())
 }
 
 fn c_identifier(name: &str) -> String {
@@ -1014,4 +5044,63 @@ fn unsupported(function: &str, construct: &str) -> Vec<Error> {
             "embedded C codegen does not support {construct} in function `{function}` yet"
         ),
     }]
+}
+
+fn primitive_string_expression(op: PrimOp, args: &[String]) -> Result<String, &'static str> {
+    let [left, right] = args else {
+        return Err("String comparison with an invalid arity");
+    };
+    let comparison = match op {
+        PrimOp::Eq => "==",
+        PrimOp::Ne => "!=",
+        PrimOp::Lt => "<",
+        PrimOp::Le => "<=",
+        PrimOp::Gt => ">",
+        PrimOp::Ge => ">=",
+        _ => return Err("unsupported String primitive"),
+    };
+    comparison_expression(
+        &format!("emela_emb_string_compare(&({left}), &({right}))"),
+        comparison,
+        "INT32_C(0)",
+    )
+}
+
+fn emit_string_comparison_helper(writer: &mut Writer) {
+    writer.begin_block("static inline int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
+    // Valid UTF-8 has the same lexicographic byte order as Unicode scalar values.
+    writer.line("uint32_t length = left->length < right->length ? left->length : right->length;");
+    writer.begin_block("for (uint32_t i = 0; i < length; i++)");
+    writer.line("uint8_t a = (uint8_t)left->data[i], b = (uint8_t)right->data[i];");
+    writer.line("if (a < b) return -INT32_C(1);");
+    writer.line("if (a > b) return INT32_C(1);");
+    writer.end_block();
+    writer.line("return left->length < right->length ? -INT32_C(1) : left->length > right->length ? INT32_C(1) : INT32_C(0);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_string_length(dst: VarId, input: &str, writer: &mut Writer) {
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_length_input_{suffix}");
+    let offset_name = format!("emela_string_length_offset_{suffix}");
+    let next_name = format!("emela_string_length_next_{suffix}");
+    let count_name = format!("emela_string_length_count_{suffix}");
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &next_name, None);
+    writer.decl("int32_t", &count_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(&offset_name, &next_name);
+    writer.line(&format!("++{count_name};"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &count_name);
 }
