@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use emela_driver::{
-    Analysis, Backend, CoreC, CoreEmbedded, CoreJs, CoreWasm, Diagnostic, EmbeddedConfig,
+    Analysis, Backend, CoreC, CoreEmbedded, CoreJs, CoreWasm, Diagnostic, EmbeddedProject,
     FileSystem, Input, Lower, LowerTests, MemoryFiles, OsFs, Output, RunOptions, SourceDb, Target,
     TestBackend, TestModule, TestOptions, Typecheck,
 };
@@ -23,9 +23,12 @@ enum Command {
     Check {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
+        /// Board used to resolve `[embedded.modules]` overlays
+        #[arg(long)]
+        board: Option<String>,
     },
     /// Compile to the output of `--target` (`target/emela/js` for JS; a native executable for C;
-    /// `main.wasm` for WASM; C sources for c-embedded)
+    /// `main.wasm` for WASM; embedded C, or firmware when a board is selected)
     Build {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
@@ -38,6 +41,29 @@ enum Command {
         /// Embedded runtime and board adapter configuration (only for --target c-embedded)
         #[arg(long)]
         embedded_config: Option<PathBuf>,
+        /// Board support package; defaults to `[embedded].board` in Pome.toml
+        #[arg(long)]
+        board: Option<String>,
+    },
+    /// Write a previously built firmware image after verifying its project and artifact hashes
+    Flash {
+        /// Entry file or project directory [default: .]
+        path: Option<PathBuf>,
+        /// Build output directory [default: <project>/target/emela/c-embedded/<board>]
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Board support package; defaults to `[embedded].board` in Pome.toml
+        #[arg(long)]
+        board: Option<String>,
+        /// Runtime configuration used by the successful build
+        #[arg(long)]
+        embedded_config: Option<PathBuf>,
+        /// Serial port for ESP32-C3, or probe serial number for STM32 OpenOCD
+        #[arg(long)]
+        port: Option<String>,
+        /// Print the verified flasher command without opening a device
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Compile and run: on Node.js, as a native executable (`--target c`), or with wasmtime
     /// (`--target wasm`)
@@ -101,7 +127,7 @@ enum TargetArg {
     Js,
     /// C compiled with cc (`EMELA_CC`) to a native executable
     C,
-    /// C sources for a separate embedded board toolchain (build only)
+    /// Embedded C sources, or a firmware image when `--board` or `[embedded].board` is set
     CEmbedded,
     /// WebAssembly (WASI) run with `wasmtime` (`EMELA_WASMTIME`)
     Wasm,
@@ -130,13 +156,35 @@ const DIAGNOSTIC_FAILURE: u8 = 1;
 
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Check { path } => check(&path_or_current(path)),
+        Command::Check { path, board } => check(&path_or_current(path), board),
         Command::Build {
             path,
             out_dir,
             target,
             embedded_config,
-        } => build(&path_or_current(path), out_dir, target, embedded_config),
+            board,
+        } => build(
+            &path_or_current(path),
+            out_dir,
+            target,
+            embedded_config,
+            board,
+        ),
+        Command::Flash {
+            path,
+            out_dir,
+            board,
+            embedded_config,
+            port,
+            dry_run,
+        } => flash(
+            &path_or_current(path),
+            out_dir,
+            board,
+            embedded_config,
+            port,
+            dry_run,
+        ),
         Command::Run {
             path,
             out_dir,
@@ -164,11 +212,18 @@ fn path_or_current(path: Option<PathBuf>) -> PathBuf {
     path.unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn check(path: &Path) -> ExitCode {
+fn check(path: &Path, board: Option<String>) -> ExitCode {
     let Some(input) = resolve_input(&OsFs, path) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
-    let (analysis, _) = emela_driver::check(&OsFs, &input, &mut Typecheck::default());
+    let sources = match EmbeddedProject::read(&input)
+        .and_then(|project| project.select(board))
+        .and_then(|project| project.overlay(&input))
+    {
+        Ok(sources) => sources,
+        Err(diagnostic) => return report_error(diagnostic),
+    };
+    let (analysis, _) = emela_driver::check(&sources, &input, &mut Typecheck::default());
     report(&analysis)
 }
 
@@ -192,12 +247,44 @@ fn build(
     out_dir: Option<PathBuf>,
     target: Option<TargetArg>,
     embedded_config: Option<PathBuf>,
+    board: Option<String>,
 ) -> ExitCode {
     let Some(input) = resolve_input(&OsFs, path) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
-    let Some(target) = resolve_target(&input, target) else {
-        return ExitCode::from(DIAGNOSTIC_FAILURE);
+    let project = match EmbeddedProject::read(&input).and_then(|project| project.select(board)) {
+        Ok(project) => project,
+        Err(diagnostic) => return report_error(diagnostic),
+    };
+    if project.board_id().is_some()
+        && let Err(diagnostic) = project.invalidate(
+            &out_dir
+                .clone()
+                .unwrap_or_else(|| project.default_out_dir(&input)),
+        )
+    {
+        return report_error(diagnostic);
+    }
+    let target = if project.board_id().is_some() {
+        let configured = match emela_driver::project_target(&OsFs, &input) {
+            Ok(target) => target,
+            Err(diagnostic) => return report_error(diagnostic),
+        };
+        let target = target
+            .map(Target::from)
+            .or(configured)
+            .unwrap_or(Target::CEmbedded);
+        if target != Target::CEmbedded {
+            return report_error(Diagnostic::error(
+                "a selected embedded board requires target `c-embedded`",
+            ));
+        }
+        target
+    } else {
+        let Some(target) = resolve_target(&input, target) else {
+            return ExitCode::from(DIAGNOSTIC_FAILURE);
+        };
+        target
     };
     if embedded_config.is_some() && target != Target::CEmbedded {
         print_diagnostics(
@@ -208,17 +295,32 @@ fn build(
         );
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     }
-    let embedded_config = match embedded_config {
-        Some(path) => match EmbeddedConfig::read(&OsFs, &path) {
-            Ok(config) => config,
-            Err(diagnostic) => {
-                print_diagnostics(&[diagnostic], &SourceDb::new());
-                return ExitCode::from(DIAGNOSTIC_FAILURE);
-            }
-        },
-        None => EmbeddedConfig::default(),
+    let out_dir = out_dir.unwrap_or_else(|| {
+        if target == Target::CEmbedded {
+            project.default_out_dir(&input)
+        } else {
+            input.default_out_dir_for(target)
+        }
+    });
+    let config_flag = embedded_config.clone();
+    let embedded_config = match project.runtime_config(&input, embedded_config) {
+        Ok(config) => config,
+        Err(diagnostic) => return report_error(diagnostic),
     };
-    let out_dir = out_dir.unwrap_or_else(|| input.default_out_dir_for(target));
+    let sources = match project.overlay(&input) {
+        Ok(sources) => sources,
+        Err(diagnostic) => return report_error(diagnostic),
+    };
+    if project.board_id().is_some()
+        && let Err(diagnostic) = project.prepare_build(&input, &out_dir, config_flag.as_deref())
+    {
+        return report_error(diagnostic);
+    }
+    let generated_dir = if project.board_id().is_some() {
+        out_dir.join("generated")
+    } else {
+        out_dir.clone()
+    };
     let mut frontend = Lower::default().with_target(target);
     let (analysis, _) = match target {
         Target::Js => emela_driver::build(&OsFs, &input, &mut frontend, &mut CoreJs, &out_dir),
@@ -230,15 +332,62 @@ fn build(
             &out_dir,
         ),
         Target::CEmbedded => emela_driver::build(
-            &OsFs,
+            &sources,
             &input,
             &mut frontend,
             &mut CoreEmbedded::new(embedded_config),
-            &out_dir,
+            &generated_dir,
         ),
         Target::Wasm => emela_driver::build(&OsFs, &input, &mut frontend, &mut CoreWasm, &out_dir),
     };
-    report(&analysis)
+    let result = report(&analysis);
+    if analysis.has_errors() {
+        return result;
+    }
+    if project.board_id().is_some()
+        && let Err(diagnostic) = project.build_firmware(&input, &out_dir, config_flag.as_deref())
+    {
+        return report_error(diagnostic);
+    }
+    result
+}
+
+fn report_error(diagnostic: Diagnostic) -> ExitCode {
+    print_diagnostics(&[diagnostic], &SourceDb::new());
+    ExitCode::from(DIAGNOSTIC_FAILURE)
+}
+
+fn flash(
+    path: &Path,
+    out_dir: Option<PathBuf>,
+    board: Option<String>,
+    embedded_config: Option<PathBuf>,
+    port: Option<String>,
+    dry_run: bool,
+) -> ExitCode {
+    let Some(input) = resolve_input(&OsFs, path) else {
+        return ExitCode::from(DIAGNOSTIC_FAILURE);
+    };
+    let project = match EmbeddedProject::read(&input).and_then(|project| project.select(board)) {
+        Ok(project) => project,
+        Err(diagnostic) => return report_error(diagnostic),
+    };
+    if project.board_id().is_none() {
+        return report_error(Diagnostic::error(
+            "`flash` requires `--board` or `[embedded].board`",
+        ));
+    }
+    let out_dir = out_dir.unwrap_or_else(|| project.default_out_dir(&input));
+    match project.flash(
+        &input,
+        &out_dir,
+        embedded_config.as_deref(),
+        port.as_deref(),
+        dry_run,
+    ) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(diagnostic) => report_error(diagnostic),
+    }
 }
 
 fn run(

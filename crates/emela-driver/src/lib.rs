@@ -10,6 +10,7 @@ mod complete;
 mod diagnostic;
 mod doc;
 mod embedded;
+mod embedded_board;
 mod fmt;
 mod frontend;
 mod hints;
@@ -34,6 +35,7 @@ pub use complete::{Completion, CompletionKind};
 pub use diagnostic::{Diagnostic, HELP_PREFIX, Label, Location, Severity, Span, error_count};
 pub use doc::{DocChild, DocItem, DocKind, DocModule, collect_docs, render_html, render_markdown};
 pub use embedded::{CoreEmbedded, EMBEDDED_ENTRY_FILE, EMBEDDED_EXPORTS_FILE, EmbeddedConfig};
+pub use embedded_board::{EmbeddedProject, EmbeddedSources};
 /// The lowered program the output stages read ([`Backend`]).
 pub use emela_core::Module as CoreModule;
 pub use emela_resolve::OsFs;

@@ -3,6 +3,7 @@
 //! This crate starts from Core IR, obtains and verifies Flow IR, and will emit embedded C without
 //! running the Heap IR passes. C emission is added in later implementation phases.
 
+pub mod boards;
 mod const_eval;
 mod const_origins;
 mod const_runtime;

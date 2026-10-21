@@ -44,6 +44,8 @@ pub struct EmbeddedConfig {
     exports: BTreeMap<String, String>,
     #[serde(skip)]
     path: Option<PathBuf>,
+    #[serde(skip)]
+    board_entry: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,6 +64,25 @@ enum AdapterResult {
 }
 
 impl EmbeddedConfig {
+    /// Selects the fixed BSP entry ABI while retaining ordinary C-only exports.
+    pub fn with_board_entry(mut self, entry: &str) -> Result<Self, Diagnostic> {
+        if entry.trim().is_empty() {
+            return Err(self.error("embedded board entry must not be empty"));
+        }
+        if self
+            .exports
+            .get("board_main_start")
+            .is_some_and(|target| target != entry)
+        {
+            return Err(
+                self.error("export `board_main_start` conflicts with the selected board entry")
+            );
+        }
+        self.exports.insert("board_main_start".into(), entry.into());
+        self.board_entry = Some(entry.into());
+        Ok(self)
+    }
+
     /// Reads and validates an explicit configuration through the driver's filesystem.
     pub fn read(fs: &dyn FileSystem, path: &Path) -> Result<Self, Diagnostic> {
         let at_path = |message| Diagnostic::error(message).at(Location::Path(path.to_owned()));
@@ -194,6 +215,25 @@ impl EmbeddedConfig {
         module: &emela_core::Module,
         exports: &[ExportedFunction],
     ) -> Result<String, Diagnostic> {
+        if let Some(entry) = &self.board_entry {
+            let candidates = module
+                .functions
+                .iter()
+                .filter(|(_, function)| function.exported && &function.name == entry)
+                .collect::<Vec<_>>();
+            let valid = candidates.len() == 1
+                && candidates.first().is_some_and(|(_, function)| {
+                    function.params.is_empty()
+                        && function.ret == emela_core::TypeId::INT
+                        && function.suspends
+                        && !function.fails
+                        && function.type_params == 0
+                        && function.external.is_none()
+                });
+            if !valid {
+                return Err(self.error(format!("board entry `{entry}` must be a public, non-generic, argument-free `fn() -> Int use Async` without unhandled failures or effects")));
+            }
+        }
         let mut board_symbols: HashSet<&str> = self
             .task_adapters
             .iter()

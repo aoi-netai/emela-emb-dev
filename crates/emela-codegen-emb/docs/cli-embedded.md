@@ -1,6 +1,6 @@
-# CLIで組み込みCを生成する
+# CLIで組み込みC・firmwareを生成する
 
-`emela build --target c-embedded`は、Emelaのソースを読み込み・型検査し、多相Coreを組み込みbackendへ渡す。backend内で単相化し、Flow IRを経由して組み込みCへ変換する。Heap IRへの変換は行わない。公開関数をボードのCコードから呼び出すライブラリとして生成するため、Emelaに`main`を用意する必要はない。
+`emela build --target c-embedded`は、Emelaのソースを読み込み・型検査し、多相Coreを組み込みbackendへ渡す。backend内で単相化し、Flow IRを経由して組み込みCへ変換する。Heap IRへの変換は行わない。ボードを選ばない場合は公開関数をCコードから呼び出すライブラリとして生成し、Emelaに`main`を用意する必要はない。ボードを選んだ場合は、後述の公開entryをBSPへ接続してfirmwareを生成する。
 
 ## 基本的な使い方
 
@@ -19,11 +19,101 @@ cargo run --locked -q -p emela-cli -- build \
   --out-dir /tmp/emela-temperature-generated
 ```
 
-CLIが担当するのはCとheaderの生成までである。ARM向けcompile・link、ボードのstartupと周辺機器の初期化、Renodeでの実行はボード用のbuild手順で行う。[温度調節器example](../examples/temperature-controller/README.md)は、これらを`renode/run.sh`にまとめている。
+ボードを指定しない場合は、従来どおりCとheaderを生成する。`--board`または`Pome.toml`の`[embedded].board`を指定すると、CLIに同梱したボードパッケージを展開し、ボードのtoolchainによるcompile・linkとFlash image生成まで行う。Renodeによる動作確認は[温度調節器example](../examples/temperature-controller/README.md)の手順で行う。
 
 単一ソースの代わりにプロジェクトdirectoryも指定できる。`Pome.toml`の`[build].target = "c-embedded"`で既定targetを選べる。`--embedded-config`の相対pathは実行時の作業directoryが基準で、自動的な設定ファイルの探索は行わない。省略時は下表の既定値を使用する。`--out-dir`の省略時は入力の基準directory配下の`target/emela/c-embedded`へ生成する。
 
 `c-embedded`の`run`と`test`はホスト上の実行コマンドとして扱わない。`build`で生成したCをボード側の実行手順へ渡す。
+
+## ボードを選んでビルド・書き込みする
+
+次のようなプロジェクトを作成する。Emelaのアプリだけで動かす場合、CやRustのファイルを用意する必要はない。
+
+```text
+thermostat/
+  Pome.toml
+  embedded.toml
+  src/main.emel
+```
+
+```toml
+# Pome.toml
+[build]
+target = "c-embedded"
+
+[embedded]
+board = "stm32f446"
+config = "embedded.toml"
+entry = "main"
+optimization = "O2"
+```
+
+`embedded.toml`を次の内容で作成する。独自のCファイルや`[exports]`の指定は不要である。
+
+```toml
+heap_bytes = 2048
+string_capacity = 96
+fiber_capacity = 4
+frame_capacity = 8
+frame_bytes = 384
+task_capacity = 1
+event_capacity = 1
+deferred_capacity = 1
+```
+
+`src/main.emel`のentryは、引数を持たず、`Int`を返し、未処理の失敗やeffectを持たない公開関数にする。`use Async`を付けると、ボードのschedulerへ接続する開始ABIになる。
+
+```emela
+pub fn main() -> Int use Async { 0 }
+```
+
+Pythonと[STM32F446のtoolchain・OpenOCD](../boards/stm32f446/README.md)を用意して、次を実行する。同じボード文書にはConsoleとClockを使うEmelaだけの例もある。
+
+```sh
+emela check thermostat
+emela build thermostat
+emela flash thermostat --dry-run
+emela flash thermostat
+```
+
+ESP32-C3は`board = "esp32c3"`、または`--board esp32c3`で選ぶ。書き込みにはserial portを指定する。
+
+```sh
+emela build thermostat --board esp32c3
+emela flash thermostat --board esp32c3 --port /dev/ttyUSB0 --dry-run
+emela flash thermostat --board esp32c3 --port /dev/ttyUSB0
+```
+
+`--board`がTOMLより優先する。ボード指定時にtargetを省略すると`c-embedded`となり、明示した別targetとは併用できない。既定の出力先は`target/emela/c-embedded/<board>/`で、`generated/`にCとheader、`bsp/`にボードパッケージ、`firmware/`にELF・BIN・map・資源情報を置く。`--out-dir`はこの3directoryの親を指定する。
+
+ボードパッケージはコンパイラに同梱されるため、インストール後のCLIから開発時のリポジトリを参照する必要はない。Pythonの実行ファイルは`EMELA_PYTHON`で指定できる。ボードのtoolchain・書き込みtool・起動方式の条件は、[STM32F446](../boards/stm32f446/README.md)と[ESP32-C3](../boards/esp32c3/README.md)を参照する。
+
+### 配線・独自デバイスの選択
+
+`config`・`sources`・`modules`のpathはプロジェクトdirectoryが基準である。アプリ独自のセンサやC関数が必要な場合にだけ`[embedded].sources`へ追加する。Emela moduleの選択は`[embedded.modules]`で行える。
+
+```toml
+[embedded]
+board = "stm32f446"
+config = "embedded.toml"
+entry = "main"
+sources = ["sensor.c"]
+optimization = "O2"
+
+[embedded.modules]
+Controller = "../controller.emel"
+Board = "../boards/{board}/board.emel"
+```
+
+`{board}`は選択されたボードIDへ置き換える。通常のmodule探索に対する読み取り専用のoverlayであり、利用者のソースやFlow IR、生成Cを書き換えない。`check`・`build`が同じ選択を使う。`check --board`による切り替えにも対応する。LSP・`doc`・host向け`run`は、このボードoverlayの対象に含めていない。
+
+`entry`の既定値は`main`である。CLIが`board_main_start`という公開aliasを登録し、BSPがそのentryを呼び出す。独自のC-only生成を続ける場合はボードを省略でき、従来の`[exports]`と任意の公開関数signatureを利用できる。
+
+### 書き込み対象の確認
+
+`flash`は直前の成功buildに対して、選択ボード・entry・設定・ソース・overlay・追加C・生成C・同梱BSP・firmwareのSHA-256を照合する。別ボードの成果物、変更されたimage、build後に変更したアプリは書き込み前に診断し、再buildを要求する。失敗した再buildは古い成功記録を無効にする。
+
+`--dry-run`も同じ照合を行い、書き込みtoolへ渡すargvを表示する。デバイスへの接続や書き込みは行わない。実際の書き込みではSTM32はOpenOCD、ESP32-C3はesptoolを使用する。CLIはshellを介さず、ファイルpathやserial portを個別の引数として渡す。
 
 ## 設定ファイル
 
