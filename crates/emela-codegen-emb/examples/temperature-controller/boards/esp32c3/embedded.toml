@@ -1,0 +1,12 @@
+heap_bytes = 2048
+string_capacity = 96
+peripheral_buffer_capacity = 96
+fiber_capacity = 4
+frame_capacity = 8
+frame_bytes = 384
+task_capacity = 1
+event_capacity = 1
+deferred_capacity = 1
+
+[exports]
+temperature_controller_run_start = "run"

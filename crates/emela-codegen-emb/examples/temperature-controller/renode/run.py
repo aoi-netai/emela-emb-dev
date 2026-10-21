@@ -42,7 +42,9 @@ def signed_int(value):
     return (value + 2**31) % 2**32 - 2**31
 
 
-def check_observations(values, uart, continuous=False, verify_scenario=False):
+def check_observations(values, uart, continuous=False, verify_scenario=False,
+                       heater_mask=0x20, cooler_mask=0x40,
+                       gpio_output_key="gpioa_odr", sample_gpio_key="gpioa_actuators"):
     board = values["controller"]
     expected = {"failures": 0, "failure_line": 0, "overlap": 0}
     expected["completed"] = 0 if continuous else 1
@@ -65,7 +67,7 @@ def check_observations(values, uart, continuous=False, verify_scenario=False):
     for name, value in expected.items():
         if board[name] != value:
             raise ValueError(f"temperature_{name}: {board[name]} != {value}")
-    if not continuous and values["gpioa_odr"] & 0x60:
+    if not continuous and values[gpio_output_key] & (heater_mask | cooler_mask):
         raise ValueError("actuators were not both stopped after the finite demo")
     lines = uart.splitlines()
     if len(lines) != board["processed"]:
@@ -91,16 +93,16 @@ def check_observations(values, uart, continuous=False, verify_scenario=False):
                     raise ValueError(f"unexpected temperature at sample {index}: {match[2]}")
             elif temperature_c is not None:
                 raise ValueError(f"sample {index} did not report the sensor failure")
-        expected_mask = {"heating": 0x20, "cooling": 0x40}.get(match[3], 0)
+        expected_mask = {"heating": heater_mask, "cooling": cooler_mask}.get(match[3], 0)
         samples.append({"sample": index, "temperature_c": temperature_c,
-                        "mode": match[3], "gpioa_actuators": expected_mask})
+                        "mode": match[3], sample_gpio_key: expected_mask})
     if verify_scenario and values["input_history"] != TEMPERATURES:
         raise ValueError("observed sensor input sequence differs from the demo")
     history_count = len(values["gpio_history"])
     for slot in range(min(history_count, len(samples))):
         last = slot + (len(samples) - 1 - slot) // history_count * history_count
         sample = samples[last]
-        if values["gpio_history"][slot] != sample["gpioa_actuators"]:
+        if values["gpio_history"][slot] != sample[sample_gpio_key]:
             raise ValueError(f"sample {last + 1} GPIO disagrees with mode {sample['mode']}")
         raw = values["input_history"][slot]
         if sample["temperature_c"] is not None and not math.isclose(sample["temperature_c"], raw / 100, rel_tol=0, abs_tol=1e-12):

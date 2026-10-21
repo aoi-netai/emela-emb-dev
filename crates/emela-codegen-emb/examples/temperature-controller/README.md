@@ -1,6 +1,6 @@
 # 温度調節器
 
-温度を1秒ごとに読み、低温なら加熱、高温なら冷却するSTM32F446向けのexampleである。温度と運転状態はUARTへ表示し、加熱・冷却装置への指示を2本のGPIOで出力する。
+温度を1秒ごとに読み、低温なら加熱、高温なら冷却するexampleである。同じ`controller.emel`をSTM32F446とESP32-C3で使用する。温度と運転状態はUARTへ表示し、加熱・冷却装置への指示を2本のGPIOで出力する。
 
 温度だけで次の出力を決めると、境界付近で装置が頻繁に切り替わる。ここでは「現在の運転状態」を保持し、開始温度と停止温度を分ける。
 
@@ -32,9 +32,9 @@ cargo run --locked -q -p emela-cli -- build \
   --out-dir /tmp/emela-temperature-generated
 ```
 
-CLIはCとheaderの生成までを担当する。ARM向けのcompile・linkとRenode起動は、以下のボード用runnerで行う。
+CLIはCとheaderの生成までを担当する。各CPU向けのcompile・linkとRenode起動は、以下のボード用runnerで行う。上記の直接生成commandは既定のSTM32用`board.emel`を選ぶ。
 
-## Renodeで実行する
+## STM32F446／Renodeで実行する
 
 workspace rootから実行する。
 
@@ -60,6 +60,50 @@ Floatの小数部の表記は生成された変換処理に従う。全24行は�
 
 ARM GNU toolchain、STM32CubeF4、Renodeが必要である。この環境の既定の配置と`STM32_RENODE_ROOT`、`ARM_TOOLCHAIN_PATH`、`STM32CUBE_F4`、`RENODE`などの指定は[Renodeの準備](../../docs/renode.md#必要なもの)を参照する。outputには空のdirectoryか、このrunnerが作成したdirectoryを指定する。
 
+## ESP32-C3／Renodeで実行する
+
+[ESP32-C3の準備](../../docs/esp32c3-renode.md)に従い、Renodeと固定版model・toolchainを用意する。`RENODE`には実行fileを指定する。依存物は既定で`/tmp/emela-esp32c3-cache`に置き、`--cache`または`EMELA_ESP32C3_CACHE`で変更できる。
+
+```sh
+bash crates/emela-codegen-emb/examples/temperature-controller/renode-esp32c3/run.sh \
+  --verify-scenario --optimization O2 --output /tmp/emela-temperature-esp32c3-O2
+```
+
+runnerは`controller.emel`をbyte単位で同一のまま出力先の`source/`へcopyし、[ESP32-C3用board.emel](boards/esp32c3/board.emel)を組み合わせて通常のCLIへ渡す。[ESP32-C3用embedded.toml](boards/esp32c3/embedded.toml)を用い、生成Cを加工せずRISC-V向けにcompile・linkする。アプリの状態遷移・effect・標準handlerの実装はSTM32と同じである。CLIに`board`設定を追加する作業は今後の段階であり、現在はこのrunnerがボードを選ぶ。
+
+| 入出力 | ESP32-C3での割り当て |
+| --- | --- |
+| 加熱 | GPIO3、HighでON |
+| 冷却 | GPIO4、HighでON |
+| ログ | UART0、115200 baud相当、8N1、TX |
+| 周期 | SYSTIMER target0の実割り込みで1msを数え、1000msでtaskを通知 |
+| 温度 | STM32と同じ0.01℃単位の模擬入力系列 |
+
+GPIOは独自の小さなRenode modelから外部LED endpointへ接続する。実GPIO出力の履歴とUARTを照合し、加熱・冷却の同時ONを検査する。GPIOのINをOUTへcopyする上流modelの内部loopbackを、外部装置の動作として扱わない。UART0とSYSTIMER・interrupt matrixは固定版の外部modelを使う。
+
+このexampleの`board.c`が提供する範囲はmodelの機能全体とは異なる。GPIO設定は3・4の`OutputPushPull`／`NoPull`に限定し、readは出力latchを読み、write・toggleもこの2本を操作する。GPIO割り込みはboard defectで停止する。UART0は上記のconfigureとConsole出力を提供し、timeout付き`Uart.transmit`・`Uart.receive`は`PeripheralError(2)`で明示的に失敗する。`Clock.now`は1970-01-01T00:00:00Zを仮想の起点とするデモ用時刻で、実際の日時を示さない。温度調節器は`Clock.sleep`だけを使用する。
+
+`--continuous`で継続運転を26秒相当観察する。`--optimization O0`も利用できる。`report.json`、`metrics.json`、`resources.json`、`uart.log`、`firmware.elf`とmap、生成ソースを出力先に保存する。空のdirectoryか、このESP32-C3 runnerが作成したdirectoryだけを出力先にできる。別processと同時利用した出力先や、以前のUART logを成功として再利用しない。
+
+この構成はboot ROM・ESP-IDF・flashを使わないSRAM実行である。Renode monitorが実行前にentry PC、`MTVEC`とCLIC line1を設定し、その後は`SYSTIMER → interrupt matrix → CLIC → trap → ISR → task通知 → main scheduler`で進む。ISRを呼び出すPC hookはない。実機のflash起動・書き込みcommand・ESP-IDF統合はまだ提供しない。I²C・SPI・Wi-Fi・BLE等の動作確認もこのexampleには含めない。
+
+### ESP32-C3の資源
+
+既定の24sampleをRenode 1.16.1・Espressif GCC 14.2.0で観測した。単位はbyte。
+
+| 最適化 | code・定数のSRAM割当 | 静的data SRAM | stack予約 | SRAM割当合計 | 観測stack |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| O0 | 53,428 | 7,396 | 16,384 | 77,208 | 2,140 |
+| O2 | 33,748 | 7,404 | 16,384 | 57,536 | 1,400 |
+
+stack予約には256byteのguardを含み、実際に使用できるstackは16,128byteである。固定Emela heap 2,048byte、fiber・frame・task・event等のpoolは静的dataに含む。C libraryの`malloc`等はlinkされていない。heap使用ピークや終了後のheap残量はこのrunnerでは測定しない。
+
+modelの128 KiBはSRAM sliceの上限で、合計欄の使用量とは異なる。code用64 KiB・data用48 KiB・stack用16 KiBを同じ物理SRAMの非重複領域へ配置し、IRAM/DRAM aliasの二重計上がないことも確認する。codeもSRAMに置くため、STM32のFlash/RAM内訳とそのまま比較はできない。Flash使用量0はこのexampleがflash起動に対応したという意味ではない。
+
+有限運転では24行のUART・24sampleのGPIO履歴・23回の待機と23,000回のSYSTIMER割り込みが一致した。独立した外部pin遷移は26回で、両出力の同時ONはなく、終了時は両LEDがOFF、stack guardも正常だった。観測stackはこの入力系列での値であり、任意のプログラムの最大値やWCETではない。
+
+O2の継続運転は26秒相当で26sample、120秒相当で120sampleまで進行し、外部pin遷移・UART・入力系列の一致とguard正常を確認した。両方とも同じ固定容量で、観測stackは1,400byteのままだった。120sampleの観察も停止時は次の待機中であり、プログラムの正常終了やheap残量0を示すものではない。
+
 ## アプリケーションを読む
 
 ```text
@@ -68,8 +112,19 @@ temperature-controller/
 ├── board.emel
 ├── embedded.toml
 ├── README.md
-└── renode/
+├── boards/esp32c3/
+│   ├── board.emel
+│   └── embedded.toml
+├── renode/
+│   ├── board.c
+│   ├── run.sh
+│   └── run.py
+└── renode-esp32c3/
     ├── board.c
+    ├── startup.S
+    ├── firmware.ld
+    ├── validation_stack.c
+    ├── validation_stack.h
     ├── run.sh
     └── run.py
 ```
@@ -81,6 +136,8 @@ temperature-controller/
 | [embedded.toml](embedded.toml) | 固定容量、ボード用の公開名の設定。標準APIのadapter指定は不要 |
 | [renode/board.c](renode/board.c) | 模擬温度入力、GPIO、USART2、SysTick、schedulerの駆動 |
 | [renode/run.sh](renode/run.sh)、[run.py](renode/run.py) | ビルド、Renode起動、実行ログと資源の確認 |
+| [boards/esp32c3/board.emel](boards/esp32c3/board.emel) | ESP32-C3向けの論理ピン・UART0設定。アプリ共通のセンサeffectとlayer |
+| [renode-esp32c3/run.py](renode-esp32c3/run.py)、[board.c](renode-esp32c3/board.c) | 同一アプリのCLI生成、RISC-V build、GPIO・UART0・SYSTIMER・schedulerの接続と観測 |
 
 Emela側は、現在の状態と温度から次の状態を返す純粋関数と、`State`による状態の保持を組み合わせる。装置の起動・停止を表す`Thermostat` effectはアプリの運転状態を受け取り、`Actuators` handlerが標準`Gpio`の操作へ対応付ける。センサの読み取りは`board.emel`の`TemperatureSensor`、待機は標準`Clock`、ログは標準`Console`を使用する。
 

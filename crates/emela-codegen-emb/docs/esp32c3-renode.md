@@ -1,13 +1,13 @@
 # ESP32-C3のRenode導入
 
-STM32以外への移植を進めるため、RISC-VのESP32-C3を追加候補とし、まずエミュレーター実行環境を作る。今回の成果物は[独立したC probe・setup・runner](../examples/renode-esp32c3/README.md)である。
+STM32以外への移植を進めるため、RISC-VのESP32-C3を対象にする。[独立したC probe・setup・runner](../examples/renode-esp32c3/README.md)に加え、[共通Emela温度調節器](../examples/temperature-controller/README.md#esp32-c3renodeで実行する)をCLIから生成し、標準effect・schedulerを接続するrunnerを提供する。
 
-## 今回の境界
+## 基礎probeの境界
 
 - CLI、core、syntax、Flow IR、既存STM32 backendを変更しない。
 - Renode本体は既存installを使い、外部周辺機器モデルを外部cacheからロードする。
 - 既定probeはboot ROM・ESP-IDFを使わず、64 KiBのSRAM内でCPU・UART・GPIO register操作・実timer割り込みを確認する。
-- Emelaコード生成、scheduler、標準`Std.Embedded.*`のESP32-C3実装はまだ接続しない。
+- 独立probeはEmelaコード生成・schedulerを含まない。これらの接続は下記の温度調節器runnerで確認する。
 
 ## 構成
 
@@ -53,17 +53,58 @@ CLIC registerと`MTVEC`の初期設定はrunnerが行う。RenodeのCLICモデ�
 
 再現用のcommandは[example README](../examples/renode-esp32c3/README.md)を参照。実行時の完全なcommand、SHA256、観測値は各出力directoryの`report.json`・`metrics.json`に保存する。compile失敗・timeout・Renode command errorと、probeのwarning・未処理MMIOを失敗扱いにする。SDK Helloは記録済みRTC offset `0x80`のwarningだけを許容する。
 
+## 共通Emelaアプリの接続
+
+温度調節器の`controller.emel`をbyte単位で同一のまま使用し、`boards/esp32c3/board.emel`でGPIO3・GPIO4・UART0を選ぶ。runnerはこの2fileを出力先の`source/`へ置き、通常の`emela build --target c-embedded`で生成する。AST・Core・Flow IRや生成Cの書き換えは行わない。CLI、stdlib、codegenの変更もこの移植には不要だった。
+
+```sh
+bash crates/emela-codegen-emb/examples/temperature-controller/renode-esp32c3/run.sh \
+  --verify-scenario --optimization O2 --output /tmp/emela-temperature-esp32c3-O2
+```
+
+`RENODE`・`EMELA_ESP32C3_CACHE`や`--cache`・`--toolchain`の指定は基礎probeと同じ。`--optimization O0`、`--continuous`、`--seconds`で条件を変えられる。完全なcommandとsource/model SHA、UART、RAM上の観測値、section別の資源を出力先へ保存する。
+
+標準`BoardGpio`・`BoardUart`・`BoardClock`・`BoardConsole`の共通C ABIへC3固有のMMIO操作を接続する。模擬温度入力と独自sensor effectの接続だけはアプリ用board moduleに残す。1ms SYSTIMER割り込みは残り時間を更新し、1000回で外部task完了を通知する。Emelaの再開・状態遷移・文字列変換・UART出力はmainで行う。mainは待機中WFIで休止する。
+
+温度調節器用`board.c`のGPIOは3・4の`OutputPushPull`／`NoPull`に限定し、readは出力latch、write・toggleもこの2本を扱う。GPIO割り込みはboard defectで停止する。UART0は115200/8N1/TXのconfigureとConsole出力だけを提供し、timed transmit/receiveは`PeripheralError(2)`で失敗する。`Clock.now`はvirtual epochを1970-01-01T00:00:00Zとしたデモ時計で、実日時ではない。modelにregisterやendpointが存在することと、このboard実装がすべての標準操作を提供することを区別する。
+
+GPIOには[`EmelaESP32C3_GPIO`](../examples/renode-esp32c3/models/EmelaESP32C3_GPIO.cs)を追加した。software output routeと出力enableを検査し、GPIO3・4を外部LEDと独立observerへfanout接続する。observerは実endpointの変化だけを記録する。各UART行のmodeから期待したOFF→ON遷移を求め、全外部pin遷移、最終LED、register値、C側sample履歴を照合する。同時ONが一瞬でも生じた場合は失敗とする。
+
+温度調節器は128 KiBのSRAM sliceを使う。IRAM `0x40380000`からcode用64 KiB、同じSRAMのDRAM alias `0x3fc90000`からdata用48 KiB、`0x3fc9c000`からstack用16 KiBへ分け、物理offsetを重ねない。初期のcode32 KiB構成ではO0が20,660byte超過したため拡張した。stackの16 KiBには256byteのguardを含む。128 KiBはmodelが扱う上限であり、実際の消費量は`text`・静的data・stack予約の合計で別に示す。
+
+boot ROM・flash・ESP-IDFは使わない。CLIC/MTVECのmonitor初期化は基礎probeと同じで、実行中にPCを変更してISRを呼ぶhookはない。これはSRAM実行でのbackend/board境界の確認であり、実機のreset・flash起動・書き込みを確認したものではない。
+
+### 温度調節器の観測結果
+
+2026-10-21、Renode 1.16.1と固定Espressif GCC 14.2.0で、O0・O2とも24sample、UART 944byte、23回のtask通知、23,000回のtimer割り込みを確認した。外部GPIO observerの26遷移はsampleの運転状態から求めた順序と完全一致し、両LEDの最終状態はOFF、同時ON・board failureは0、stack guardは正常だった。
+
+| 温度調節器の資源（byte） | O0 | O2 |
+| --- | ---: | ---: |
+| code・定数のSRAM | 53,428 | 33,748 |
+| 静的data SRAM | 7,396 | 7,404 |
+| stack予約（guard 256byteを含む） | 16,384 | 16,384 |
+| SRAM割当合計 | 77,208 | 57,536 |
+| 観測stack | 2,140 | 1,400 |
+
+`size`の`bss`はO0が23,780byte、O2が23,788byteで、上記の静的dataとstack予約を合算した値である。固定heap 2,048byte、fiber 4、frame 8×payload 384byte、task 1、event 1の設定を維持した。O2の実体はheap storage 2,048byte、frame pool 3,200byte、fiber pool 240byte、task pool 28byte、event ring 16byteで、これらを静的dataへ含める。C libraryの動的allocatorはlinkされていない。heap使用ピーク・解放後残量は測定していない。
+
+128 KiBをすべて消費したという結果ではなく、IRAM/DRAM aliasを同じSRAMとして照合したALLOC sectionの合計が上表のSRAM割当合計である。stackの値は今回の入力系列での観測値であり、任意のアプリでの最大値や割り込み応答時間を保証しない。
+
+O2継続運転は26秒相当で26sample、120秒相当で120sampleまで確認し、いずれも固定heap・poolの設定と観測stack 1,400byteを維持した。UART・外部pin遷移・input/GPIO履歴は一致し、guard正常、failure・同時ONは0。停止時は次の待機中で`completed=0`である。mainの待機はMIEをmaskしたevent確認とWFIを組み合わせ、`WfiAsNop`等でbusy loopへ置き換えていない。
+
+共有の期待値checkerはpin maskと出力名を引数化し、STM32では従来値を既定にした。同じ変更後にSTM32F446のO2温度調節器と旧ESP32-C3の独立O2 probeを再実行し、従来の観測条件が通ることも確認した。
+
 ## 制限と次の作業
 
 | 項目 | 今回の状態 | 次の作業 |
 | --- | --- | --- |
-| RISC-V CPU / UART0 / SYSTIMER IRQ | 独立firmwareで観測する | Emela runtimeを載せて同じ経路を再確認 |
-| GPIO | MMIOと内部loopbackのみ。上流modelに外部pin endpointがない | 外部pin modelまたは明示的なadapterを設計し、温度調節器の出力を検査 |
+| RISC-V CPU / UART0 / SYSTIMER IRQ | 独立probeと共通Emela温度調節器で観測する | 他のアプリ・割り込み条件の追加 |
+| GPIO | 独自modelの外部LED・observerで温度調節器の出力を検査 | 他pin・入力・GPIO割り込み等を必要に応じて追加 |
 | I²C / 汎用SPI | probeへmodelを含めない。上流はplaceholder | model・実driverの対応範囲を固めてから追加 |
 | Wi-Fi / BLE / ADC / DMA等 | 今回の対象外 | 必要な機能ごとに実装・検証 |
 | ESP-IDF SDK Hello | 別caseで上流prebuiltを実行 | 固定PC hookやRAM拡張を量産用board構成へ持ち込まない |
-| CLIのboard選択 | 今回変更なし | ボード支援パッケージのbuild/書き込み契約を設計 |
+| CLIのboard選択 | 温度調節器runnerでboard moduleとconfigを選ぶ | configの`board`によるパッケージ選択・build/書き込み契約を設計 |
 
 SDK HelloはROM entryから上流の固定PC hookでfirmwareへ移り、固定interrupt dispatch hookを使う。480 KiB RAMと23 placeholderを含むため、通常probeと分ける。SDK Helloが起動しても、未実装の周辺機器が動く根拠にはしない。
 
-次の移植では、[共通周辺機器ABI](embedded-peripherals.md)に対するESP32-C3 board実装を追加し、同じEmela温度制御ロジックを使う。board選択・配線設定・SDK/toolchainによる最終buildを切り分け、coreやFlow IRの変更が必要かを実際の生成Cで判断する。
+次はこの[共通周辺機器ABI](embedded-peripherals.md)への接続をボード支援パッケージに整理し、board選択・配線設定・toolchainによる最終build・flash書き込みの契約を固める。I²C・SPI等はmodelとdriverの双方が動く根拠を揃えてから対応を広げる。
