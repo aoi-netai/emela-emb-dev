@@ -17,6 +17,7 @@ mod fiber;
 #[path = "../examples/support/gc_anchor.rs"]
 mod gc_anchor;
 mod owned;
+mod release_0_24;
 mod string_append;
 mod string_comparison;
 mod suspend;

@@ -6,6 +6,8 @@ pub(super) struct Plan {
     pub(super) show: bool,
     pub(super) eq: bool,
     types: Vec<TypeId>,
+    show_types: HashSet<TypeId>,
+    eq_types: HashSet<TypeId>,
 }
 
 impl Plan {
@@ -30,7 +32,7 @@ impl Plan {
                 && !f.fails
                 && f.body.is_none()
                 && !f.exported
-                && crate::derived::showable(&flow.core, ty)
+                && crate::derived::supported(&flow.core, ty, kind)
                 && match kind {
                     DeriveKind::ErrorName => false,
                     DeriveKind::Show => f.params.len() == 1 && f.ret == TypeId::STRING,
@@ -47,9 +49,10 @@ impl Plan {
             show |= kind == DeriveKind::Show;
             eq |= kind == DeriveKind::Eq;
             let _ = id;
-            roots.push(ty);
+            roots.push((kind, ty));
         }
-        let mut seen = HashSet::new();
+        let mut show_types = HashSet::new();
+        let mut eq_types = HashSet::new();
         fn collect(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) {
             if !seen.insert(ty) {
                 return;
@@ -75,28 +78,48 @@ impl Plan {
                 }
             }
         }
-        for ty in roots {
-            collect(layouts, ty, &mut seen);
+        for (kind, ty) in roots {
+            let seen = if kind == DeriveKind::Show {
+                &mut show_types
+            } else {
+                &mut eq_types
+            };
+            collect(layouts, ty, seen);
         }
-        if show || eq {
+        for (kind, enabled) in [(DeriveKind::Show, show), (DeriveKind::Eq, eq)] {
+            if !enabled {
+                continue;
+            }
+            let seen = if kind == DeriveKind::Show {
+                &mut show_types
+            } else {
+                &mut eq_types
+            };
             for &ty in &layouts.recursive_box_types {
-                if crate::derived::showable(&flow.core, ty) {
-                    collect(layouts, ty, &mut seen);
+                if crate::derived::supported(&flow.core, ty, kind) {
+                    collect(layouts, ty, seen);
                 }
             }
         }
-        let mut types: Vec<_> = seen
-            .into_iter()
+        let mut types: Vec<_> = show_types
+            .union(&eq_types)
+            .copied()
             .filter(|&t| layouts.type_repr(t) != Repr::Void)
             .collect();
         types.sort_by_key(|t| t.index());
-        Ok(Self { show, eq, types })
+        Ok(Self {
+            show,
+            eq,
+            types,
+            show_types,
+            eq_types,
+        })
     }
 
     pub(super) fn needs_float(&self, layouts: &TypeLayouts<'_>) -> bool {
         self.show
             && self
-                .types
+                .show_types
                 .iter()
                 .any(|&t| matches!(layouts.types[t], Type::Float))
     }
@@ -117,7 +140,7 @@ impl Plan {
             writer.end_block();
         }
         for &ty in &self.types {
-            if self.eq {
+            if self.eq_types.contains(&ty) {
                 writer.line(&format!(
                     "static inline int32_t emela_derived_eq_{}({} a, {} b);",
                     ty.index(),
@@ -125,7 +148,7 @@ impl Plan {
                     layouts.c_type(ty)
                 ));
             }
-            if self.show {
+            if self.show_types.contains(&ty) {
                 writer.line(&format!(
                     "static inline void emela_derived_show_{}({} value, emela_derived_writer *w);",
                     ty.index(),
@@ -142,10 +165,10 @@ impl Plan {
             }
         }
         for &ty in &self.types {
-            if self.eq {
+            if self.eq_types.contains(&ty) {
                 self.emit_type(layouts, ty, DeriveKind::Eq, writer);
             }
-            if self.show {
+            if self.show_types.contains(&ty) {
                 self.emit_type(layouts, ty, DeriveKind::Show, writer);
             }
         }
@@ -169,7 +192,8 @@ impl Plan {
         }
         w.begin_block("switch (kind)");
         for &ty in &layouts.recursive_box_types {
-            if !self.types.contains(&ty) {
+            let types = if eq { &self.eq_types } else { &self.show_types };
+            if !types.contains(&ty) {
                 continue;
             }
             w.line(&format!(
@@ -214,6 +238,7 @@ impl Plan {
             "(void)value; (void)w;"
         });
         match &l.types[ty] {
+            Type::Fn(_) if !eq => text(w, "<fn>"),
             Type::Int | Type::Int64 | Type::Float | Type::Bool if eq => w.line("return a == b;"),
             Type::String if eq => {
                 w.line("if (a.length != b.length) return INT32_C(0);");
@@ -369,6 +394,8 @@ impl Plan {
         w.end_block();
     }
 
+    // Each display field carries both operands and their ownership metadata.
+    #[allow(clippy::too_many_arguments)]
     fn field(
         &self,
         l: &TypeLayouts<'_>,

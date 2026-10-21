@@ -71,10 +71,6 @@ impl Deriver for BackendDeriver {
             }],
         }))
     }
-
-    fn showable(&mut self, core: &Module, ty: TypeId) -> Option<bool> {
-        Some(showable(core, ty))
-    }
 }
 
 pub(crate) fn kind(function: &Function) -> Option<DeriveKind> {
@@ -86,12 +82,16 @@ pub(crate) fn kind(function: &Function) -> Option<DeriveKind> {
     }
 }
 
-pub(crate) fn showable(core: &Module, ty: TypeId) -> bool {
+pub(crate) fn supported(core: &Module, ty: TypeId, kind: DeriveKind) -> bool {
+    if kind == DeriveKind::ErrorName {
+        return false;
+    }
     fn go(
         core: &Module,
         ty: TypeId,
         env: &[bool],
         seen: &mut HashSet<(EnumId, Vec<bool>)>,
+        functions: bool,
     ) -> bool {
         match core.ty(ty) {
             Type::Int
@@ -101,11 +101,16 @@ pub(crate) fn showable(core: &Module, ty: TypeId) -> bool {
             | Type::String
             | Type::Unit
             | Type::Never => true,
+            // Debug display never inspects a closure or changes its ownership.
+            Type::Fn(_) => functions,
             Type::Param(i) => env.get(*i).copied().unwrap_or(false),
-            Type::List(t) => go(core, *t, env, seen),
-            Type::Tuple(ts) => ts.iter().all(|&t| go(core, t, env, seen)),
+            Type::List(t) => go(core, *t, env, seen, functions),
+            Type::Tuple(ts) => ts.iter().all(|&t| go(core, t, env, seen, functions)),
             Type::Enum(id, args) => {
-                let flags: Vec<_> = args.iter().map(|&t| go(core, t, env, seen)).collect();
+                let flags: Vec<_> = args
+                    .iter()
+                    .map(|&t| go(core, t, env, seen, functions))
+                    .collect();
                 let key = (*id, flags.clone());
                 if !seen.insert(key.clone()) {
                     return true;
@@ -114,12 +119,12 @@ pub(crate) fn showable(core: &Module, ty: TypeId) -> bool {
                     .variants
                     .iter()
                     .flat_map(|v| &v.tys)
-                    .all(|&t| go(core, t, &flags, seen));
+                    .all(|&t| go(core, t, &flags, seen, functions));
                 seen.remove(&key);
                 result
             }
             _ => false,
         }
     }
-    go(core, ty, &[], &mut HashSet::new())
+    go(core, ty, &[], &mut HashSet::new(), kind == DeriveKind::Show)
 }
