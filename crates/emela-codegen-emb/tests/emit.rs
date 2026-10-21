@@ -544,29 +544,54 @@ fn compiles_if_statements_and_boolean_short_circuiting() {
 fn embedded_start_runs_board_hooks_around_emela_main() {
     let mut core = emela_core::Module::new();
     let main = core.declare("main", true);
-    let marker = core.declare("mark_main", false);
-    core.define_external(
-        marker,
-        Vec::new(),
-        TypeId::UNIT,
-        emela_core::External {
-            bindings: vec![emela_core::ExternalBinding {
-                target: "c".to_owned(),
-                host: emela_core::HostRef::Global("mark_main".to_owned()),
-            }],
-        },
-    );
     core.define(
         main,
         Vec::new(),
         TypeId::UNIT,
-        emela_core::build::call(marker, Vec::new()),
+        emela_core::Expr::Lit(emela_core::Lit::Unit),
     );
 
     let output = compile(&core, &Options::default()).expect("compile embedded entry");
+    let source = output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated C source");
+    assert!(
+        source.contents.contains(
+            r#"void emela_embedded_start(void) {
+  emela_board_init();
+  (void)emela_export_main_0();
+  for (;;) {
+    emela_board_idle();
+  }
+}"#
+        ),
+        "the entry must initialize, call main once, and then idle repeatedly"
+    );
     compile_and_run(
         output,
-        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic int init_count;\nstatic int main_count;\nstatic int idle_count;\nvoid mark_main(void) { main_count += 1; }\nvoid emela_board_init(void) { init_count += 1; }\nvoid emela_board_idle(void) { if (init_count == 1 && main_count == 1) { if (++idle_count == 2) exit(0); return; } exit(1); }\nint main(void) { emela_embedded_start(); return 1; }\n",
+        r#"#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+
+static int init_count;
+static int idle_count;
+
+void emela_board_init(void) {
+  if (++init_count != 1 || idle_count != 0) exit(1);
+}
+
+void emela_board_idle(void) {
+  if (init_count != 1) exit(1);
+  if (++idle_count == 2) exit(0);
+}
+
+int main(void) {
+  emela_embedded_start();
+  return 1;
+}
+"#,
     );
 }
 

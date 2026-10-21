@@ -202,21 +202,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, _options: &Options) -> Result<Outpu
         let name = &names[&id];
         source.begin_block(&signature(flow, function, name, !function.exported));
         emit_local_declarations(function, &mut source);
-        let mut loops = Vec::new();
-        let mut blocks = Vec::new();
-        let mut next_temp = 0;
-        let mut next_label = 0;
+        let mut context = EmitContext {
+            function,
+            writer: &mut source,
+            names: &names,
+            loops: Vec::new(),
+            blocks: Vec::new(),
+            next_temp: 0,
+            next_label: 0,
+        };
         for &statement in &sequence.stmts {
-            emit_statement(
-                function,
-                &function.stmts[statement],
-                &mut source,
-                &names,
-                &mut loops,
-                &mut blocks,
-                &mut next_temp,
-                &mut next_label,
-            )?;
+            emit_statement(&mut context, &function.stmts[statement])?;
         }
         emit_return(flow, function, &sequence.term, &mut source)?;
         source.end_block();
@@ -260,16 +256,18 @@ fn emit_local_declarations(function: &Function, writer: &mut Writer) {
     }
 }
 
-fn emit_statement(
-    function: &Function,
-    statement: &Stmt,
-    writer: &mut Writer,
-    names: &HashMap<FnId, String>,
-    loops: &mut Vec<Vec<VarId>>,
-    blocks: &mut Vec<BlockTarget>,
-    next_temp: &mut usize,
-    next_label: &mut usize,
-) -> Result<(), Vec<Error>> {
+struct EmitContext<'a> {
+    function: &'a Function,
+    writer: &'a mut Writer,
+    names: &'a HashMap<FnId, String>,
+    loops: Vec<Vec<VarId>>,
+    blocks: Vec<BlockTarget>,
+    next_temp: usize,
+    next_label: usize,
+}
+
+fn emit_statement(context: &mut EmitContext<'_>, statement: &Stmt) -> Result<(), Vec<Error>> {
+    let function = context.function;
     match statement {
         Stmt::Let {
             dst,
@@ -293,7 +291,7 @@ fn emit_statement(
                     })?;
                     match (dst, expression) {
                         (Some(dst), Some(expression)) => {
-                            writer.assign(&variable_name(*dst), &expression);
+                            context.writer.assign(&variable_name(*dst), &expression);
                         }
                         (None, None) => {}
                         (Some(_), None) => {
@@ -312,7 +310,7 @@ fn emit_statement(
                     let expression = primitive_expression(*op, *ty, args)
                         .map_err(|variant| unsupported(&function.name, variant))?;
                     if let Some(dst) = dst {
-                        writer.assign(&variable_name(*dst), &expression);
+                        context.writer.assign(&variable_name(*dst), &expression);
                     }
                 }
                 Value::Call {
@@ -321,7 +319,8 @@ fn emit_statement(
                     suspends: false,
                     on_fail: None,
                 } => {
-                    let name = names
+                    let name = context
+                        .names
                         .get(id)
                         .ok_or_else(|| unsupported(&function.name, "call to missing function"))?;
                     let args = args
@@ -331,9 +330,9 @@ fn emit_statement(
                         .map_err(|variant| unsupported(&function.name, variant))?;
                     let expression = format!("{name}({})", args.join(", "));
                     if let Some(dst) = dst {
-                        writer.assign(&variable_name(*dst), &expression);
+                        context.writer.assign(&variable_name(*dst), &expression);
                     } else {
-                        writer.line(&format!("{expression};"));
+                        context.writer.line(&format!("{expression};"));
                     }
                 }
                 Value::Call { .. } => {
@@ -354,16 +353,14 @@ fn emit_statement(
         } => {
             let condition =
                 operand_expression(cond).map_err(|variant| unsupported(&function.name, variant))?;
-            writer.begin_block(&format!("if (({condition}) != INT32_C(0))"));
-            emit_compound_sequence(
-                function, *then, *dst, writer, names, loops, blocks, next_temp, next_label,
-            )?;
-            writer.end_block();
-            writer.begin_block("else");
-            emit_compound_sequence(
-                function, *else_, *dst, writer, names, loops, blocks, next_temp, next_label,
-            )?;
-            writer.end_block();
+            context
+                .writer
+                .begin_block(&format!("if (({condition}) != INT32_C(0))"));
+            emit_compound_sequence(context, *then, *dst)?;
+            context.writer.end_block();
+            context.writer.begin_block("else");
+            emit_compound_sequence(context, *else_, *dst)?;
+            context.writer.end_block();
             Ok(())
         }
         Stmt::Switch {
@@ -371,35 +368,28 @@ fn emit_statement(
             on,
             cases,
             default,
-        } => emit_switch(
-            function, *dst, *on, cases, *default, writer, names, loops, blocks, next_temp,
-            next_label,
-        ),
+        } => emit_switch(context, *dst, *on, cases, *default),
         Stmt::Loop {
             dst,
             vars,
             inits,
             body,
-        } => emit_loop(
-            function, *dst, vars, inits, *body, writer, names, loops, blocks, next_temp, next_label,
-        ),
+        } => emit_loop(context, *dst, vars, inits, *body),
         Stmt::Block { dst, label, body } => {
-            let exit = format!("emela_block_exit_{}", *next_label);
-            *next_label += 1;
-            writer.begin_block("");
-            blocks.push(BlockTarget {
+            let exit = format!("emela_block_exit_{}", context.next_label);
+            context.next_label += 1;
+            context.writer.begin_block("");
+            context.blocks.push(BlockTarget {
                 label: *label,
                 dst: *dst,
                 exit: exit.clone(),
                 used: false,
             });
-            let result = emit_compound_sequence(
-                function, *body, *dst, writer, names, loops, blocks, next_temp, next_label,
-            );
-            let block = blocks.pop().expect("block target stack underflow");
-            writer.end_block();
+            let result = emit_compound_sequence(context, *body, *dst);
+            let block = context.blocks.pop().expect("block target stack underflow");
+            context.writer.end_block();
             if block.used {
-                writer.line(&format!("{exit}: ;"));
+                context.writer.line(&format!("{exit}: ;"));
             }
             result
         }
@@ -408,18 +398,13 @@ fn emit_statement(
 }
 
 fn emit_switch(
-    function: &Function,
+    context: &mut EmitContext<'_>,
     dst: Option<VarId>,
     on: SwitchOn,
     cases: &[emela_lir::Case],
     default: Option<emela_lir::SeqId>,
-    writer: &mut Writer,
-    names: &HashMap<FnId, String>,
-    loops: &mut Vec<Vec<VarId>>,
-    blocks: &mut Vec<BlockTarget>,
-    next_temp: &mut usize,
-    next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
+    let function = context.function;
     let SwitchOn::Lit(value) = on else {
         return Err(unsupported(&function.name, "enum tag Switch"));
     };
@@ -431,7 +416,7 @@ fn emit_switch(
         ));
     }
     let scrutinee = variable_name(value);
-    writer.begin_block(&format!("switch ({scrutinee})"));
+    context.writer.begin_block(&format!("switch ({scrutinee})"));
     for case in cases {
         let label = match (&case.key, on) {
             (CaseKey::Lit(Const::Int(value)), SwitchOn::Lit(scrutinee))
@@ -451,23 +436,19 @@ fn emit_switch(
                 ));
             }
         };
-        writer.begin_block(&format!("case {label}:"));
-        emit_compound_sequence(
-            function, case.body, dst, writer, names, loops, blocks, next_temp, next_label,
-        )?;
-        writer.line("break;");
-        writer.end_block();
+        context.writer.begin_block(&format!("case {label}:"));
+        emit_compound_sequence(context, case.body, dst)?;
+        context.writer.line("break;");
+        context.writer.end_block();
     }
 
     if let Some(default) = default {
-        writer.begin_block("default:");
-        emit_compound_sequence(
-            function, default, dst, writer, names, loops, blocks, next_temp, next_label,
-        )?;
-        writer.line("break;");
-        writer.end_block();
+        context.writer.begin_block("default:");
+        emit_compound_sequence(context, default, dst)?;
+        context.writer.line("break;");
+        context.writer.end_block();
     }
-    writer.end_block();
+    context.writer.end_block();
     Ok(())
 }
 
@@ -479,18 +460,13 @@ fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
 }
 
 fn emit_loop(
-    function: &Function,
+    context: &mut EmitContext<'_>,
     dst: Option<VarId>,
     vars: &[VarId],
     inits: &[Operand],
     body: emela_lir::SeqId,
-    writer: &mut Writer,
-    names: &HashMap<FnId, String>,
-    loops: &mut Vec<Vec<VarId>>,
-    blocks: &mut Vec<BlockTarget>,
-    next_temp: &mut usize,
-    next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
+    let function = context.function;
     if vars.len() != inits.len() {
         return Err(invalid_flow_ir(
             &function.name,
@@ -500,50 +476,34 @@ fn emit_loop(
     for (&variable, initial) in vars.iter().zip(inits) {
         let expression =
             operand_expression(initial).map_err(|variant| unsupported(&function.name, variant))?;
-        writer.assign(&variable_name(variable), &expression);
+        context.writer.assign(&variable_name(variable), &expression);
     }
-    writer.begin_block("for (;;)");
-    loops.push(vars.to_vec());
-    let result = emit_compound_sequence(
-        function, body, dst, writer, names, loops, blocks, next_temp, next_label,
-    );
-    loops.pop();
+    context.writer.begin_block("for (;;)");
+    context.loops.push(vars.to_vec());
+    let result = emit_compound_sequence(context, body, dst);
+    context.loops.pop();
     result?;
-    writer.line("break;");
-    writer.end_block();
+    context.writer.line("break;");
+    context.writer.end_block();
     Ok(())
 }
 
 fn emit_compound_sequence(
-    function: &Function,
+    context: &mut EmitContext<'_>,
     sequence: emela_lir::SeqId,
     dst: Option<VarId>,
-    writer: &mut Writer,
-    names: &HashMap<FnId, String>,
-    loops: &mut Vec<Vec<VarId>>,
-    blocks: &mut Vec<BlockTarget>,
-    next_temp: &mut usize,
-    next_label: &mut usize,
 ) -> Result<(), Vec<Error>> {
+    let function = context.function;
     let sequence = &function.seqs[sequence];
     for &statement in &sequence.stmts {
-        emit_statement(
-            function,
-            &function.stmts[statement],
-            writer,
-            names,
-            loops,
-            blocks,
-            next_temp,
-            next_label,
-        )?;
+        emit_statement(context, &function.stmts[statement])?;
     }
     match &sequence.term {
         Term::Yield(value) => match (dst, value) {
             (Some(dst), Some(value)) => {
                 let expression = operand_expression(value)
                     .map_err(|variant| unsupported(&function.name, variant))?;
-                writer.assign(&variable_name(dst), &expression);
+                context.writer.assign(&variable_name(dst), &expression);
             }
             (Some(_), None) => {
                 return Err(invalid_flow_ir(
@@ -553,22 +513,31 @@ fn emit_compound_sequence(
             }
             (None, _) => {}
         },
-        Term::Recur(args) => emit_recur(function, args, loops, writer, next_temp)?,
+        Term::Recur(args) => emit_recur(
+            function,
+            args,
+            &context.loops,
+            context.writer,
+            &mut context.next_temp,
+        )?,
         Term::Break { label, value } => {
-            let Some(target_index) = blocks.iter().rposition(|target| target.label == *label)
+            let Some(target_index) = context
+                .blocks
+                .iter()
+                .rposition(|target| target.label == *label)
             else {
                 return Err(invalid_flow_ir(
                     &function.name,
                     "Break target is not an enclosing emitted block",
                 ));
             };
-            let target_dst = blocks[target_index].dst;
-            let exit = blocks[target_index].exit.clone();
+            let target_dst = context.blocks[target_index].dst;
+            let exit = context.blocks[target_index].exit.clone();
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
                     let expression = operand_expression(value)
                         .map_err(|variant| unsupported(&function.name, variant))?;
-                    writer.assign(&variable_name(dst), &expression);
+                    context.writer.assign(&variable_name(dst), &expression);
                 }
                 (Some(_), None) => {
                     return Err(invalid_flow_ir(
@@ -578,8 +547,8 @@ fn emit_compound_sequence(
                 }
                 (None, _) => {}
             }
-            blocks[target_index].used = true;
-            writer.line(&format!("goto {exit};"));
+            context.blocks[target_index].used = true;
+            context.writer.line(&format!("goto {exit};"));
         }
         other => return Err(unsupported(&function.name, term_name(other))),
     }
