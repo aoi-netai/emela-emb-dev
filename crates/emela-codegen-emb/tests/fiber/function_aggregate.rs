@@ -441,7 +441,7 @@ int main(void) {{
 }
 
 #[test]
-fn growing_generic_recursion_through_a_function_signature_is_diagnosed() {
+fn growing_generic_recursion_through_a_function_signature_uses_owned_lazy_payloads() {
     let mut core = emela_core::Module::new();
     let id = core.add_enum(EnumDef {
         name: "Grow".into(),
@@ -454,21 +454,111 @@ fn growing_generic_recursion_through_a_function_signature_is_diagnosed() {
     let list = core.types.intern(Type::List(param));
     let larger = core.enum_type(id, vec![list]);
     let callback = core.types.intern(Type::Fn(FnType::pure(vec![], larger)));
-    core.enums[id].variants = vec![VariantDef::positional("Step", vec![callback])];
+    core.enums[id].variants = vec![
+        VariantDef::positional("Step", vec![callback]),
+        VariantDef::unit("End"),
+    ];
     let node = core.enum_type(id, vec![TypeId::INT]);
+    let callback = core.types.subst(callback, &[TypeId::INT]);
+    let Type::Fn(ft) = core.types[callback].clone() else {
+        unreachable!()
+    };
+    let larger = ft.ret;
     let mut b = FnBuilder::new(&core, "work");
     b.set_exported().set_ret(node);
     let value = b.param("value", node);
     b.term(Term::Return(Some(value.into())));
     let f = b.finish();
     let mut flow = Module::new(core);
-    flow.add(f);
-    let errors = compile_flow(&flow, &Options::default()).unwrap_err();
-    assert!(errors.iter().any(|e| {
-        e.kind == ErrorKind::Unsupported
-            && e.message
-                .contains("recursive enum type that changes its type arguments")
-    }));
+    let identity = flow.add(f);
+    let mut b = FnBuilder::new(&flow.core, "stop");
+    b.set_ret(larger);
+    let end = b.assign(
+        "end",
+        larger,
+        Value::Make {
+            ctor: emela_core::CtorRef {
+                enum_id: id,
+                variant: 1,
+            },
+            args: vec![],
+        },
+    );
+    b.term(Term::Return(Some(end.into())));
+    let stop = flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "run");
+    b.set_exported().set_ret(TypeId::INT);
+    let f = b.assign("f", callback, Value::FnRef(stop));
+    let node_ty = node;
+    let node = b.assign(
+        "node",
+        node_ty,
+        Value::Make {
+            ctor: emela_core::CtorRef {
+                enum_id: id,
+                variant: 0,
+            },
+            args: vec![f.into()],
+        },
+    );
+    let copy = b.assign(
+        "copy",
+        node_ty,
+        Value::Call {
+            callee: Callee::Direct(identity),
+            args: vec![node.into()],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    let f = b.assign(
+        "read",
+        callback,
+        Value::Field {
+            base: copy,
+            ctor: emela_core::CtorRef {
+                enum_id: id,
+                variant: 0,
+            },
+            index: 0,
+        },
+    );
+    let end = b.assign(
+        "end",
+        larger,
+        Value::Call {
+            callee: Callee::Indirect(f),
+            args: vec![],
+            suspends: false,
+            on_fail: None,
+        },
+    );
+    let tag = b.assign("tag", TypeId::INT, Value::Tag(end));
+    let answer = b.assign(
+        "answer",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![tag.into(), Const::Int(41).into()],
+        },
+    );
+    b.term(Term::Return(Some(answer.into())));
+    flow.add(b.finish());
+    let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(4096)).unwrap();
+    notes::add_heap_check(&mut output);
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_empty(void);
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*m,uint16_t n){(void)k;(void)m;(void)n;abort();}
+int main(void){for(unsigned i=0;i<1000;i++){assert(emela_export_run_2()==42);assert(test_heap_empty());}return 0;}
+"#,
+    );
 }
 
 #[test]

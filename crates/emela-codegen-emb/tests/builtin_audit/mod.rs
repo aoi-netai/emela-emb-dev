@@ -1,5 +1,7 @@
 use super::*;
 
+mod retire;
+
 fn discarded_builtin(op: Builtin, input: TypeId) -> Module {
     let mut flow = Module::new(emela_core::Module::new());
     let mut b = FnBuilder::new(&flow.core, "discard");
@@ -215,4 +217,89 @@ int main(void) {{ for(int i=0;i<1000;i++) emela_export_discard_0({source}); }}
             ),
         );
     }
+}
+
+#[test]
+fn discarded_owned_results_do_not_survive_a_following_suspension() {
+    let mut flow = Module::new(emela_core::Module::new());
+    let mut b = FnBuilder::new(&flow.core, "wait");
+    b.set_suspends();
+    let wait = flow.add(b.finish_external(External {
+        bindings: vec![ExternalBinding {
+            target: "c".into(),
+            host: HostRef::Global("host_wait".into()),
+        }],
+    }));
+    let mut b = FnBuilder::new(&flow.core, "work");
+    b.set_suspends().set_exported();
+    let input = b.param("input", TypeId::STRING);
+    b.let_(
+        None,
+        Value::Builtin {
+            op: Builtin::StringChars,
+            args: vec![input.into()],
+        },
+    );
+    b.let_(
+        None,
+        Value::Builtin {
+            op: Builtin::StringAppend,
+            args: vec![input.into(), Const::String("!".into()).into()],
+        },
+    );
+    b.let_(
+        None,
+        Value::Call {
+            callee: Callee::Direct(wait),
+            args: vec![],
+            suspends: true,
+            on_fail: None,
+        },
+    );
+    b.term(Term::Return(None));
+    flow.add(b.finish());
+    let mut output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_frame_bytes(1024)
+            .with_task_adapter("host_wait", "board_wait_start"),
+    )
+    .unwrap();
+    output
+        .files
+        .iter_mut()
+        .find(|f| f.path == "emela_embedded.c")
+        .unwrap()
+        .contents
+        .push_str(
+            r#"
+int test_heap_used_blocks(void) {
+  int used=0;if(!emela_heap_initialized)return 0;
+  for(unsigned char*p=emela_heap_storage;p<emela_heap_end();) {
+    emela_heap_block*b=(emela_heap_block*)(void*)p;
+    used+=!b->is_free;p+=b->size;
+  }return used;
+}
+"#,
+        );
+    compile_and_run(
+        output,
+        r#"
+#include <assert.h>
+#include <stdlib.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+int test_heap_used_blocks(void);static EmelaTask task;
+uint32_t emela_board_event_lock(void) { return 0; }
+void emela_board_event_unlock(uint32_t p) { (void)p; }
+void board_wait_start(EmelaTask t) { task=t; }
+_Noreturn void emela_board_defect(EmelaDefectKind k,const char*m,uint16_t n) { (void)k;(void)m;(void)n;abort(); }
+int main(void) { for(int i=0;i<1000;i++) {
+  EmelaFiber f=emela_export_work_1_start((EmelaString){.data="abc",.length=3});while(emela_scheduler_run(1)) {}
+  assert(!emela_fiber_done(f)&&test_heap_used_blocks()==1);assert(emela_task_complete_unit(task));
+  while(!emela_fiber_done(f)) { assert(emela_scheduler_run(1)); }emela_fiber_release(f);assert(!test_heap_used_blocks());
+} }
+"#,
+    );
 }

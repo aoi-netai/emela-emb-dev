@@ -21,6 +21,7 @@ struct BodySlice {
 pub(crate) struct ClosureLowering {
     pub(crate) module: Option<Module>,
     pub(crate) functions: HashMap<FnId, usize>,
+    pub(crate) families: HashMap<FnId, (FnId, usize)>,
     pub(crate) environments: Vec<ClosureEnvironment>,
 }
 
@@ -42,6 +43,7 @@ pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
     let mut lowered = flow.clone();
     let mut result = ClosureLowering::default();
     let mut next_name = 0usize;
+    let mut parent_ordinals: HashMap<FnId, usize> = HashMap::new();
     loop {
         let reachable = crate::emit::runtime_reachable(&lowered);
         let next = lowered.functions.iter().find_map(|(id, function)| {
@@ -104,6 +106,9 @@ pub(crate) fn lower(flow: &Module) -> Result<ClosureLowering, Vec<Error>> {
         lifted.fails = function_type.fails;
         lifted.suspends = closure.suspends;
         let target = lowered.add(lifted);
+        let ordinal = parent_ordinals.entry(parent).or_default();
+        result.families.insert(target, (parent, *ordinal));
+        *ordinal += 1;
         if static_captures.is_none() {
             let mut bindings = Vec::with_capacity(closure.captures.len());
             for &source in &closure.captures {
@@ -284,7 +289,7 @@ fn visit_sequence(
     function: &Function,
     sequence: SeqId,
     slice: &mut BodySlice,
-    owner: &str,
+    _owner: &str,
 ) -> Result<(), Vec<Error>> {
     if !slice.sequences.insert(sequence) {
         return Ok(());
@@ -307,13 +312,13 @@ fn visit_sequence(
             } => {
                 if let Value::Closure(closure) = value {
                     slice.variables.extend(closure.params.iter().copied());
-                    visit_sequence(function, closure.body, slice, owner)?;
+                    visit_sequence(function, closure.body, slice, _owner)?;
                 }
                 value.for_each_var(|variable| {
                     slice.variables.insert(variable);
                 });
                 if let Some(sequence) = on_defect {
-                    visit_sequence(function, *sequence, slice, owner)?;
+                    visit_sequence(function, *sequence, slice, _owner)?;
                 }
                 if let Some(Suspend { saved, .. }) = on_suspend {
                     slice.variables.extend(saved.iter().copied());
@@ -329,7 +334,7 @@ fn visit_sequence(
                         }
                         OnFail::Handle { error, body } => {
                             slice.variables.insert(*error);
-                            visit_sequence(function, *body, slice, owner)?;
+                            visit_sequence(function, *body, slice, _owner)?;
                         }
                         OnFail::Propagate => {}
                     }
@@ -339,8 +344,8 @@ fn visit_sequence(
                 cond, then, else_, ..
             } => {
                 add_operand(slice, cond);
-                visit_sequence(function, *then, slice, owner)?;
-                visit_sequence(function, *else_, slice, owner)?;
+                visit_sequence(function, *then, slice, _owner)?;
+                visit_sequence(function, *else_, slice, _owner)?;
             }
             Stmt::Switch {
                 on, cases, default, ..
@@ -349,10 +354,10 @@ fn visit_sequence(
                     SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
                 });
                 for case in cases {
-                    visit_sequence(function, case.body, slice, owner)?;
+                    visit_sequence(function, case.body, slice, _owner)?;
                 }
                 if let Some(default) = default {
-                    visit_sequence(function, *default, slice, owner)?;
+                    visit_sequence(function, *default, slice, _owner)?;
                 }
             }
             Stmt::Loop {
@@ -362,15 +367,15 @@ fn visit_sequence(
                 for operand in inits {
                     add_operand(slice, operand);
                 }
-                visit_sequence(function, *body, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
             }
             Stmt::Block { label, body, .. } => {
                 slice.labels.insert(*label);
-                visit_sequence(function, *body, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
             }
             Stmt::Protect { body, cleanup, .. } => {
-                visit_sequence(function, *body, slice, owner)?;
-                visit_sequence(function, *cleanup, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
+                visit_sequence(function, *cleanup, slice, _owner)?;
             }
             Stmt::Dup(variable) | Stmt::Drop(variable) => {
                 slice.variables.insert(*variable);
@@ -632,4 +637,63 @@ fn invalid_flow_ir(function: &str, message: &str) -> Vec<Error> {
         kind: ErrorKind::InvalidFlowIr,
         message: format!("invalid Flow IR in function `{function}`: {message}"),
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use emela_core::FnType;
+    use emela_lir::FnBuilder;
+
+    #[test]
+    fn closure_families_include_static_siblings_and_nested_parents() {
+        let mut core = emela_core::Module::new();
+        let leaf = core
+            .types
+            .intern(Type::Fn(FnType::pure(vec![], TypeId::INT)));
+        let nested = core.types.intern(Type::Fn(FnType::pure(vec![], leaf)));
+        let mut b = FnBuilder::new(&core, "entry");
+        b.set_exported().set_ret(TypeId::INT);
+        let first = b.var("first", nested);
+        b.closure(first, vec![], vec![], false, |b| {
+            let child = b.var("child", leaf);
+            b.closure(child, vec![], vec![], false, |b| {
+                b.term(Term::Return(Some(Const::Int(42).into())))
+            });
+            b.term(Term::Return(Some(child.into())));
+        });
+        let second = b.var("second", leaf);
+        b.closure(second, vec![], vec![], false, |b| {
+            b.term(Term::Return(Some(Const::Int(42).into())))
+        });
+        b.term(Term::Return(Some(Const::Int(42).into())));
+        let function = b.finish();
+        let mut flow = Module::new(core);
+        let entry = flow.add(function);
+        let lowered = lower(&flow).unwrap();
+        assert_eq!(lowered.families.len(), 3);
+        assert!(
+            lowered.functions.is_empty(),
+            "static captures still have family metadata"
+        );
+        let first_target = lowered
+            .families
+            .iter()
+            .find_map(|(&target, &(parent, ordinal))| {
+                (parent == entry && ordinal == 0).then_some(target)
+            })
+            .unwrap();
+        assert!(
+            lowered
+                .families
+                .values()
+                .any(|&(parent, ordinal)| parent == entry && ordinal == 1)
+        );
+        assert!(
+            lowered
+                .families
+                .values()
+                .any(|&(parent, ordinal)| parent == first_target && ordinal == 0)
+        );
+    }
 }

@@ -1,6 +1,13 @@
-//! Embedded C generation from verified Flow IR, without Heap IR passes.
+//! Embedded C backend foundations.
+//!
+//! This crate verifies Flow IR and emits C with fixed-capacity memory and feature-specific
+//! runtimes without running Heap IR passes. A convenience entry also lowers ordinary Core IR.
 
 mod const_eval;
+mod const_origins;
+mod const_runtime;
+mod derived;
+pub use derived::{DerivedOperation, derived_binding};
 mod discarded;
 mod emit;
 mod fiber;
@@ -11,8 +18,44 @@ mod heap;
 mod scope_abi;
 mod static_closure;
 mod static_handler;
+mod type_expansion;
+mod type_normalize;
 mod unicode_grapheme;
 mod writer;
+
+/// Ownership contract for a synchronous board adapter's result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalResult {
+    /// Acquire a complete owning copy before returning to Emela. The board keeps the result
+    /// alive until that copy completes; returning pointers into the C callee's stack is invalid.
+    Borrowed,
+    /// Transfer a complete Emela owning value, including every managed field, to the caller.
+    /// Owners must belong to this generated module's fixed heap, never malloc or a C stack.
+    Owned,
+    /// Return an ownerless String pointing at the additional caller-provided output buffer.
+    /// The board must check its byte capacity before writing; valid only for String results.
+    /// For verified Flow failures, the error is acquired using the Borrowed contract.
+    StringBuffer,
+}
+
+/// Explicit synchronous C adapter using the generated module's C value representations.
+/// All arguments are borrowed until the call returns. Retaining them requires acquiring
+/// independent ownership while they are still valid; ownerless String bytes need copying.
+#[derive(Debug, Clone)]
+pub struct ExternalAdapter {
+    symbol: String,
+    result: ExternalResult,
+}
+
+impl ExternalAdapter {
+    /// Selects a board symbol and its result ownership or caller-output-buffer contract.
+    pub fn new(symbol: impl Into<String>, result: ExternalResult) -> Self {
+        Self {
+            symbol: symbol.into(),
+            result,
+        }
+    }
+}
 
 /// Configuration for embedded C generation.
 ///
@@ -22,6 +65,7 @@ mod writer;
 pub struct Options {
     string_capacity: u16,
     heap_bytes: u32,
+    const_diagnostic_bytes: u16,
     fiber_capacity: u16,
     frame_capacity: u16,
     frame_bytes: u16,
@@ -29,6 +73,7 @@ pub struct Options {
     event_capacity: u16,
     deferred_capacity: u16,
     task_adapters: Vec<(String, String)>,
+    external_adapters: Vec<(String, ExternalAdapter)>,
     isr_entries: Vec<String>,
     isr_safe_externals: Vec<String>,
 }
@@ -38,6 +83,7 @@ impl Default for Options {
         Self {
             string_capacity: 256,
             heap_bytes: 0,
+            const_diagnostic_bytes: 1024,
             fiber_capacity: 8,
             frame_capacity: 32,
             frame_bytes: 256,
@@ -45,6 +91,7 @@ impl Default for Options {
             event_capacity: 8,
             deferred_capacity: 8,
             task_adapters: Vec::new(),
+            external_adapters: Vec::new(),
             isr_entries: Vec::new(),
             isr_safe_externals: Vec::new(),
         }
@@ -77,6 +124,14 @@ impl Options {
     /// Returns the configured byte capacity for the generated fixed heap.
     pub fn heap_bytes(&self) -> u32 {
         self.heap_bytes
+    }
+
+    /// Sets the module-wide storage for memoized runtime const defect messages (default 1024).
+    /// Storage is generated only for runtime-backed consts. Exhaustion reports a resource defect
+    /// through a separate bounded emergency buffer without allocating from the fixed heap.
+    pub fn with_const_diagnostic_bytes(mut self, bytes: u16) -> Self {
+        self.const_diagnostic_bytes = bytes;
+        self
     }
 
     /// Sets the maximum number of active or completed, unreleased fiber handles (default 8).
@@ -131,6 +186,21 @@ impl Options {
         self
     }
 
+    /// Maps a synchronous external C binding to an explicit generated-value board adapter.
+    /// Existing scalar bindings need no override. Non-scalar bindings require one to avoid
+    /// accidentally linking a host C backend function with an incompatible ownership ABI.
+    pub fn with_external_adapter(
+        mut self,
+        c_symbol: impl Into<String>,
+        adapter: ExternalAdapter,
+    ) -> Self {
+        let c_symbol = c_symbol.into();
+        self.external_adapters
+            .retain(|(symbol, _)| symbol != &c_symbol);
+        self.external_adapters.push((c_symbol, adapter));
+        self
+    }
+
     /// Marks an exported Emela function as an interrupt-service entry point.
     pub fn with_isr_entry(mut self, function_name: impl Into<String>) -> Self {
         self.isr_entries.push(function_name.into());
@@ -145,8 +215,6 @@ impl Options {
 }
 
 /// Generated files returned by the backend.
-///
-/// Paths are relative to the output directory chosen by the caller.
 #[derive(Debug, Clone, Default)]
 pub struct Output {
     /// Files keyed by their path relative to the generated output directory.
@@ -200,8 +268,13 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 
 /// Verifies and emits a Flow IR module without running Heap IR passes.
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
-    verify_flow(flow)?;
-    emit::emit(flow, options)
+    if flow.stage != emela_lir::Stage::Flow {
+        verify_flow(flow)?;
+    }
+    let mut normalized = flow.clone();
+    type_normalize::normalize(&mut normalized)?;
+    verify_flow(&normalized)?;
+    emit::emit(&normalized, options)
 }
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
@@ -209,7 +282,9 @@ pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Outpu
 /// The backend normalizes the conservative failure edge of an infallible CauseRaise before
 /// verifying Flow IR. This path does not call `emela_lir::to_heap`.
 pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Vec<Error>> {
-    let mono = emela_core::monomorphize(core);
+    derived::check_core_input(core)?;
+    let prepared_consts = const_origins::monomorphize(core);
+    let mono = prepared_consts.module;
     if let Err(errors) = emela_core::verify_monomorphic(&mono) {
         return Err(errors
             .into_iter()
@@ -220,6 +295,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect());
     }
 
+    derived::check_core_input(&mono)?;
     let mut flow = emela_lir::from_core(mono).map_err(|errors| {
         errors
             .into_iter()
@@ -230,6 +306,8 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
             .collect::<Vec<_>>()
     })?;
 
+    const_origins::attach(&mut flow, &prepared_consts.groups);
+    const_origins::attach_function_groups(&mut flow, &prepared_consts.function_groups);
     fiber::normalize_infallible_cause_raise(&mut flow);
     verify_flow(&flow)?;
     Ok(flow)

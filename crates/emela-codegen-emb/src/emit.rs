@@ -14,10 +14,16 @@ use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 mod cause;
 #[path = "child.rs"]
 mod child;
+#[path = "const_bridge.rs"]
+mod const_bridge;
 #[path = "deferred.rs"]
 mod deferred;
+#[path = "derive_runtime.rs"]
+mod derive_runtime;
 #[path = "error.rs"]
 mod error_runtime;
+#[path = "external.rs"]
+mod external;
 #[path = "owned.rs"]
 mod owned;
 #[path = "suspend.rs"]
@@ -42,7 +48,18 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     // The input Flow IR was verified by compile_flow before backend lowering. Lifted closure
     // captures live in backend metadata, so the transformed module no longer satisfies Flow IR's
     // function-local variable invariant and cannot be verified at the Flow stage again.
+    let const_groups = crate::const_origins::groups(flow)?;
+    crate::const_origins::function_groups(flow)?;
     let mut prepared_flow = flow.clone();
+    external::normalize_exports(&mut prepared_flow);
+    const_bridge::prepare(&mut prepared_flow, &const_groups);
+    let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
+    runtime_consts.extend(
+        const_groups
+            .iter()
+            .flat_map(|group| group.specializations.iter().copied()),
+    );
+
     crate::scope_abi::normalize(&mut prepared_flow)?;
     crate::fiber::normalize_scope_results(&mut prepared_flow);
     let mut closures = crate::static_closure::lower(&prepared_flow)?;
@@ -69,10 +86,29 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let task_value_types = task_values::result_types(flow, &emitted_functions);
     let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
     layouts.discarded_results = discarded_results;
+    layouts.runtime_consts = runtime_consts.clone();
+    let const_bridges = const_bridge::Bridges::new(flow, &const_groups, &closures, &mut layouts)?;
+    for &id in &runtime_consts {
+        if matches!(layouts.types[flow.functions[id].ret], Type::String) {
+            layouts
+                .owned_string_returns
+                .insert(flow.functions[id].name.clone());
+        }
+    }
+    let external_bindings = external::resolve(flow, &emitted_functions, &mut layouts, options)?;
+    let derived_plan = derive_runtime::Plan::new(flow, &emitted_functions, &layouts)?;
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
     validate_function_refs(flow, &emitted_functions, &layouts)?;
-    let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
+    let mut string_output_functions =
+        functions_with_string_output(flow, &emitted_functions, &layouts);
+    external::extend_string_output(
+        flow,
+        &emitted_functions,
+        &external_bindings,
+        &layouts,
+        &mut string_output_functions,
+    );
     layouts.owned_aggregate_returns = flow
         .functions
         .iter()
@@ -85,25 +121,39 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 && layouts.has_inline_string(f.ret)
         })
         .filter(|(id, f)| {
-            !StringBufferPlan::new(
-                &layouts,
-                *id,
-                f,
-                options.string_capacity(),
-                &string_output_functions,
-                false,
-            )
-            .declarations
-            .is_empty()
+            runtime_consts.contains(id)
+                || !StringBufferPlan::new(
+                    &layouts,
+                    *id,
+                    f,
+                    options.string_capacity(),
+                    &string_output_functions,
+                    false,
+                )
+                .declarations
+                .is_empty()
         })
         .map(|(_, f)| f.name.clone())
         .collect();
+    let empty_list_functions = crate::const_runtime::empty_list_functions(flow);
     let heap_functions: HashSet<_> = flow
         .functions
         .iter()
         .filter_map(|(id, function)| {
             (emitted_functions.contains(&id)
-                && function_needs_heap(id, function, &layouts, &closures, &string_output_functions))
+                && (function_needs_heap(
+                    id,
+                    function,
+                    &layouts,
+                    &closures,
+                    &string_output_functions,
+                    &empty_list_functions,
+                ) || external::needs_heap(
+                    function,
+                    external_bindings.get(&id),
+                    &layouts,
+                    options,
+                )))
             .then_some(id)
         })
         .collect();
@@ -112,16 +162,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         let (_, function) = flow
             .functions
             .iter()
-            .find(|(id, function)| {
-                emitted_functions.contains(id)
-                    && function_needs_heap(
-                        *id,
-                        function,
-                        &layouts,
-                        &closures,
-                        &string_output_functions,
-                    )
-            })
+            .find(|(id, _)| heap_functions.contains(id))
             .expect("heap requirement came from an emitted function");
         return Err(unsupported(
             &function.name,
@@ -171,7 +212,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             if function.suspends {
                 suspend::external_symbol(function, options)?
             } else {
-                validate_external(flow, function)?
+                let binding = &external_bindings[&id];
+                if binding.adapted {
+                    function_name(id, function)
+                } else {
+                    binding.symbol.clone()
+                }
             }
         } else {
             function_name(id, function)
@@ -227,6 +273,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         header.blank();
     }
     layouts.emit_declarations(&mut header);
+    external::emit_header(
+        flow,
+        &external_bindings,
+        &layouts,
+        heap_required,
+        &mut header,
+    );
     if has_scheduler {
         header.line(include_str!("runtime/scheduler.h"));
     }
@@ -326,7 +379,14 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_scheduler
+    let needs_defect_hook = !runtime_consts.is_empty()
+        || has_scheduler
+        || external_bindings
+            .iter()
+            .any(|(&id, binding)| binding.adapted && flow.functions[id].fails)
+        || external_bindings
+            .values()
+            .any(|binding| binding.result == crate::ExternalResult::StringBuffer)
         || heap_required
         || has_prim(
             flow,
@@ -403,6 +463,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             "_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length);",
         );
     }
+    if !runtime_consts.is_empty() {
+        board_header.line("/* Reports a defect through active const contexts; direct board hook calls bypass them. */");
+        board_header.line("_Noreturn void emela_embedded_report_defect(EmelaDefectKind kind, const char *message, uint16_t length);");
+    }
     if main_entry.is_some() {
         board_header.line("void emela_board_init(void);");
         board_header.line("void emela_board_idle(void);");
@@ -423,7 +487,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
+
     source.blank();
+    if !runtime_consts.is_empty() {
+        crate::const_runtime::emit_runtime(flow, &runtime_consts, options, &mut source)?;
+    }
     if has_scheduler {
         if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
             source.line("#define EMELA_TASK_CONTEXT_RUNTIME 1");
@@ -481,6 +549,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         crate::heap::emit_public_retain(&mut source);
         crate::heap::emit_public_release(&mut source);
         emit_public_string_ownership(&mut source);
+        external::emit_ownership_helpers(flow, &external_bindings, &layouts, &mut source);
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
@@ -641,10 +710,10 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_string_append(flow, &emitted_functions) {
         emit_string_append_helper(&mut source);
     }
-    if has_runtime_string_show(flow, &emitted_functions) {
+    if has_runtime_string_show(flow, &emitted_functions) || derived_plan.show {
         emit_string_show_helpers(&mut source);
     }
-    if has_runtime_int_string(flow, &emitted_functions) {
+    if has_runtime_int_string(flow, &emitted_functions) || derived_plan.show {
         emit_int_to_string_helper(&mut source);
     }
     if has_runtime_int_parse(flow, &emitted_functions) {
@@ -653,12 +722,13 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_float_parse(flow, &emitted_functions) {
         crate::float_parse::emit_runtime(&mut source);
     }
-    if has_runtime_float_to_string(flow, &emitted_functions) {
+    if has_runtime_float_to_string(flow, &emitted_functions) || derived_plan.needs_float(&layouts) {
         crate::float_to_string::emit_runtime(&mut source);
     }
     if !string_output_functions.is_empty() {
         emit_string_output_helper(&mut source);
     }
+    derived_plan.emit(&layouts, &mut source);
 
     for (id, function) in flow
         .functions
@@ -676,9 +746,21 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 &mut source,
             )?;
         } else if function.external.is_some() {
+            let prefix = if external_bindings[&id].adapted {
+                ""
+            } else {
+                "extern "
+            };
             source.line(&format!(
-                "extern {};",
-                signature(&layouts, function, name, false, false, false)
+                "{prefix}{};",
+                signature(
+                    &layouts,
+                    function,
+                    name,
+                    external_bindings[&id].adapted,
+                    function.fails && external_bindings[&id].adapted,
+                    string_output_functions.contains(&id)
+                )
             ));
         } else if !function.exported || function.fails {
             source.line(&format!(
@@ -720,6 +802,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         ));
     }
     source.blank();
+    const_bridges.emit(flow, &layouts, &names, heap_required, &mut source)?;
     error_runtime::emit_display(
         &layouts,
         &names,
@@ -759,14 +842,35 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                     ),
                 }]);
             }
+            if crate::derived::kind(function).is_some() {
+                derive_runtime::emit_adapter(&layouts, function, &names[&id], &mut source);
+                continue;
+            }
+            external::emit_adapter(
+                &layouts,
+                function,
+                &external_bindings[&id],
+                &names[&id],
+                &mut source,
+            );
             continue;
         }
         let Some(body) = function.body else {
             return Err(unsupported(&function.name, "function without a body"));
         };
         let sequence = &function.seqs[body];
-        let name = &names[&id];
-        let is_static = !function.exported || function.fails;
+        if const_bridges.getters.contains_key(&id) {
+            const_bridges.emit_getter(id, flow, &layouts, &names, &mut source);
+            continue;
+        }
+        let initializer_name = format!("{}_const_init", names[&id]);
+        let is_runtime_const = runtime_consts.contains(&id);
+        let name = if is_runtime_const {
+            &initializer_name
+        } else {
+            &names[&id]
+        };
+        let is_static = is_runtime_const || !function.exported || function.fails;
         let takes_string_output = string_output_functions.contains(&id);
         let function_signature = if closures.functions.contains_key(&id) {
             closure_signature(&layouts, function, name, is_static)
@@ -785,7 +889,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             match &const_outcomes[&id] {
                 ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
                 ConstOutcome::Value(value) => {
-                    let expression = constant_expression(&value).map_err(|kind| {
+                    let expression = constant_expression(value).map_err(|kind| {
                         unsupported(&function.name, &format!("{kind} in a const value"))
                     })?;
                     let Some(expression) = expression else {
@@ -816,7 +920,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                         )
                     })?;
                     source.line(&format!(
-                        "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        "{}(EMELA_DEFECT_PANIC, {}, UINT16_C({length}));",
+                        if runtime_consts.is_empty() {
+                            "emela_board_defect"
+                        } else {
+                            "emela_const_self_reference"
+                        },
                         c_string_literal(message.as_bytes())
                     ));
                 }
@@ -895,6 +1004,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         )?;
         source.end_block();
         source.blank();
+        if is_runtime_const {
+            emit_const_getter(
+                &layouts,
+                id,
+                function,
+                &names[&id],
+                &initializer_name,
+                &mut source,
+            );
+        }
     }
     for &(target, function_type) in &function_ref_adapters {
         let target_function = &flow.functions[target];
@@ -1588,7 +1707,7 @@ impl StringBufferPlan {
                 .body
                 .map(|body| &function.seqs[body].term)
                 .and_then(|term| match term {
-                    Term::Return(Some(Operand::Var(variable))) => roots.get(&variable).copied(),
+                    Term::Return(Some(Operand::Var(variable))) => roots.get(variable).copied(),
                     _ => None,
                 })
         } else {
@@ -1970,9 +2089,13 @@ fn aggregate_function_abi_supported(
         AggregateKind::Tuple(fields) => vec![fields.as_slice()],
         AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
     };
-    let supported = fields.into_iter().flatten().all(|&field| {
-        layouts.type_repr(field) == Repr::Void
-            || function_value_abi_type_supported(layouts, field, seen)
+    let supported = fields.into_iter().enumerate().all(|(variant, fields)| {
+        fields.iter().enumerate().all(|(index, &field)| {
+            // Opaque owned edges use the heap header ABI; materialized payload roots are checked separately.
+            layouts.is_recursive_box_field(ty, variant, index)
+                || layouts.type_repr(field) == Repr::Void
+                || function_value_abi_type_supported(layouts, field, seen)
+        })
     });
     seen.remove(&ty);
     supported
@@ -2201,6 +2324,8 @@ fn validate_isr_entries(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn validate_isr_function(
     flow: &emela_lir::Module,
     id: FnId,
@@ -2222,6 +2347,12 @@ fn validate_isr_function(
         return Ok(());
     }
     let function = &flow.functions[id];
+    if layouts.runtime_consts.contains(&id) {
+        return Err(unsupported(
+            &function.name,
+            &format!("runtime const initialization reachable from ISR entry `{entry_name}`"),
+        ));
+    }
     if function.suspends {
         return Err(unsupported(
             &function.name,
@@ -2288,7 +2419,8 @@ fn validate_isr_function(
                     ));
                 }
                 if callee.external.is_some() {
-                    let symbol = &names[callee_id];
+                    let symbol =
+                        external::isr_symbol(flow, callee, &names[callee_id], options, entry_name)?;
                     if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
                         active.remove(&id);
                         return Err(unsupported(
@@ -2332,9 +2464,23 @@ fn function_needs_heap(
     layouts: &TypeLayouts<'_>,
     closures: &crate::static_closure::ClosureLowering,
     string_output_functions: &HashSet<FnId>,
+    empty_list_functions: &HashSet<FnId>,
 ) -> bool {
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
+        if let Stmt::Let {
+            dst: Some(dst),
+            value:
+                Value::Call {
+                    callee: Callee::Direct(target),
+                    ..
+                },
+            ..
+        } = statement
+            && empty_list_functions.contains(target)
+        {
+            known_empty.insert(*dst);
+        }
         let Stmt::Let {
             dst: Some(dst),
             value: Value::List { elems, tail },
@@ -2441,6 +2587,8 @@ fn function_needs_heap(
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
     (function.fails && layouts.managed_error_payloads)
         || layouts.owned_aggregate_returns.contains(&function.name)
+        || (layouts.runtime_consts.contains(&function_id)
+            && layouts.owned_string_returns.contains(&function.name))
         || statement_needs_heap
         || (function.suspends
             && (layouts.has_inline_string(function.ret)
@@ -2455,6 +2603,82 @@ fn function_needs_heap(
             .environments
             .iter()
             .any(|environment| environment.parent == function_id)
+}
+
+fn emit_const_getter(
+    layouts: &TypeLayouts<'_>,
+    id: FnId,
+    function: &Function,
+    name: &str,
+    initializer: &str,
+    writer: &mut Writer,
+) {
+    let index = u32::from(id.into_raw());
+    let state = format!("emela_const_state_{index}");
+    let cache = format!("emela_const_value_{index}");
+    writer.line(&format!("static EmelaConstState {state};"));
+    let is_void = matches!(layouts.types[function.ret], Type::Unit | Type::Never);
+    if !is_void {
+        writer.line(&format!("static {} {cache};", layouts.c_type(function.ret)));
+    }
+    writer.begin_block(&signature(
+        layouts,
+        function,
+        name,
+        !function.exported,
+        false,
+        false,
+    ));
+    writer.begin_block(&format!("if ({state}.status == 3)"));
+    writer.line(&format!(
+        "emela_embedded_report_defect({state}.kind, {state}.message, {state}.length);"
+    ));
+    writer.end_block();
+    writer.begin_block(&format!("if ({state}.status == 1)"));
+    let message = format!(
+        "const {} refers to itself while being evaluated",
+        function.name
+    );
+    writer.line(&format!(
+        "emela_const_self_reference(EMELA_DEFECT_PANIC, {}, UINT16_C({}));",
+        c_string_literal(message.as_bytes()),
+        message.len()
+    ));
+    writer.end_block();
+    writer.begin_block(&format!("if ({state}.status == 0)"));
+    let prefix = format!("while evaluating const {}: ", function.name);
+    writer.line(&format!(
+        "EmelaConstContext context = {{ emela_const_current, &{state}, {}, UINT16_C({}) }};",
+        c_string_literal(prefix.as_bytes()),
+        prefix.len()
+    ));
+    writer.line(&format!("{state}.status = 1;"));
+    writer.line("emela_const_current = &context;");
+    if is_void {
+        writer.line(&format!("{initializer}();"));
+    } else {
+        writer.line(&format!("{cache} = {initializer}();"));
+        if layouts.has_inline_string(function.ret) {
+            layouts.emit_freeze_value_in_place(function.ret, &cache, writer);
+        }
+    }
+    writer.line("emela_const_current = context.previous;");
+    writer.line(&format!("{state}.status = 2;"));
+    writer.end_block();
+    if is_void {
+        if matches!(layouts.types[function.ret], Type::Never) {
+            writer.line(
+                "emela_board_defect(EMELA_DEFECT_PANIC, \"Never const returned\", UINT16_C(20));",
+            );
+        } else {
+            writer.ret(None);
+        }
+    } else {
+        layouts.emit_retain_value_expression(function.ret, &cache, writer);
+        writer.ret(Some(&cache));
+    }
+    writer.end_block();
+    writer.blank();
 }
 
 fn directly_calls(caller: &Function, target: FnId) -> bool {
@@ -3320,6 +3544,8 @@ fn emit_cell_builtin(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_indirect_call(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -4553,6 +4779,8 @@ fn emit_string_join_helper(writer: &mut Writer) {
     writer.blank();
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_statement(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -4672,6 +4900,8 @@ fn emit_statement(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_statement_inner(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -5321,6 +5551,8 @@ fn emit_statement_inner(
     }
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_switch(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -5806,6 +6038,8 @@ fn emit_string_split(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_string_split_push(
     writer: &mut Writer,
     node_name: &str,
@@ -5937,6 +6171,8 @@ fn emit_string_chars(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_string_join(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6050,6 +6286,8 @@ fn emit_list_tail(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_loop(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6105,6 +6343,8 @@ fn emit_loop(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_compound_sequence(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6327,6 +6567,8 @@ fn emit_recur(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_call_failure_edge(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6570,6 +6812,8 @@ fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
     writer.blank();
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_protect(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6626,6 +6870,8 @@ fn emit_protect(
     cleanup_result
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_pending_cleanups(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -6981,6 +7227,8 @@ fn emit_tuple_get(
     Ok(())
 }
 
+// Keep the lowering context explicit across this emission boundary.
+#[allow(clippy::too_many_arguments)]
 fn emit_aggregate_field_store(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -8326,6 +8574,7 @@ struct TypeLayouts<'a> {
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
     recursive_edges: HashSet<(TypeId, usize, usize)>,
+    expanding_enums: HashSet<EnumId>,
     recursive_box_types: Vec<TypeId>,
     recursive_box_ids: HashMap<TypeId, usize>,
     list_types: Vec<TypeId>,
@@ -8336,6 +8585,7 @@ struct TypeLayouts<'a> {
     closure_functions: HashMap<FnId, usize>,
     closure_environments: Vec<crate::static_closure::ClosureEnvironment>,
     owned_string_returns: HashSet<String>,
+    runtime_consts: HashSet<FnId>,
     owned_aggregate_returns: HashSet<String>,
     cell_types: Vec<TypeId>,
     cell_ids: HashMap<TypeId, usize>,
@@ -8394,6 +8644,7 @@ impl<'a> TypeLayouts<'a> {
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
             recursive_edges: HashSet::new(),
+            expanding_enums: crate::type_expansion::expanding_enums(&flow.core),
             recursive_box_types: Vec::new(),
             recursive_box_ids: HashMap::new(),
             list_types: Vec::new(),
@@ -8408,6 +8659,7 @@ impl<'a> TypeLayouts<'a> {
             closure_functions: closures.functions.clone(),
             closure_environments: closures.environments.clone(),
             owned_aggregate_returns: HashSet::new(),
+            runtime_consts: HashSet::new(),
             owned_string_returns: closures
                 .functions
                 .keys()
@@ -8892,6 +9144,7 @@ impl<'a> TypeLayouts<'a> {
                     if layouts
                         .recursive_edges
                         .contains(&(aggregate.ty, variant, field))
+                        && layouts.has_materialized_payload(field_ty)
                         && !layouts.recursive_box_ids.contains_key(&field_ty)
                     {
                         let index = layouts.recursive_box_types.len();
@@ -9014,21 +9267,10 @@ impl<'a> TypeLayouts<'a> {
     fn validate_finite_types(
         &mut self,
         ty: TypeId,
-        function: &str,
+        _function: &str,
         active: &mut HashSet<TypeId>,
         validated: &mut HashSet<TypeId>,
     ) -> Result<(), Vec<Error>> {
-        if let Type::Enum(id, _) = self.types[ty]
-            && active.iter().any(|&other| {
-                other != ty
-                    && matches!(self.types[other], Type::Enum(other_id, _) if other_id == id)
-            })
-        {
-            return Err(unsupported(
-                function,
-                "recursive enum type that changes its type arguments",
-            ));
-        }
         if validated.contains(&ty) || !active.insert(ty) {
             return Ok(());
         }
@@ -9044,8 +9286,13 @@ impl<'a> TypeLayouts<'a> {
                 .collect(),
             _ => vec![],
         };
+        let lazy_fields =
+            matches!(self.types[ty], Type::Enum(id, _) if self.expanding_enums.contains(&id));
         for dependency in dependencies {
-            self.validate_finite_types(dependency, function, active, validated)?;
+            if lazy_fields && self.type_repr(dependency) == Repr::Ref {
+                continue;
+            }
+            self.validate_finite_types(dependency, _function, active, validated)?;
         }
         active.remove(&ty);
         validated.insert(ty);
@@ -9134,19 +9381,6 @@ impl<'a> TypeLayouts<'a> {
             return Ok(());
         };
 
-        if let Type::Enum(enum_id, _) = self.types[ty]
-            && states.iter().any(|(active_ty, state)| {
-                *state == 1
-                    && *active_ty != ty
-                    && matches!(self.types[*active_ty], Type::Enum(active_id, _) if active_id == enum_id)
-            })
-        {
-            return Err(unsupported(
-                function,
-                "recursive enum type that changes its type arguments",
-            ));
-        }
-
         match states.get(&ty) {
             Some(2) => return Ok(()),
             Some(1) => {
@@ -9168,7 +9402,9 @@ impl<'a> TypeLayouts<'a> {
                 if self.type_repr(field) == Repr::Void {
                     continue;
                 }
-                if matches!(states.get(&field), Some(1)) {
+                let lazy_field = matches!(self.types[ty], Type::Enum(id, _) if self.expanding_enums.contains(&id))
+                    && self.type_repr(field) == Repr::Ref;
+                if lazy_field || matches!(states.get(&field), Some(1)) {
                     self.recursive_edges.insert((ty, variant, index));
                 } else {
                     self.collect(field, function, states)?;
@@ -9418,6 +9654,20 @@ impl<'a> TypeLayouts<'a> {
 
     fn is_recursive_box_field(&self, owner: TypeId, variant: usize, field: usize) -> bool {
         self.recursive_edges.contains(&(owner, variant, field))
+    }
+
+    fn has_materialized_payload(&self, ty: TypeId) -> bool {
+        match self.types[ty] {
+            Type::Enum(id, _) if self.enum_layout_required(id) => {
+                self.aggregate_ids.contains_key(&ty)
+            }
+            Type::Tuple(_) => self.aggregate_ids.contains_key(&ty),
+            Type::Fn(_) => self.function_types.contains(&ty),
+            Type::List(_) => self.list_ids.contains_key(&ty),
+            Type::Cell(_) => self.cell_ids.contains_key(&ty),
+            Type::Any => self.any_abi,
+            _ => true,
+        }
     }
 
     fn recursive_box_kind(&self, ty: TypeId) -> Option<u32> {
@@ -9730,7 +9980,7 @@ impl<'a> TypeLayouts<'a> {
             writer.begin_block("");
             self.emit_enqueue_value_expression(
                 box_ty,
-                &format!("(*((const {} *)value))", self.c_type(box_ty)),
+                &format!("(*(({} const *)value))", self.c_type(box_ty)),
                 "pending",
                 "tail",
                 writer,
