@@ -90,6 +90,120 @@ int main(void) {
 }
 
 #[test]
+fn heap_payload_promotion_owns_inline_strings_and_shares_existing_backing() {
+    let mut core = emela_core::Module::new();
+    let maybe = core.add_enum(EnumDef {
+        name: "MaybeText".into(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![TypeId::STRING]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let maybe_ty = core.enum_type(maybe, vec![]);
+    let tuple_ty = core.tuple(vec![TypeId::STRING, maybe_ty]);
+    let list_ty = core.list(tuple_ty);
+    let mut flow = Module::new(core);
+    let mut b = FnBuilder::new(&flow.core, "store");
+    b.set_ret(list_ty).set_exported();
+    let text = b.param("text", TypeId::STRING);
+    let some = b.assign(
+        "some",
+        maybe_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id: maybe,
+                variant: 0,
+            },
+            args: vec![text.into()],
+        },
+    );
+    let tuple = b.assign(
+        "tuple",
+        tuple_ty,
+        Value::Tuple(vec![text.into(), some.into()]),
+    );
+    let list = b.assign(
+        "list",
+        list_ty,
+        Value::List {
+            elems: vec![tuple.into()],
+            tail: None,
+        },
+    );
+    b.term(Term::Return(Some(list.into())));
+    flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "head");
+    b.set_ret(tuple_ty).set_exported();
+    let list = b.param("list", list_ty);
+    let tuple = b.assign("tuple", tuple_ty, Value::ListHead(list));
+    b.term(Term::Return(Some(tuple.into())));
+    flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "pack");
+    b.set_ret(TypeId::ANY).set_exported();
+    let tuple = b.param("tuple", tuple_ty);
+    let any = b.assign("any", TypeId::ANY, Value::Coerce(tuple));
+    b.term(Term::Return(Some(any.into())));
+    flow.add(b.finish());
+    let mut b = FnBuilder::new(&flow.core, "unpack");
+    b.set_ret(tuple_ty).set_exported();
+    let any = b.param("any", TypeId::ANY);
+    let tuple = b.assign("tuple", tuple_ty, Value::Coerce(any));
+    b.term(Term::Return(Some(tuple.into())));
+    flow.add(b.finish());
+    let mut output = compile_flow(&flow, &Options::default().with_heap_bytes(1024)).unwrap();
+    let release = release_helper(&output, tuple_ty);
+    add_heap_probe(&mut output);
+    compile_and_run(
+        output,
+        &format!(
+            r#"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+size_t test_heap_used(void);
+size_t test_owner_capacity(void *owner);
+_Noreturn void emela_board_defect(EmelaDefectKind k, const char *m, uint16_t n) {{ (void)k; (void)m; (void)n; abort(); }}
+int main(void) {{
+  for (int i = 0; i < 1000; ++i) {{
+    char bytes[] = {{'a', 0, 'b', (char)0xc3, (char)0xa9}};
+    EmelaString input = {{.data = bytes, .length = sizeof bytes}};
+    void *list = emela_export_store_0(input);
+    memset(bytes, 'x', sizeof bytes);
+    emela_type_{ty} tuple = emela_export_head_1(list);
+    emela_embedded_release(list);
+    assert(tuple.f0.owner && tuple.f1.payload.v0.f0.owner);
+    assert(tuple.f0.length == 5 && memcmp(tuple.f0.data, "a\0b\xc3\xa9", 5) == 0);
+    assert(test_owner_capacity(tuple.f0.owner) < 64);
+    EmelaAny any = emela_export_pack_2(tuple);
+    emela_type_{ty} copy = emela_export_unpack_3(any);
+    assert(copy.f0.owner == tuple.f0.owner && copy.f1.payload.v0.f0.owner == tuple.f1.payload.v0.f0.owner);
+    {release}(&tuple);
+    emela_embedded_release(any.payload.any_box);
+    assert(memcmp(copy.f1.payload.v0.f0.data, "a\0b\xc3\xa9", 5) == 0);
+    {release}(&copy);
+    assert(test_heap_used() == 0);
+
+    tuple = (emela_type_{ty}){{.f0 = input, .f1 = {{.tag = 1}}}};
+    any = emela_export_pack_2(tuple);
+    copy = emela_export_unpack_3(any);
+    assert(copy.f1.tag == 1 && copy.f0.owner);
+    emela_embedded_release(any.payload.any_box);
+    {release}(&copy);
+    assert(test_heap_used() == 0);
+  }}
+}}
+"#,
+            ty = tuple_ty.index()
+        ),
+    );
+}
+
+#[test]
 fn recursive_heap_payload_promotion_and_destruction_do_not_follow_value_depth_on_stack() {
     let mut core = emela_core::Module::new();
     let chain = core.add_enum(EnumDef {

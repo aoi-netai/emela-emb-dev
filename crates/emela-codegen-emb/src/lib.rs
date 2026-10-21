@@ -5,7 +5,10 @@ mod discarded;
 mod emit;
 mod float_parse;
 mod float_to_string;
+mod function_coerce;
 mod heap;
+mod static_closure;
+mod static_handler;
 mod unicode_grapheme;
 mod writer;
 
@@ -130,10 +133,7 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 /// Verifies and emits a Flow IR module without running Heap IR passes.
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
     verify_flow(flow)?;
-    let mut normalized = flow.clone();
-    let discarded = discarded::normalize(&mut normalized);
-    verify_flow(&normalized)?;
-    emit::emit(&normalized, options, &discarded)
+    emit::emit(flow, options)
 }
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.

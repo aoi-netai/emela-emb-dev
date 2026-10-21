@@ -81,7 +81,9 @@ impl TypeLayouts<'_> {
     // Acquire a new owning reference from a borrowed copy. The destination must be empty or
     // borrowed; replacing an already owned destination requires releasing its previous value.
     pub(super) fn emit_own_value_in_place(&self, ty: TypeId, value: &str, writer: &mut Writer) {
-        if matches!(self.types[ty], Type::String) {
+        if matches!(self.types[ty], Type::Any) && self.is_managed_value(ty) {
+            writer.line(&format!("emela_any_own(&({value}));"));
+        } else if matches!(self.types[ty], Type::String) {
             writer.assign(value, &format!("emela_heap_own_string({value})"));
         } else if matches!(self.types[ty], Type::Any) && self.managed_error_payloads {
             writer.line(&format!("emela_error_own(&({value}));"));

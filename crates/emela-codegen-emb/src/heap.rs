@@ -4,7 +4,7 @@ const HEAP_EXHAUSTED_MESSAGE: &str = "fixed heap exhausted";
 const REFERENCE_OVERFLOW_MESSAGE: &str = "heap reference count overflow";
 const INVALID_REFERENCE_MESSAGE: &str = "invalid fixed heap reference";
 
-pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
+pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32, cycles: bool) {
     writer.line("typedef struct emela_heap_block emela_heap_block;");
     writer.line("struct emela_heap_block {");
     writer.line("  size_t size;");
@@ -14,6 +14,10 @@ pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
     writer.line("  uint32_t references;");
     writer.line("  uint32_t kind;");
     writer.line("  int is_free;");
+    if cycles {
+        writer.line("  uint32_t gc_references;");
+        writer.line("  uint32_t gc_state;");
+    }
     writer.line("};");
     writer.line("#define EMELA_HEAP_BIN_COUNT 32");
     writer.line(&format!(
@@ -25,8 +29,15 @@ pub(crate) fn emit_runtime(writer: &mut Writer, capacity: u32) {
     writer.line(
         "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail);",
     );
+    if cycles {
+        writer.line("static int emela_heap_trace_mode;");
+        writer.line("static void emela_heap_collect_cycles(void);");
+    }
     emit_allocator_functions(writer);
-    emit_reference_functions(writer);
+    emit_reference_functions(writer, cycles);
+    if cycles {
+        emit_cycle_collector(writer);
+    }
 }
 
 pub(crate) fn emit_public_release(writer: &mut Writer) {
@@ -121,7 +132,7 @@ fn emit_allocator_functions(writer: &mut Writer) {
     writer.line("emela_heap_add_free(first);");
     writer.end_block();
 
-    writer.begin_block("static void emela_heap_free_block(emela_heap_block *block)");
+    writer.begin_block("static emela_heap_block *emela_heap_free_block(emela_heap_block *block)");
     writer.line("unsigned char *end = emela_heap_end();");
     writer.line("unsigned char *block_end = (unsigned char *)block + block->size;");
     writer.begin_block("if (block_end < end)");
@@ -152,6 +163,7 @@ fn emit_allocator_functions(writer: &mut Writer) {
     writer.line("block->references = 0;");
     writer.line("block->kind = 0;");
     writer.line("emela_heap_add_free(block);");
+    writer.line("return block;");
     writer.end_block();
 
     writer.begin_block("static void *emela_heap_allocate(size_t payload_size, uint32_t kind)");
@@ -202,7 +214,7 @@ fn emit_allocator_functions(writer: &mut Writer) {
     writer.blank();
 }
 
-fn emit_reference_functions(writer: &mut Writer) {
+fn emit_reference_functions(writer: &mut Writer, cycles: bool) {
     writer.begin_block("static emela_heap_block *emela_heap_header(void *value)");
     writer.line(
         "return (emela_heap_block *)(void *)((unsigned char *)value - emela_heap_header_size());",
@@ -233,6 +245,17 @@ fn emit_reference_functions(writer: &mut Writer) {
     writer.begin_block("if (block->is_free || block->references == 0)");
     emit_heap_defect(writer, INVALID_REFERENCE_MESSAGE);
     writer.end_block();
+    if cycles {
+        writer.begin_block("if (emela_heap_trace_mode == 1)");
+        writer.line("if (block->gc_references == 0) emela_board_defect(EMELA_DEFECT_PANIC, \"invalid heap ownership graph\", UINT16_C(28));");
+        writer.line("block->gc_references--; return;");
+        writer.end_block();
+        writer.begin_block("if (emela_heap_trace_mode == 2)");
+        writer.line("if (block->gc_state == 0) block->gc_state = 1;");
+        writer.line("return;");
+        writer.end_block();
+        writer.line("if (emela_heap_trace_mode == 3 && block->gc_state == 0) return;");
+    }
     writer.line("block->references--;");
     writer.begin_block("if (block->references == 0)");
     writer.line("block->free_next = NULL;");
@@ -259,6 +282,9 @@ fn emit_reference_functions(writer: &mut Writer) {
     writer.line("emela_heap_destroy(block->kind, payload, &pending, &tail);");
     writer.line("emela_heap_free_block(block);");
     writer.end_block();
+    if cycles {
+        writer.line("if (emela_heap_trace_mode == 0) emela_heap_collect_cycles();");
+    }
     writer.end_block();
 
     writer.begin_block("static void emela_heap_release(void *value)");
@@ -266,6 +292,64 @@ fn emit_reference_functions(writer: &mut Writer) {
     writer.line("emela_heap_block *tail = NULL;");
     writer.line("emela_heap_enqueue(value, &pending, &tail);");
     writer.line("emela_heap_drain(pending, tail);");
+    writer.end_block();
+    writer.blank();
+}
+
+fn emit_cycle_collector(writer: &mut Writer) {
+    // Scratch state lives in fixed heap headers. Refcounts held outside the heap are roots.
+    // Edge visits are non-destructive in count/mark modes and never recurse through heap data.
+    writer.begin_block("static void emela_heap_collect_cycles(void)");
+    writer.line("if (!emela_heap_initialized || emela_heap_trace_mode != 0) return;");
+    writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
+    writer.line("unsigned char *end = emela_heap_end();");
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer.line(
+        "if (!block->is_free) { block->gc_references = block->references; block->gc_state = 0; }",
+    );
+    writer.line("cursor += block->size;");
+    writer.end_block();
+    writer.line("emela_heap_trace_mode = 1;");
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer.line("if (!block->is_free) emela_heap_destroy(block->kind, cursor + emela_heap_header_size(), &pending, &tail);");
+    writer.line("cursor += block->size;");
+    writer.end_block();
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer.line("if (!block->is_free && block->gc_references != 0) block->gc_state = 1;");
+    writer.line("cursor += block->size;");
+    writer.end_block();
+    writer.line("emela_heap_trace_mode = 2;");
+    writer.line("int changed;");
+    writer.begin_block("do");
+    writer.line("changed = 0;");
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer.begin_block("if (!block->is_free && block->gc_state == 1)");
+    writer.line("block->gc_state = 2; changed = 1;");
+    writer.line(
+        "emela_heap_destroy(block->kind, cursor + emela_heap_header_size(), &pending, &tail);",
+    );
+    writer.end_block();
+    writer.line("cursor += block->size;");
+    writer.end_block();
+    writer.end_block();
+    writer.line("while (changed);");
+    writer.line("emela_heap_trace_mode = 3;");
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer.line("if (!block->is_free && block->gc_state == 0) emela_heap_destroy(block->kind, cursor + emela_heap_header_size(), &pending, &tail);");
+    writer.line("cursor += block->size;");
+    writer.end_block();
+    writer.begin_block("for (unsigned char *cursor = emela_heap_storage; cursor < end; )");
+    writer.line("emela_heap_block *block = (emela_heap_block *)(void *)cursor;");
+    writer
+        .line("if (!block->is_free && block->gc_state == 0) block = emela_heap_free_block(block);");
+    writer.line("cursor = (unsigned char *)block + block->size;");
+    writer.end_block();
+    writer.line("emela_heap_trace_mode = 0;");
     writer.end_block();
     writer.blank();
 }
@@ -290,4 +374,63 @@ fn c_string_literal(bytes: &str) -> String {
     }
     output.push('"');
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, process::Command};
+
+    #[test]
+    fn fixed_heap_cycle_collection_preserves_roots_and_reclaims_every_iteration() {
+        let mut writer = Writer::new();
+        writer.line(
+            "#include <stddef.h>\n#include <stdint.h>\n#include <assert.h>\n#include <stdlib.h>",
+        );
+        writer.line("enum { EMELA_DEFECT_HEAP_EXHAUSTED, EMELA_DEFECT_PANIC };");
+        writer.line("_Noreturn void emela_board_defect(int kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }");
+        emit_runtime(&mut writer, 1024, true);
+        writer.line("typedef struct node { struct node *edge; int value; } node;");
+        writer.line("static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail) { (void)kind; emela_heap_enqueue(((node *)value)->edge, pending, tail); }");
+        writer.line(
+            r#"
+int main(void) {
+  for (unsigned iteration = 0; iteration < 1000; iteration++) {
+    node *left = emela_heap_allocate(sizeof(node), 0);
+    *left = (node){.value = 41};
+    node *right = emela_heap_allocate(sizeof(node), 0);
+    *right = (node){.edge = left, .value = 42};
+    emela_heap_retain(left);
+    left->edge = right; emela_heap_retain(right);
+    emela_heap_release(right);
+    emela_heap_retain(left); emela_heap_release(left);
+    assert(left->value == 41 && left->edge->value == 42);
+    emela_heap_release(left);
+    emela_heap_block *first = (emela_heap_block *)(void *)emela_heap_storage;
+    assert(first->is_free && (unsigned char *)first + first->size == emela_heap_end());
+  }
+  return 0;
+}
+"#,
+        );
+        let dir = std::env::temp_dir().join(format!("emela-heap-cycle-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("cycle.c");
+        let executable = dir.join("cycle");
+        fs::write(&source, writer.finish()).unwrap();
+        let output = Command::new("cc")
+            .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(Command::new(executable).status().unwrap().success());
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
