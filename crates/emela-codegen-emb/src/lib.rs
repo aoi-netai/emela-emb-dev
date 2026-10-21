@@ -63,6 +63,7 @@ impl ExternalAdapter {
 #[non_exhaustive]
 pub struct Options {
     string_capacity: u16,
+    peripheral_buffer_capacity: u16,
     heap_bytes: u32,
     const_diagnostic_bytes: u16,
     fiber_capacity: u16,
@@ -81,6 +82,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             string_capacity: 256,
+            peripheral_buffer_capacity: 256,
             heap_bytes: 0,
             const_diagnostic_bytes: 1024,
             fiber_capacity: 8,
@@ -98,6 +100,18 @@ impl Default for Options {
 }
 
 impl Options {
+    /// Sets the maximum number of uint16_t words in a synchronous peripheral transfer.
+    /// Zero is invalid. The default is 256 words; buffers are allocated on the C call stack.
+    pub fn with_peripheral_buffer_capacity(mut self, words: u16) -> Self {
+        self.peripheral_buffer_capacity = words;
+        self
+    }
+
+    /// Returns the configured transfer capacity in uint16_t words.
+    pub fn peripheral_buffer_capacity(&self) -> u16 {
+        self.peripheral_buffer_capacity
+    }
+
     /// Sets the maximum size in bytes for a dynamically generated String buffer.
     ///
     /// Values from 1 through 512 are accepted. The generated code reports a String capacity
@@ -213,14 +227,24 @@ impl Options {
     }
 }
 
-/// Generated files returned by the backend.
-///
-/// File emission is not implemented in this phase; this type establishes the public result shape
-/// for the later C emission phases.
+/// Generated files and public entry points returned by the backend.
 #[derive(Debug, Clone, Default)]
 pub struct Output {
     /// Files keyed by their path relative to the generated output directory.
     pub files: Vec<GeneratedFile>,
+    /// Public functions with their actual callable C symbols.
+    pub exports: Vec<ExportedFunction>,
+}
+
+/// A public entry point emitted into the generated header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedFunction {
+    /// The function name recorded by Flow IR, before C identifier sanitization.
+    pub source_name: String,
+    /// The callable C symbol; suspension entries include the `_start` suffix.
+    pub c_symbol: String,
+    /// Whether calling the entry starts a suspendable fiber.
+    pub suspends: bool,
 }
 
 /// One file produced by the backend.

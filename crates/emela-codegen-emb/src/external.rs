@@ -91,6 +91,17 @@ pub(super) fn resolve(
         .iter()
         .filter(|(id, f)| emitted.contains(id) && f.external.is_some() && !f.suspends)
     {
+        if peripheral::resolve(flow, f)?.is_some() {
+            bindings.insert(
+                id,
+                Binding {
+                    symbol: function_name(id, f),
+                    result: ExternalResult::Owned,
+                    adapted: true,
+                },
+            );
+            continue;
+        }
         if let Some(kind) = crate::derived::kind(f) {
             bindings.insert(
                 id,
@@ -194,6 +205,7 @@ pub(super) fn resolve(
         .iter()
         .filter(|(id, f)| emitted.contains(id) && f.external.is_some() && f.suspends)
     {
+        peripheral::resolve(flow, f)?;
         let symbol = suspend::external_symbol(f, options)?;
         let mut abi = vec!["void".into(), "EmelaTask".into()];
         abi.extend(f.params.iter().map(|&p| layouts.c_type(f.vars[p].ty)));
@@ -321,6 +333,7 @@ fn boundary_types(flow: &emela_lir::Module, bindings: &Bindings) -> Vec<TypeId> 
         .iter()
         .filter(|(_, b)| b.adapted)
         .filter(|(id, _)| crate::derived::kind(&flow.functions[**id]).is_none())
+        .filter(|(id, _)| !peripheral::is_binding(&flow.functions[**id]))
         .flat_map(|(&id, _)| {
             let f = &flow.functions[id];
             f.params
@@ -345,7 +358,10 @@ pub(super) fn emit_header(
     ids.sort_by_key(|id| u32::from(id.into_raw()));
     for id in ids {
         let b = &bindings[&id];
-        if !b.adapted || crate::derived::kind(&flow.functions[id]).is_some() {
+        if !b.adapted
+            || crate::derived::kind(&flow.functions[id]).is_some()
+            || peripheral::is_binding(&flow.functions[id])
+        {
             continue;
         }
         writer.line(

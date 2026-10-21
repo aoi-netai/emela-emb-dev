@@ -1,8 +1,8 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use emela_driver::{
-    Analysis, Backend, CoreC, CoreJs, CoreWasm, Diagnostic, FileSystem, Input, Lower, LowerTests,
-    MemoryFiles, OsFs, Output, RunOptions, SourceDb, Target, TestBackend, TestModule, TestOptions,
-    Typecheck,
+    Analysis, Backend, CoreC, CoreEmbedded, CoreJs, CoreWasm, Diagnostic, EmbeddedConfig,
+    FileSystem, Input, Lower, LowerTests, MemoryFiles, OsFs, Output, RunOptions, SourceDb, Target,
+    TestBackend, TestModule, TestOptions, Typecheck,
 };
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read, Write};
@@ -25,7 +25,7 @@ enum Command {
         path: Option<PathBuf>,
     },
     /// Compile to the output of `--target` (`target/emela/js` for JS; a native executable for C;
-    /// `main.wasm` for WASM)
+    /// `main.wasm` for WASM; C sources for c-embedded)
     Build {
         /// Entry file or project directory [default: .]
         path: Option<PathBuf>,
@@ -35,6 +35,9 @@ enum Command {
         /// The target [default: `[build].target` of Pome.toml, or js]
         #[arg(long, value_enum)]
         target: Option<TargetArg>,
+        /// Embedded runtime and board adapter configuration (only for --target c-embedded)
+        #[arg(long)]
+        embedded_config: Option<PathBuf>,
     },
     /// Compile and run: on Node.js, as a native executable (`--target c`), or with wasmtime
     /// (`--target wasm`)
@@ -98,6 +101,8 @@ enum TargetArg {
     Js,
     /// C compiled with cc (`EMELA_CC`) to a native executable
     C,
+    /// C sources for a separate embedded board toolchain (build only)
+    CEmbedded,
     /// WebAssembly (WASI) run with `wasmtime` (`EMELA_WASMTIME`)
     Wasm,
 }
@@ -107,6 +112,7 @@ impl From<TargetArg> for Target {
         match target {
             TargetArg::Js => Target::Js,
             TargetArg::C => Target::C,
+            TargetArg::CEmbedded => Target::CEmbedded,
             TargetArg::Wasm => Target::Wasm,
         }
     }
@@ -129,7 +135,8 @@ fn main() -> ExitCode {
             path,
             out_dir,
             target,
-        } => build(&path_or_current(path), out_dir, target),
+            embedded_config,
+        } => build(&path_or_current(path), out_dir, target, embedded_config),
         Command::Run {
             path,
             out_dir,
@@ -180,12 +187,36 @@ fn resolve_target(input: &Input, flag: Option<TargetArg>) -> Option<Target> {
     }
 }
 
-fn build(path: &Path, out_dir: Option<PathBuf>, target: Option<TargetArg>) -> ExitCode {
+fn build(
+    path: &Path,
+    out_dir: Option<PathBuf>,
+    target: Option<TargetArg>,
+    embedded_config: Option<PathBuf>,
+) -> ExitCode {
     let Some(input) = resolve_input(&OsFs, path) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let Some(target) = resolve_target(&input, target) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
+    };
+    if embedded_config.is_some() && target != Target::CEmbedded {
+        print_diagnostics(
+            &[Diagnostic::error(
+                "`--embedded-config` requires `--target c-embedded` or `[build].target = \"c-embedded\"`",
+            )],
+            &SourceDb::new(),
+        );
+        return ExitCode::from(DIAGNOSTIC_FAILURE);
+    }
+    let embedded_config = match embedded_config {
+        Some(path) => match EmbeddedConfig::read(&OsFs, &path) {
+            Ok(config) => config,
+            Err(diagnostic) => {
+                print_diagnostics(&[diagnostic], &SourceDb::new());
+                return ExitCode::from(DIAGNOSTIC_FAILURE);
+            }
+        },
+        None => EmbeddedConfig::default(),
     };
     let out_dir = out_dir.unwrap_or_else(|| input.default_out_dir_for(target));
     let mut frontend = Lower::default().with_target(target);
@@ -196,6 +227,13 @@ fn build(path: &Path, out_dir: Option<PathBuf>, target: Option<TargetArg>) -> Ex
             &input,
             &mut frontend,
             &mut CoreC::default(),
+            &out_dir,
+        ),
+        Target::CEmbedded => emela_driver::build(
+            &OsFs,
+            &input,
+            &mut frontend,
+            &mut CoreEmbedded::new(embedded_config),
             &out_dir,
         ),
         Target::Wasm => emela_driver::build(&OsFs, &input, &mut frontend, &mut CoreWasm, &out_dir),
@@ -224,6 +262,7 @@ fn run(
     match target {
         Target::Js => run_with(&input, &options, target, &mut CoreJs),
         Target::C => run_with(&input, &options, target, &mut CoreC::default()),
+        Target::CEmbedded => unsupported_embedded_command("run"),
         Target::Wasm => run_with(&input, &options, target, &mut CoreWasm),
     }
 }
@@ -287,8 +326,20 @@ fn test(
     match target {
         Target::Js => test_with(&input, &options, target, &mut CoreJs),
         Target::C => test_with(&input, &options, target, &mut CoreC::default()),
+        Target::CEmbedded => unsupported_embedded_command("test"),
         Target::Wasm => test_with(&input, &options, target, &mut CoreWasm),
     }
+}
+
+fn unsupported_embedded_command(command: &str) -> ExitCode {
+    print_diagnostics(
+        &[Diagnostic::error(format!(
+            "`{command}` is not available for target `c-embedded`"
+        ))
+        .with_note("help: use `emela build --target c-embedded`, then build and run the generated C with the board's toolchain and runner")],
+        &SourceDb::new(),
+    );
+    ExitCode::from(DIAGNOSTIC_FAILURE)
 }
 
 fn test_with<B: TestBackend<TestModule>>(

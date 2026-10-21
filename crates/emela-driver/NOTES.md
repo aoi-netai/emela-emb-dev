@@ -28,11 +28,14 @@ pub trait Backend<P> {
 - `ParseOnly` は emela-syntax のパーサを呼び，構文木（`Parse`）をモジュールごとに持つ（`parse_of`）．型検査はしないので `Program = ()`
 - `Resolve` は `ParseOnly` で構文解析し，`check` で名前解決をする（`Program = emela_resolve::hir::Program`）
 - `Typecheck` は `Resolve` の後に型検査（`emela_types::check_program`）をする（`Program = TypedProgram`．HIR と型検査の結果の組）．cli の `check` と LSP はこれを使う
-- `Lower` は `Typecheck` の後に lowering（`emela_core::lower`）をする（`Program = emela_core::Module`）．名前解決か型検査に誤りが1件でもあれば lowering は呼ばない．根はエントリのモジュールの export する fn．ターゲットを渡すので，返る IR は単相化済み（2026-10-15．汎用の `pub` の fn は型引数を `Any` にした写し）．debug ビルドでは `verify_monomorphic` にかける（多相な IR の `verify` は lowering の中で行う）．`LowerTests` も同じで，`TestCase::function` は単相化した写しを指す．lowering の誤り（まだ扱えない式）は `Diagnostic::from_lower` で診断にする．cli の `build` と `run` は `Lower` と `CoreJs` を使う
+- `Lower` は `Typecheck` の後に lowering（`emela_core::lower`）をする（`Program = emela_core::Module`）．名前解決か型検査に誤りが1件でもあれば lowering は呼ばない．根はエントリのモジュールの export する fn．組み込みC以外はターゲットを渡すので，返る IR は単相化済み（2026-10-15．汎用の `pub` の fn は型引数を `Any` にした写し）．組み込みCはbackend内で汎化constの起源を保存してから単相化するため，単相化前のCoreを返す．debug ビルドでは組み込みCは `verify`，それ以外は `verify_monomorphic` にかける（多相な IR の `verify` は lowering の中で行う）．`LowerTests` も同じで，`TestCase::function` は単相化した写しを指す．lowering の誤り（まだ扱えない式）は `Diagnostic::from_lower` で診断にする．cli の `build` と `run` は `Lower` と `CoreJs` を使う
 - `LexOnly` は字句解析だけ（字句の診断だけを返し，import なし，型検査なし）．`NoJsBackend` は「JS の出力はまだ実装されていない」の診断を返す
 - `CoreJs` は `Backend<emela_core::Module>`．lowering の済んだ（自己末尾呼び出しのループ化と単相化も済んだ）IR をそのまま emela-codegen-js で出す．モジュールは複製しない．cli の `build` と `run` は `Lower` と組み合わせて使う
 
 ## C のターゲット（`--target c`，仕様 16章）
+
+- （補）組み込みCのtarget名は `c-embedded`（`Target::CEmbedded`）。`Target::name` は設定と表示に使う名前で、外部ABIは既存の `@external(c, ...)` を使う。組み込みbackendが汎化constのsource起源を保存してから単相化するため、このtargetだけ `LowerInput.target = None` として単相化前のCoreを渡す。C bindingの検査も組み込みbackendが担当する。他のtargetのloweringは従来どおり。
+- （補）`Runner::BuildOnly` はboard toolchainで別途処理する生成物を表す。driverの `run` / `test` でも診断にし、出力や実行へ進まない。組み込みtargetの通常出力先は `target/emela/c-embedded`。
 
 - （補）ターゲットは `Target`（`js`，`c`）．コマンドの `--target`，なければ `Pome.toml` の `[build].target`（4.7），なければ js．`Pome.toml` は今もほかの項目を読まず，`[build].target` だけを `toml` で読む．TOML として読めないファイルや文字列でない `target` は「指定なし」とみなし，知らない名前だけを E0232 にする．依存の仕組みがまだないので，「依存されたときは無視する」は今は何もしなくてよい
 - （補）`Lower` と `LowerTests` は `with_target` で lowering の外部関数の検査（12.1，E0412）のターゲットを変える

@@ -19,3 +19,6 @@
 - （補）`run` はエントリに `main` の fn がなければ E0230 で止まり，node を起動しない（終了コード 1）．`build` は main がなくても出力する（8.3）．判定は driver が持つ
 - （補）`lsp` は引数を取らない．フロントエンドは `check` と同じもの（今は `Typecheck`）を渡す．exit を受けたら 0，プロトコルの誤りで止まったら標準エラーに1行出して 1
 - （補）`--help` の文言（サブコマンドと引数の説明）は英語で書く．README の Commands の表と同じ言葉を使う．既定値は clap の `[default: …]` の形を説明の末尾に手で書く（`Option<PathBuf>` の既定は main.rs で決めるため）．テスト `help_is_english` が ASCII だけであることを確かめる
+- （補）`build --target c-embedded` は `Lower` と `CoreEmbedded` で組み込みCと公開headerを生成する。既定の出力先は `target/emela/c-embedded`。ARM向けのcompile・link・実行はboard側の手順で行う。`Pome.toml` の `[build].target = "c-embedded"` も同じ意味になる。
+- （補）`build --embedded-config PATH` は組み込みruntime容量・board adapterをTOMLで指定する。相対pathはCLIの現在のdirectoryを基準に読む。省略時はbackendの既定値を使い、自動探索はしない。他のtargetへの指定は診断にし、出力を書かない。
+- （補）`run` と `test` は `c-embedded` を選ぶと診断で止まり、Nodeやnative executableを起動しない。CLI引数だけでなく、`Pome.toml` から選ばれた場合も同様。

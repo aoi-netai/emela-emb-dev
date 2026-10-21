@@ -1,0 +1,110 @@
+import Std.State.{State}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+import Std.Embedded.Gpio.{Gpio, Low, High}
+import Std.Embedded.Peripheral.{PeripheralError}
+import Board.{TemperatureSensor, Peripherals, HEATER, COOLER}
+
+enum Mode { Idle, Heating, Cooling, Fault }
+
+const HEAT_START = 18.0
+const HEAT_STOP = 20.0
+const COOL_STOP = 26.0
+const COOL_START = 28.0
+const SAMPLE_INTERVAL_MS = 1000
+
+# Starting and stopping at different temperatures prevents rapid switching.
+fn from_idle(temperature: Float) -> Mode {
+  if temperature <= HEAT_START { Heating }
+  else if temperature >= COOL_START { Cooling }
+  else { Idle }
+}
+
+# This function has no effects: its result depends only on its arguments.
+fn transition(current: Mode, temperature: Float) -> Mode {
+  current match {
+    Idle -> from_idle(temperature)
+    Heating -> if temperature >= COOL_START { Cooling }
+      else if temperature >= HEAT_STOP { Idle }
+      else { Heating }
+    Cooling -> if temperature <= HEAT_START { Heating }
+      else if temperature <= COOL_STOP { Idle }
+      else { Cooling }
+    Fault -> from_idle(temperature)
+  }
+}
+
+fn mode_name(mode: Mode) -> String {
+  mode match {
+    Idle -> "idle"
+    Heating -> "heating"
+    Cooling -> "cooling"
+    Fault -> "fault"
+  }
+}
+
+effect Thermostat {
+  fn set(mode: Mode) -> ()
+}
+
+fn stop_actuators() -> () use Gpio {
+  gpio = use Gpio
+  gpio.write(HEATER, Low)
+  gpio.write(COOLER, Low)
+}
+
+# The domain handler owns actuator cleanup; the standard handler owns GPIO access.
+handler Actuators implements Thermostat {
+  fn set(mode) {
+    # Break before make also covers a direct Heating <-> Cooling transition.
+    stop_actuators()
+    mode match {
+      Heating -> (use Gpio).write(HEATER, High)
+      Cooling -> (use Gpio).write(COOLER, High)
+      _ -> ()
+    }
+  }
+  release { stop_actuators() }
+}
+
+fn take_sample(sample: Int) -> () use {State[Mode], TemperatureSensor, Thermostat, Console} {
+  device = use Thermostat
+  state = use State[Mode]
+  raw = (use TemperatureSensor).read()
+  # The board returns hundredths of a degree. INT32_MIN also fails this check.
+  if raw < -4000 || raw > 12500 {
+    state.set(Fault)
+    device.set(Fault)
+    (use Console).print_line("sample=#{sample} temperature=unavailable mode=fault")
+  } else {
+    temperature = Float.from_int(raw) / 100.0
+    next = transition(state.get(), temperature)
+    state.set(next)
+    device.set(next)
+    (use Console).print_line("sample=#{sample} temperature=#{Float.to_string(temperature)} mode=#{mode_name(next)}")
+  }
+}
+
+fn monitor(samples: Int, processed: Int) -> Int use {State[Mode], TemperatureSensor, Thermostat, Console, Clock} {
+  # Saturating the counter keeps continuous operation valid after Int's limit.
+  sample = if processed == 2147483647 { processed } else { processed + 1 }
+  take_sample(sample)
+  if samples > 0 && sample >= samples {
+    sample
+  } else {
+    (use Clock).sleep(SAMPLE_INTERVAL_MS)
+    monitor(samples, sample)
+  }
+}
+
+# Positive counts run a finite demo; zero runs continuously; negatives do no work.
+pub fn run(samples: Int) -> Int use Async {
+  with Peripherals, Actuators {
+    Board.configure()
+    (use Thermostat).set(Idle)
+    if samples < 0 { 0 } else {
+      (processed, _) = State.run(Idle, fn() { monitor(samples, 0) })
+      processed
+    }
+  } escape { PeripheralError(_) -> -1 }
+}
