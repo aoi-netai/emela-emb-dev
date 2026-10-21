@@ -1,0 +1,44 @@
+# This module contains the example board's logical wiring and sensor binding.
+import Std.Embedded.Gpio.{Gpio, GpioPin, OutputPushPull, NoPull}
+import Std.Embedded.Uart.{Uart, Uart2, UartConfig, Bits8, One, NoParity, Transmit, NoFlowControl, By16}
+import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Board.{BoardGpio, BoardUart, BoardClock, BoardConsole}
+
+pub const HEATER = GpioPin(5)
+pub const COOLER = GpioPin(6)
+pub const LOG_UART = Uart2
+
+pub effect TemperatureSensor {
+  fn read() -> Int
+}
+
+@external(c, "temperature_sensor_read")
+fn sensor_read() -> Int use {}
+
+pub handler BoardSensor implements TemperatureSensor {
+  fn read() { sensor_read() }
+}
+
+pub fn configure() -> () fails PeripheralError use {Gpio, Uart} {
+  gpio = use Gpio
+  gpio.configure(HEATER, OutputPushPull, NoPull)
+  gpio.configure(COOLER, OutputPushPull, NoPull)
+  (use Uart).configure(LOG_UART, UartConfig(
+    baud_rate: 115200,
+    data_bits: Bits8,
+    stop_bits: One,
+    parity: NoParity,
+    direction: Transmit,
+    flow_control: NoFlowControl,
+    oversampling: By16
+  ))
+}
+
+# Group the selected board handlers into the example's platform layer.
+pub layer Peripherals {
+  BoardGpio
+  BoardUart
+  BoardClock
+  BoardConsole
+  BoardSensor
+}

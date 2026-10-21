@@ -1,6 +1,6 @@
 # 温度調節器
 
-温度を1秒ごとに読み、低温なら加熱、高温なら冷却するexampleである。同じ`controller.emel`をSTM32F446とESP32-C3で使用する。温度と運転状態はUARTへ表示し、加熱・冷却装置への指示を2本のGPIOで出力する。
+温度を1秒ごとに読み、低温なら加熱、高温なら冷却するexampleである。同じ`controller.emel`をSTM32F4の各profileとESP32-C3で使用する。温度と運転状態はUARTへ表示し、加熱・冷却装置への指示を2本のGPIOで出力する。
 
 温度だけで次の出力を決めると、境界付近で装置が頻繁に切り替わる。ここでは「現在の運転状態」を保持し、開始温度と停止温度を分ける。
 
@@ -30,6 +30,23 @@ emela flash crates/emela-codegen-emb/examples/temperature-controller/firmware \
 
 出力先には`generated/`、展開された`bsp/`、`firmware/firmware.elf`・`.bin`・`.map`、資源とhashを含むmanifestを保存する。書き込み前にはboard、生成物とソース・設定の鮮度を検査し、変更後にrebuildしていない場合は失敗する。
 
+### STM32F4のボードを切り替える
+
+`stm32f407vg`・`stm32f412zg`・`stm32f429zi`・`stm32f446re`のMCU profileと、`stm32f4-discovery`・`nucleo-f446re`の基板profileを選べる。既存の`stm32f446`も互換IDとして使える。アプリ本体は共通で、`boards/{board}/board.emel`が配線とConsole UARTを選ぶ。
+
+```sh
+emela build crates/emela-codegen-emb/examples/temperature-controller/firmware \
+  --board stm32f412zg --out-dir /tmp/emela-temperature-f412
+python3 crates/emela-codegen-emb/examples/temperature-controller/firmware/renode_stm32.py \
+  --firmware-dir /tmp/emela-temperature-f412/firmware \
+  --platform cpu-f412 --output /tmp/emela-temperature-f412-observed \
+  --renode /path/to/renode --toolchain /path/to/arm-toolchain
+```
+
+F412はUSART6 PC6/PC7、F429はUSART1 PA9/PA10を使う。F407・F412・F429・Discoveryの加熱/冷却出力はPD12/PD13、F446・NucleoはPA5/PA6である。論理GPIO IDは`port * 16 + pin`で、PD12は60となる。Console用pinとMCU packageにないpinは利用時に診断する。
+
+[STM32F4の対象と一括確認](../../docs/stm32f4-boards.md)に全profileの容量・配線、Renode 1.16.1の全F4定義とfragmentの分類、O0/O2 matrixの手順をまとめている。Discovery fragmentは基板へ合成して検証する。温度アプリの起動・GPIO・UART・Clockの確認であり、Ethernet等の全周辺機器を網羅するものではない。
+
 ### STM32のFlash resetをRenodeで確認する
 
 ```sh
@@ -43,9 +60,9 @@ python3 crates/emela-codegen-emb/examples/temperature-controller/firmware/renode
 
 runnerはCLIが作成した`firmware.bin`のみをFlash `0x08000000`へloadする。同一Flashを`0x00000000`にも登録してBOOT0=0をmodel化し、CPU resetでvectorからMSP／PCを取り込む。ELFはsymbolのaddressを得るためだけに使い、Renodeへはloadしない。monitorでPC・SP・VTORを設定する処理もない。
 
-`.data`と`.bss`の観測wordを事前に`0xdeadbeef`で汚してからresetし、startup自身が初期化することを確認する。さらに24行のUARTの温度と運転状態、1秒間隔で観測する実GPIO出力、23回のtask通知、正常終了後の両出力OFF、stack high-waterとguardを検査する。`run.resc`・platform・`renode.log`・`uart.log`・`report.json`を残す。GPIOの観測はsample時の出力状態の確認であり、全命令間の短い過渡状態の記録ではない。
+`.data`と`.bss`の観測wordを事前に`0xdeadbeef`で汚してからresetし、startup自身が初期化することを確認する。さらに24行のUARTの温度と運転状態、1秒間隔で観測する実GPIO出力、23回のtask通知、正常終了後の両出力OFF、stack high-waterとguardを検査する。`run.resc`・platform・`renode.log`・`uart.log`・`report.json`を残す。GPIOはsample時の出力registerに加えて、外部LEDと独立receiverへ接続する。receiverが記録した全遷移を期待するOFF/ON順序と照合し、両装置の同時ONと終了時の状態も検査する。ConsoleのTX/RXのAF設定とRCC enable bitもreadbackする。これは電気的特性を検証するものではない。
 
-CLIが同梱する汎用STM32 runtimeを使い、Renode 1.16.1・Arm GNU GCC 13.2.1で次を確認した。単位はbyte。
+現行のF4共通BSPによる機種別の資源は[STM32F4の確認結果](../../docs/stm32f4-boards.md#確認結果)を参照する。以下は共通化前のSTM32F446専用BSPをRenode 1.16.1・Arm GNU GCC 13.2.1で確認した履歴である。単位はbyte。
 
 | 最適化 | Flash BIN | 静的RAM | RAM予約合計 | 観測MSP |
 | --- | ---: | ---: | ---: | ---: |
@@ -165,7 +182,8 @@ temperature-controller/
 │   ├── src/main.emel
 │   ├── sensor.c
 │   └── renode_stm32.py
-├── boards/stm32f446/board.emel
+├── boards/{stm32f407vg,stm32f412zg,stm32f429zi,stm32f446re}/board.emel
+├── boards/{stm32f4-discovery,nucleo-f446re,stm32f446}/board.emel
 ├── boards/esp32c3/
 │   ├── board.emel
 │   └── embedded.toml
@@ -191,6 +209,7 @@ temperature-controller/
 | [firmware/Pome.toml](firmware/Pome.toml)、[src/main.emel](firmware/src/main.emel) | CLIでボードを選び、汎用packageから起動するprojectと引数なしentry |
 | [firmware/sensor.c](firmware/sensor.c) | projectが追加する独自の模擬センサ。制御判断とCのmainは持たない |
 | [firmware/renode_stm32.py](firmware/renode_stm32.py) | CLI作成済みのFlash BINをreset起動し、UART・sample時GPIO・startup初期化・stackを確認する |
+| `boards/{board}/board.emel` | 選択したSTM32F4 MCU・基板の論理GPIOとConsole UARTの配線。センサeffectとlayerの契約は共通 |
 | [renode/board.c](renode/board.c) | 模擬温度入力、GPIO、USART2、SysTick、schedulerの駆動 |
 | [renode/run.sh](renode/run.sh)、[run.py](renode/run.py) | ビルド、Renode起動、実行ログと資源の確認 |
 | [boards/esp32c3/board.emel](boards/esp32c3/board.emel) | ESP32-C3向けの論理ピン・UART0設定。アプリ共通のセンサeffectとlayer |
