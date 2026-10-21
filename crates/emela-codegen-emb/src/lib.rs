@@ -20,6 +20,12 @@ mod writer;
 pub struct Options {
     string_capacity: u16,
     heap_bytes: u32,
+    fiber_capacity: u16,
+    frame_capacity: u16,
+    frame_bytes: u16,
+    task_capacity: u16,
+    event_capacity: u16,
+    task_adapters: Vec<(String, String)>,
     isr_entries: Vec<String>,
     isr_safe_externals: Vec<String>,
 }
@@ -29,6 +35,12 @@ impl Default for Options {
         Self {
             string_capacity: 256,
             heap_bytes: 0,
+            fiber_capacity: 8,
+            frame_capacity: 32,
+            frame_bytes: 256,
+            task_capacity: 8,
+            event_capacity: 8,
+            task_adapters: Vec::new(),
             isr_entries: Vec::new(),
             isr_safe_externals: Vec::new(),
         }
@@ -61,6 +73,51 @@ impl Options {
     /// Returns the configured byte capacity for the generated fixed heap.
     pub fn heap_bytes(&self) -> u32 {
         self.heap_bytes
+    }
+
+    /// Sets the maximum number of active or completed, unreleased fiber handles (default 8).
+    /// Storage is emitted only when a reachable function suspends.
+    pub fn with_fiber_capacity(mut self, count: u16) -> Self {
+        self.fiber_capacity = count;
+        self
+    }
+
+    /// Sets the maximum number of simultaneously live suspension frames (default 32).
+    pub fn with_frame_capacity(mut self, count: u16) -> Self {
+        self.frame_capacity = count;
+        self
+    }
+
+    /// Sets the byte capacity of each suspension frame, including its header (default 256).
+    /// Generated C checks each typed frame against this target-dependent limit.
+    pub fn with_frame_bytes(mut self, bytes: u16) -> Self {
+        self.frame_bytes = bytes;
+        self
+    }
+
+    /// Sets the maximum number of pending external tasks (default 8).
+    pub fn with_task_capacity(mut self, count: u16) -> Self {
+        self.task_capacity = count;
+        self
+    }
+
+    /// Sets the maximum number of queued completion events (default 8).
+    pub fn with_event_capacity(mut self, count: u16) -> Self {
+        self.event_capacity = count;
+        self
+    }
+
+    /// Maps an external C binding to a board adapter using the generated EmelaTask ABI.
+    /// An explicit mapping prevents linking a host suspend function with a different ABI.
+    pub fn with_task_adapter(
+        mut self,
+        c_symbol: impl Into<String>,
+        adapter: impl Into<String>,
+    ) -> Self {
+        let c_symbol = c_symbol.into();
+        self.task_adapters.retain(|(symbol, _)| symbol != &c_symbol);
+        self.task_adapters.push((c_symbol, adapter.into()));
+        self
     }
 
     /// Marks an exported Emela function as an interrupt-service entry point.

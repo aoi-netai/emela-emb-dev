@@ -4,6 +4,7 @@ use emela_core::Type;
 use emela_lir::{Callee, Function, Module, Operand, Seq, Stmt, Term, Value, VarData};
 
 pub(crate) fn lower(module: &mut Module, closure_functions: &HashSet<emela_lir::FnId>) {
+    normalize_suspend_handlers(module);
     let reachable = crate::emit::runtime_reachable(module);
     let mut adapters = HashMap::new();
     let mut pending = Vec::new();
@@ -77,6 +78,70 @@ pub(crate) fn lower(module: &mut Module, closure_functions: &HashSet<emela_lir::
         };
         if let Stmt::Let { value, .. } = &mut module.functions[caller].stmts[statement] {
             *value = Value::FnRef(adapter);
+        }
+    }
+}
+
+fn normalize_suspend_handlers(module: &mut Module) {
+    let reachable = crate::emit::runtime_reachable(module);
+    for id in reachable {
+        let mut inserted = HashMap::new();
+        let function = &mut module.functions[id];
+        for (statement, stmt) in function.stmts.clone().iter() {
+            let Stmt::Let {
+                value: Value::Handler { effect, ops, .. },
+                ..
+            } = stmt
+            else {
+                continue;
+            };
+            let mut adapted = ops.clone();
+            for (index, &source) in ops.iter().enumerate() {
+                if !module.core.effects[*effect].ops[index].suspend {
+                    continue;
+                }
+                let Type::Fn(mut ft) = module.core.types[function.vars[source].ty].clone() else {
+                    continue;
+                };
+                if ft.suspends {
+                    continue;
+                }
+                ft.suspends = true;
+                let ty = module.core.types.intern(Type::Fn(ft));
+                let dst = function.vars.alloc(VarData {
+                    hint: "suspend_operation".into(),
+                    repr: emela_lir::Repr::Ref,
+                    ty,
+                });
+                let coercion = function.stmts.alloc(Stmt::Let {
+                    dst: Some(dst),
+                    value: Value::Coerce(source),
+                    on_defect: None,
+                    on_suspend: None,
+                });
+                inserted
+                    .entry(statement)
+                    .or_insert_with(Vec::new)
+                    .push(coercion);
+                adapted[index] = dst;
+            }
+            if let Stmt::Let {
+                value: Value::Handler { ops, .. },
+                ..
+            } = &mut function.stmts[statement]
+            {
+                *ops = adapted;
+            }
+        }
+        for (_, seq) in function.seqs.iter_mut() {
+            let mut statements = Vec::new();
+            for statement in &seq.stmts {
+                if let Some(before) = inserted.get(statement) {
+                    statements.extend(before);
+                }
+                statements.push(*statement);
+            }
+            seq.stmts = statements;
         }
     }
 }

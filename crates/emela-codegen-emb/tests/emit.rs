@@ -5,6 +5,8 @@ mod function_aggregate;
 mod owned;
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
+mod suspend;
+mod task_values;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

@@ -1,0 +1,1044 @@
+//! Backend-owned resumable control flow. Input remains verified Flow IR.
+
+use super::*;
+
+pub(super) fn scalar(types: &TypeTable, ty: TypeId) -> bool {
+    matches!(
+        types[ty],
+        Type::Int | Type::Int64 | Type::Float | Type::Bool | Type::Unit | Type::Never
+    )
+}
+
+pub(super) fn validate(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    options: &Options,
+) -> Result<bool, Vec<Error>> {
+    let mut enabled = has_operations(flow, emitted);
+    for (id, function) in flow.functions.iter().filter(|(id, _)| emitted.contains(id)) {
+        if !function.suspends {
+            continue;
+        }
+        enabled = true;
+        if function.fails || function.constant {
+            return Err(unsupported(
+                &function.name,
+                "failing or const suspend function (phase 7 follow-up)",
+            ));
+        }
+        for (_, stmt) in function.stmts.iter() {
+            if matches!(stmt, Stmt::Protect { .. }) {
+                return Err(unsupported(
+                    &function.name,
+                    "Protect cleanup in a suspend function (phase 7 follow-up)",
+                ));
+            }
+            if let Stmt::Let { value, .. } = stmt {
+                match value {
+                    Value::Call {
+                        on_fail: Some(_), ..
+                    } => {
+                        return Err(unsupported(
+                            &function.name,
+                            "failure edge in a suspend frame (phase 7 follow-up)",
+                        ));
+                    }
+                    Value::Fiber { .. } => {
+                        return Err(unsupported(
+                            &function.name,
+                            &format!(
+                                "{} in a suspend function (phase 7 follow-up)",
+                                value_name(value)
+                            ),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Suspended entry points have an asynchronous start ABI, not a synchronous adapter.
+        for (caller_id, caller) in flow.functions.iter().filter(|(id, _)| emitted.contains(id)) {
+            if caller_id == id {
+                continue;
+            }
+            if !caller.suspends && directly_calls(caller, id) {
+                return Err(unsupported(
+                    &caller.name,
+                    "suspend call from a synchronous function",
+                ));
+            }
+        }
+    }
+    if enabled
+        && (options.fiber_capacity == 0 || options.frame_capacity == 0 || options.frame_bytes == 0)
+    {
+        return Err(vec![Error { kind: ErrorKind::InvalidOptions, message: "fiber_capacity, frame_capacity, and frame_bytes must be positive for suspend functions".into() }]);
+    }
+    if has_tasks(flow, emitted) && (options.task_capacity == 0 || options.event_capacity == 0) {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidOptions,
+            message: "task_capacity and event_capacity must be positive for suspend external calls"
+                .into(),
+        }]);
+    }
+    Ok(enabled)
+}
+
+pub(super) fn has_operations(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions.iter().any(|(id, function)| {
+        if !emitted.contains(&id) {
+            return false;
+        }
+        let (positions, _) = function_positions(function);
+        function.stmts.iter().any(|(id, stmt)| {
+            positions.contains_key(&id)
+                && matches!(stmt,
+            Stmt::Let { value: Value::Call { callee: Callee::Op { effect, op, .. }, .. }, .. }
+                if flow.core.effects[*effect].ops[*op].suspend)
+        })
+    })
+}
+
+pub(super) fn has_tasks(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .any(|(id, f)| emitted.contains(&id) && f.suspends && f.external.is_some())
+}
+
+pub(super) fn external_symbol(
+    function: &Function,
+    options: &Options,
+) -> Result<String, Vec<Error>> {
+    let binding = function
+        .external
+        .as_ref()
+        .and_then(|external| external.binding("c"))
+        .ok_or_else(|| unsupported(&function.name, "suspend external without C binding"))?;
+    let original = match &binding.host {
+        emela_core::HostRef::Global(name) | emela_core::HostRef::Import { name, .. } => name,
+    };
+    let (_, symbol) = options
+        .task_adapters
+        .iter()
+        .find(|(name, _)| name == original)
+        .ok_or_else(|| {
+            unsupported(
+                &function.name,
+                "suspend external needs an explicit Options::with_task_adapter mapping",
+            )
+        })?;
+    if !is_c_identifier(symbol) {
+        return Err(unsupported(&function.name, "invalid C task adapter symbol"));
+    }
+    Ok(symbol.clone())
+}
+
+pub(super) fn task_signature(layouts: &TypeLayouts<'_>, function: &Function, name: &str) -> String {
+    let mut params = vec!["EmelaTask task".to_owned()];
+    params.extend(function.params.iter().map(|id| {
+        format!(
+            "{} {}",
+            layouts.c_type(function.vars[*id].ty),
+            variable_name(*id)
+        )
+    }));
+    format!("void {name}({})", params.join(", "))
+}
+
+pub(super) fn emit_runtime(writer: &mut Writer, options: &Options, tasks: bool, resumes: bool) {
+    if resumes {
+        writer.line("#define EMELA_RESUME_RUNTIME 1");
+    }
+    writer.line(&format!(
+        "#define EMELA_FIBER_CAPACITY {}",
+        options.fiber_capacity
+    ));
+    writer.line(&format!(
+        "#define EMELA_FRAME_CAPACITY {}",
+        options.frame_capacity
+    ));
+    writer.line(&format!(
+        "#define EMELA_FRAME_BYTES {}",
+        options.frame_bytes
+    ));
+    if tasks {
+        writer.line(&format!(
+            "#define EMELA_TASK_CAPACITY {}",
+            options.task_capacity
+        ));
+        writer.line(&format!(
+            "#define EMELA_EVENT_CAPACITY {}",
+            options.event_capacity
+        ));
+    }
+    writer.line(include_str!("runtime/scheduler.c"));
+    if tasks {
+        writer.line(include_str!("runtime/task.c"));
+    }
+}
+
+fn parameters(layouts: &TypeLayouts<'_>, function: &Function) -> Vec<String> {
+    let mut params = function
+        .params
+        .iter()
+        .map(|id| {
+            format!(
+                "{} {}",
+                layouts.c_type(function.vars[*id].ty),
+                variable_name(*id)
+            )
+        })
+        .collect::<Vec<_>>();
+    if layouts.type_repr(function.ret) != Repr::Void {
+        params.push(format!("{} *result", layouts.c_type(function.ret)));
+    }
+    params
+}
+
+pub(super) fn start_signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+) -> String {
+    let params = parameters(layouts, function);
+    format!(
+        "EmelaFiber {name}_start({})",
+        if params.is_empty() {
+            "void".to_owned()
+        } else {
+            params.join(", ")
+        }
+    )
+}
+
+fn push_signature(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    environment: Option<usize>,
+) -> String {
+    let mut params = vec!["emela_fiber *fiber".to_owned()];
+    if environment.is_some() {
+        params.push("void *emela_env".to_owned());
+    }
+    params.extend(parameters(layouts, function));
+    format!("static void {name}_push({})", params.join(", "))
+}
+
+pub(super) fn emit_declarations(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    name: &str,
+    environment: Option<usize>,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    writer.line(&format!(
+        "{};",
+        push_signature(layouts, function, name, environment)
+    ));
+    Ok(())
+}
+
+enum Node {
+    Statement(StmtId, usize),
+    Assign(Vec<(VarId, Operand)>, usize),
+    Branch(Operand, usize, usize),
+    Switch(SwitchOn, Vec<(CaseKey, usize)>, Option<usize>),
+    Return(Option<Operand>),
+    Defect(Operand),
+    Unreachable,
+}
+
+#[derive(Clone)]
+struct LoopTarget {
+    vars: Vec<VarId>,
+    entry: usize,
+}
+
+struct Graph {
+    nodes: Vec<Node>,
+    blocks: HashMap<LabelId, (Option<VarId>, usize)>,
+    loops: Vec<LoopTarget>,
+}
+
+impl Graph {
+    fn add(&mut self, node: Node) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(node);
+        id
+    }
+
+    fn assign(&mut self, dst: Option<VarId>, value: &Option<Operand>, next: usize) -> usize {
+        let values = dst.zip(value.clone()).into_iter().collect();
+        self.add(Node::Assign(values, next))
+    }
+
+    fn sequence(
+        &mut self,
+        function: &Function,
+        seq: SeqId,
+        dst: Option<VarId>,
+        next: usize,
+    ) -> Result<usize, Vec<Error>> {
+        let sequence = &function.seqs[seq];
+        let mut entry = match &sequence.term {
+            Term::Yield(value) => self.assign(dst, value, next),
+            Term::Return(value) => self.add(Node::Return(value.clone())),
+            Term::Defect(value) => self.add(Node::Defect(value.clone())),
+            Term::Unreachable => self.add(Node::Unreachable),
+            Term::Break { label, value } => {
+                let &(dst, next) = self.blocks.get(label).ok_or_else(|| {
+                    invalid_flow_ir(&function.name, "suspend Break without enclosing Block")
+                })?;
+                self.assign(dst, value, next)
+            }
+            Term::Recur(values) => {
+                let target = self
+                    .loops
+                    .last()
+                    .ok_or_else(|| {
+                        invalid_flow_ir(&function.name, "suspend Recur without enclosing Loop")
+                    })?
+                    .clone();
+                self.add(Node::Assign(
+                    target.vars.into_iter().zip(values.clone()).collect(),
+                    target.entry,
+                ))
+            }
+            _ => {
+                return Err(unsupported(
+                    &function.name,
+                    "failure terminator in suspend function (phase 7 follow-up)",
+                ));
+            }
+        };
+        for &id in sequence.stmts.iter().rev() {
+            entry = match &function.stmts[id] {
+                Stmt::Let { .. } => self.add(Node::Statement(id, entry)),
+                Stmt::If {
+                    dst,
+                    cond,
+                    then,
+                    else_,
+                } => {
+                    let yes = self.sequence(function, *then, *dst, entry)?;
+                    let no = self.sequence(function, *else_, *dst, entry)?;
+                    self.add(Node::Branch(cond.clone(), yes, no))
+                }
+                Stmt::Switch {
+                    dst,
+                    on,
+                    cases,
+                    default,
+                } => {
+                    let cases = cases
+                        .iter()
+                        .map(|case| {
+                            Ok((
+                                case.key.clone(),
+                                self.sequence(function, case.body, *dst, entry)?,
+                            ))
+                        })
+                        .collect::<Result<_, Vec<Error>>>()?;
+                    let default = default
+                        .map(|seq| self.sequence(function, seq, *dst, entry))
+                        .transpose()?;
+                    self.add(Node::Switch(*on, cases, default))
+                }
+                Stmt::Block { dst, label, body } => {
+                    self.blocks.insert(*label, (*dst, entry));
+                    let body = self.sequence(function, *body, *dst, entry)?;
+                    self.blocks.remove(label);
+                    body
+                }
+                Stmt::Loop {
+                    dst,
+                    vars,
+                    inits,
+                    body,
+                } => {
+                    let head = self.add(Node::Unreachable);
+                    self.loops.push(LoopTarget {
+                        vars: vars.clone(),
+                        entry: head,
+                    });
+                    let body = self.sequence(function, *body, *dst, entry)?;
+                    self.loops.pop();
+                    self.nodes[head] = Node::Assign(vec![], body);
+                    self.add(Node::Assign(
+                        vars.iter().copied().zip(inits.clone()).collect(),
+                        head,
+                    ))
+                }
+                _ => {
+                    return Err(unsupported(
+                        &function.name,
+                        "unsupported compound suspend statement",
+                    ));
+                }
+            };
+        }
+        Ok(entry)
+    }
+}
+
+pub(super) fn emit_function(
+    flow: &emela_lir::Module,
+    layouts: &TypeLayouts<'_>,
+    function_id: FnId,
+    function: &Function,
+    name: &str,
+    names: &HashMap<FnId, String>,
+    output_calls: &HashSet<FnId>,
+    environment: Option<usize>,
+    options: &Options,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    if function.external.is_some() {
+        writer.begin_block(&push_signature(layouts, function, name, None));
+        let kind = task_kind(layouts, function.ret, &function.name)?;
+        let result = if layouts.type_repr(function.ret) == Repr::Void {
+            "NULL"
+        } else {
+            "result"
+        };
+        writer.line(&format!(
+            "EmelaTask task = emela_task_begin(fiber, {result}, EMELA_TASK_{kind});"
+        ));
+        let mut args = vec!["task".to_owned()];
+        args.extend(function.params.iter().copied().map(variable_name));
+        writer.line(&format!("{name}({});", args.join(", ")));
+        writer.end_block();
+        return Ok(());
+    }
+    let mut graph = Graph {
+        nodes: vec![],
+        blocks: HashMap::new(),
+        loops: vec![],
+    };
+    let body = function
+        .body
+        .ok_or_else(|| invalid_flow_ir(&function.name, "suspend function without body"))?;
+    let entry = graph.sequence(function, body, None, usize::MAX)?;
+    let strings = StringBufferPlan::new(
+        layouts,
+        function_id,
+        function,
+        options.string_capacity(),
+        output_calls,
+        false,
+    );
+    let has_result = layouts.type_repr(function.ret) != Repr::Void;
+    writer.line(&format!("typedef struct {name}_frame {{"));
+    writer.line("  emela_frame base;");
+    if has_result {
+        writer.line(&format!("  {} *result;", layouts.c_type(function.ret)));
+    }
+    for (id, var) in function.vars.iter() {
+        writer.line(&format!(
+            "  {} local_{};",
+            layouts.c_type(var.ty),
+            u32::from(id.into_raw())
+        ));
+        if layouts.is_managed_value(var.ty) {
+            writer.line(&format!("  int owned_{};", u32::from(id.into_raw())));
+        }
+    }
+    for (name, capacity) in &strings.declarations {
+        writer.line(&format!("  char {name}[{capacity}];"));
+    }
+    writer.line(&format!("}} {name}_frame;"));
+    writer.line(&format!("_Static_assert(sizeof({name}_frame) <= EMELA_FRAME_BYTES, \"increase Options::with_frame_bytes for {name}\");"));
+    writer.begin_block(&format!(
+        "static void {name}_step(emela_fiber *fiber, emela_frame *base)"
+    ));
+    writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+    // Aliases let the shared emitter address persistent fields without stack copies.
+    for (id, _) in function.vars.iter() {
+        writer.line(&format!(
+            "#define {} (frame->local_{})",
+            variable_name(id),
+            u32::from(id.into_raw())
+        ));
+        let ty = function.vars[id].ty;
+        if layouts.is_managed_value(ty) {
+            writer.line(&format!(
+                "#define {} (frame->owned_{})",
+                owned_variable_name(id),
+                u32::from(id.into_raw())
+            ));
+        }
+    }
+    for (name, _) in &strings.declarations {
+        writer.line(&format!("#define {name} (frame->{name})"));
+    }
+    writer.begin_block("for (;;)");
+    if layouts.has_resumes {
+        writer.line("if (fiber->perform != NULL && emela_resume_over(fiber->root)) return;");
+    }
+    writer.begin_block("switch (frame->base.pc)");
+    let mut next_temp = 0;
+    for (index, node) in graph.nodes.iter().enumerate() {
+        writer.begin_block(&format!("case {index}:"));
+        match node {
+            Node::Statement(id, next) => {
+                let statement = &function.stmts[*id];
+                if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Call {
+                            callee:
+                                Callee::Op {
+                                    handler,
+                                    effect,
+                                    op,
+                                },
+                            args,
+                            on_fail: None,
+                            ..
+                        },
+                    ..
+                } = statement
+                    && layouts.core.effects[*effect].ops[*op].suspend
+                {
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    let result = dst
+                        .map(|id| format!("&{}", variable_name(id)))
+                        .unwrap_or_else(|| "NULL".to_owned());
+                    emit_operation(
+                        layouts, function, *dst, *handler, *effect, *op, args, "fiber", &result,
+                        writer,
+                    )?;
+                    writer.begin_block("if (fiber->state == EMELA_FIBER_READY)");
+                    writer.line(
+                        "emela_ready_remove(fiber); fiber->state = EMELA_FIBER_RUNNING; continue;",
+                    );
+                    writer.end_block();
+                    writer.line("return;");
+                } else if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Call {
+                            callee: Callee::Indirect(callee),
+                            args,
+                            on_fail: None,
+                            ..
+                        },
+                    ..
+                } = statement
+                    && matches!(&layouts.types[function.vars[*callee].ty], Type::Fn(ft) if ft.suspends)
+                {
+                    let Type::Fn(ft) = &layouts.types[function.vars[*callee].ty] else {
+                        unreachable!()
+                    };
+                    prepare_result(layouts, function, *dst, writer);
+                    let callee = variable_name(*callee);
+                    writer.line(&format!(
+                        "if ({callee}.call == NULL) emela_scheduler_invalid();"
+                    ));
+                    let mut arguments = vec!["fiber".to_owned(), format!("{callee}.env")];
+                    arguments.extend(
+                        args.iter()
+                            .map(operand_expression)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|why| unsupported(&function.name, why))?,
+                    );
+                    if layouts.type_repr(ft.ret) != Repr::Void {
+                        arguments.push(
+                            dst.map(|dst| format!("&{}", variable_name(dst)))
+                                .unwrap_or_else(|| "NULL".to_owned()),
+                        );
+                    }
+                    writer.line(&format!("frame->base.pc = {next};"));
+                    writer.line(&format!("{callee}.call({}); return;", arguments.join(", ")));
+                } else if let Stmt::Let {
+                    dst,
+                    value:
+                        Value::Call {
+                            callee: Callee::Direct(target),
+                            args,
+                            suspends: true,
+                            ..
+                        },
+                    ..
+                } = statement
+                {
+                    let target_fn = &flow.functions[*target];
+                    if target_fn.suspends
+                        && let Some(dst) = dst
+                    {
+                        emit_release_if_owned(layouts, function, *dst, writer);
+                        if layouts.is_managed_value(function.vars[*dst].ty) {
+                            writer.assign(
+                                &variable_name(*dst),
+                                &format!("({}){{0}}", layouts.c_type(function.vars[*dst].ty)),
+                            );
+                            writer.assign(&owned_variable_name(*dst), "INT32_C(1)");
+                        }
+                    }
+                    if target_fn.suspends {
+                        let mut arguments = vec!["fiber".to_owned()];
+                        arguments.extend(
+                            args.iter()
+                                .map(operand_expression)
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|why| unsupported(&function.name, why))?,
+                        );
+                        if layouts.type_repr(target_fn.ret) != Repr::Void {
+                            arguments.push(
+                                dst.map(|dst| format!("&{}", variable_name(dst)))
+                                    .unwrap_or_else(|| "NULL".to_owned()),
+                            );
+                        }
+                        writer.line(&format!("frame->base.pc = {next};"));
+                        writer.line(&format!(
+                            "{}_push({});",
+                            names[target],
+                            arguments.join(", ")
+                        ));
+                    } else {
+                        let mut statement = statement.clone();
+                        if let Stmt::Let {
+                            value: Value::Call { suspends, .. },
+                            ..
+                        } = &mut statement
+                        {
+                            *suspends = false;
+                        }
+                        emit_statement(
+                            layouts,
+                            function,
+                            &statement,
+                            writer,
+                            names,
+                            &strings,
+                            &mut vec![],
+                            &mut vec![],
+                            &mut vec![],
+                            &mut next_temp,
+                            &mut 0,
+                        )?;
+                        writer.line(&format!("frame->base.pc = {next};"));
+                    }
+                    writer.line("return;");
+                } else {
+                    emit_statement(
+                        layouts,
+                        function,
+                        statement,
+                        writer,
+                        names,
+                        &strings,
+                        &mut vec![],
+                        &mut vec![],
+                        &mut vec![],
+                        &mut next_temp,
+                        &mut 0,
+                    )?;
+                    freeze_statement_result(layouts, function, statement, &strings, writer);
+                    writer.line(&format!("frame->base.pc = {next}; continue;"));
+                }
+            }
+            Node::Assign(values, next) => {
+                // Recur is a parallel assignment: read every old value before overwriting any.
+                for (index, (dst, value)) in values.iter().enumerate() {
+                    writer.decl(
+                        &layouts.c_type(function.vars[*dst].ty),
+                        &format!("next_{index}"),
+                        Some(
+                            &operand_expression(value)
+                                .map_err(|why| unsupported(&function.name, why))?,
+                        ),
+                    );
+                    retain_frame_value(
+                        layouts,
+                        function.vars[*dst].ty,
+                        &format!("next_{index}"),
+                        writer,
+                    );
+                }
+                for (index, (dst, _)) in values.iter().enumerate() {
+                    emit_release_if_owned(layouts, function, *dst, writer);
+                    writer.assign(&variable_name(*dst), &format!("next_{index}"));
+                    if layouts.is_managed_value(function.vars[*dst].ty) {
+                        writer.assign(&owned_variable_name(*dst), "INT32_C(1)");
+                    }
+                }
+                writer.line(&format!("frame->base.pc = {next}; continue;"));
+            }
+            Node::Branch(cond, yes, no) => {
+                writer.line(&format!(
+                    "frame->base.pc = {} ? {yes} : {no}; continue;",
+                    operand_expression(cond).map_err(|why| unsupported(&function.name, why))?
+                ));
+            }
+            Node::Switch(on, cases, default) => {
+                let (scrutinee, tag_switch) = match *on {
+                    SwitchOn::Lit(var) => (variable_name(var), false),
+                    SwitchOn::Tag(var) => {
+                        let ty = function.vars[var].ty;
+                        let Type::Enum(id, _) = layouts.types[ty] else {
+                            return Err(invalid_flow_ir(
+                                &function.name,
+                                "tag switch on a non-enum",
+                            ));
+                        };
+                        if layouts.enum_is_i32(id) {
+                            (variable_name(var), true)
+                        } else if layouts.enum_fields(ty).is_some() {
+                            (format!("{}.tag", variable_name(var)), true)
+                        } else {
+                            return Err(unsupported(
+                                &function.name,
+                                "suspend switch enum representation",
+                            ));
+                        }
+                    }
+                };
+                writer.begin_block(&format!("switch ({scrutinee})"));
+                for (key, target) in cases {
+                    let label = match (key, on) {
+                        (CaseKey::Lit(value), SwitchOn::Lit(_)) => constant_expression(value)
+                            .map_err(|why| unsupported(&function.name, why))?
+                            .ok_or_else(|| invalid_flow_ir(&function.name, "void switch case"))?,
+                        (CaseKey::Variant(variant), SwitchOn::Tag(var)) => {
+                            let Type::Enum(id, _) = layouts.types[function.vars[*var].ty] else {
+                                unreachable!()
+                            };
+                            if *variant >= layouts.core.enums[id].variants.len() {
+                                return Err(invalid_flow_ir(
+                                    &function.name,
+                                    "switch variant out of range",
+                                ));
+                            }
+                            int32_literal(i32::try_from(*variant).map_err(|_| {
+                                invalid_flow_ir(&function.name, "switch variant too large")
+                            })?)
+                        }
+                        _ => return Err(invalid_flow_ir(&function.name, "switch key type")),
+                    };
+                    writer.line(&format!("case {label}: frame->base.pc = {target}; break;"));
+                }
+                if let Some(target) = default {
+                    writer.line(&format!("default: frame->base.pc = {target}; break;"));
+                } else if tag_switch {
+                    writer.line("default: emela_board_defect(EMELA_DEFECT_NO_MATCH, \"no match\", UINT16_C(8));");
+                } else {
+                    writer.line("default: emela_scheduler_invalid();");
+                }
+                writer.end_block();
+                writer.line("continue;");
+            }
+            Node::Return(value) => {
+                if let Some(value) = value {
+                    writer.begin_block("if (frame->result != NULL)");
+                    let expression = operand_expression(value)
+                        .map_err(|why| unsupported(&function.name, why))?;
+                    writer.decl(&layouts.c_type(function.ret), "returned", Some(&expression));
+                    retain_frame_value(layouts, function.ret, "returned", writer);
+                    writer.line(&format!("*frame->result = returned;"));
+                    writer.end_block();
+                }
+                writer.line("emela_frame_return(fiber); return;");
+            }
+            Node::Defect(value) => {
+                emit_return(
+                    layouts,
+                    function,
+                    &Term::Defect(value.clone()),
+                    &strings,
+                    writer,
+                )?;
+            }
+            Node::Unreachable => writer.line("emela_scheduler_invalid();"),
+        }
+        writer.end_block();
+    }
+    writer.line("default: emela_scheduler_invalid();");
+    writer.end_block();
+    writer.end_block();
+    writer.end_block();
+    writer.begin_block(&format!("static void {name}_drop(emela_frame *base)"));
+    writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+    writer.line("(void)frame;");
+    for (id, _) in function.vars.iter() {
+        emit_release_if_owned(layouts, function, id, writer);
+    }
+    writer.end_block();
+    for (id, _) in function.vars.iter() {
+        writer.line(&format!("#undef {}", variable_name(id)));
+        writer.line(&format!("#undef {}", owned_variable_name(id)));
+    }
+    for (name, _) in &strings.declarations {
+        writer.line(&format!("#undef {name}"));
+    }
+    writer.begin_block(&push_signature(layouts, function, name, environment));
+    writer.line(&format!(
+        "emela_frame *base = emela_frame_push(fiber, sizeof({name}_frame), {name}_step);"
+    ));
+    writer.line(&format!("{name}_frame *frame = ({name}_frame *)base;"));
+    // Clear in place: a struct compound literal can put the entire frame on the C stack at O0.
+    writer.line("for (size_t offset = sizeof(emela_frame); offset < sizeof(*frame); offset++) ((unsigned char *)frame)[offset] = 0;");
+    writer.line(&format!("frame->base.pc = {entry};"));
+    writer.line(&format!("frame->base.drop = {name}_drop;"));
+    if has_result {
+        writer.line("frame->result = result;");
+    }
+    for &id in &function.params {
+        writer.line(&format!(
+            "frame->local_{} = {};",
+            u32::from(id.into_raw()),
+            variable_name(id)
+        ));
+        let field = format!("frame->local_{}", u32::from(id.into_raw()));
+        retain_frame_value(layouts, function.vars[id].ty, &field, writer);
+        if layouts.is_managed_value(function.vars[id].ty) {
+            writer.line(&format!(
+                "frame->owned_{} = INT32_C(1);",
+                u32::from(id.into_raw())
+            ));
+        }
+    }
+    if let Some(environment) = environment {
+        writer.line("if (emela_env == NULL) emela_scheduler_invalid();");
+        for (index, capture) in layouts.closure_environments[environment]
+            .captures
+            .iter()
+            .enumerate()
+        {
+            if layouts.type_repr(capture.ty) == Repr::Void {
+                continue;
+            }
+            let id = u32::from(capture.local.into_raw());
+            writer.line(&format!(
+                "frame->local_{id} = ((emela_closure_env_{environment} *)emela_env)->c{index};"
+            ));
+            retain_frame_value(layouts, capture.ty, &format!("frame->local_{id}"), writer);
+            if layouts.is_managed_value(capture.ty) {
+                writer.line(&format!("frame->owned_{id} = INT32_C(1);"));
+            }
+        }
+    }
+    writer.end_block();
+    if function.exported {
+        writer.begin_block(&start_signature(layouts, function, name));
+        writer.line("EmelaFiber handle = emela_fiber_create();");
+        writer.line("emela_fiber *fiber = emela_fiber_get(handle);");
+        let mut args = vec!["fiber".to_owned()];
+        args.extend(function.params.iter().map(|id| variable_name(*id)));
+        if has_result {
+            args.push("result".to_owned());
+        }
+        writer.line(&format!("{name}_push({});", args.join(", ")));
+        writer.line("emela_ready_push(fiber);");
+        writer.line("return handle;");
+        writer.end_block();
+    }
+    Ok(())
+}
+
+pub(super) fn retain_frame_value(
+    layouts: &TypeLayouts<'_>,
+    ty: TypeId,
+    value: &str,
+    writer: &mut Writer,
+) {
+    layouts.emit_own_value_in_place(ty, value, writer);
+}
+
+fn freeze_statement_result(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    statement: &Stmt,
+    strings: &StringBufferPlan,
+    writer: &mut Writer,
+) {
+    if let Some(dst) = statement.dst() {
+        if strings.discarded_results.contains(&dst) {
+            // The synchronous emitter already released this discarded result.
+            return;
+        }
+        layouts.emit_freeze_value_in_place(function.vars[dst].ty, &variable_name(dst), writer);
+    }
+}
+
+fn task_kind(layouts: &TypeLayouts<'_>, ty: TypeId, _function: &str) -> Result<String, Vec<Error>> {
+    Ok(match layouts.types[ty] {
+        Type::Int | Type::Bool => "INT".into(),
+        Type::Int64 => "INT64".into(),
+        Type::Float => "FLOAT".into(),
+        Type::Unit | Type::Never => "UNIT".into(),
+        _ => format!("VALUE_{}", ty.index()),
+    })
+}
+
+fn prepare_result(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    writer: &mut Writer,
+) {
+    if let Some(dst) = dst {
+        emit_release_if_owned(layouts, function, dst, writer);
+        if layouts.is_managed_value(function.vars[dst].ty) {
+            writer.assign(
+                &variable_name(dst),
+                &format!("({}){{0}}", layouts.c_type(function.vars[dst].ty)),
+            );
+            writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+        }
+    }
+}
+
+pub(super) fn emit_resume_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    writer.line(&format!(
+        "#define EMELA_RESUME_KIND UINT32_C({})",
+        layouts.resume_kind()
+    ));
+    writer.line(include_str!("runtime/resume.c"));
+    for &ty in &layouts.resume_types {
+        let Type::Fn(ft) = &layouts.types[ty] else {
+            unreachable!()
+        };
+        writer.begin_block(
+            &function_ref_adapter_signature(
+                layouts,
+                ty,
+                &format!("emela_resume_value_{}", ty.index()),
+            )
+            .replacen("static ", "static inline ", 1),
+        );
+        writer.line("emela_resume *resume = emela_resume_prepare(emela_env);");
+        writer.line("if (resume == NULL) return;");
+        let result = ft.params[0];
+        if layouts.type_repr(result) != Repr::Void {
+            writer.begin_block("if (resume->result != NULL)");
+            writer.decl(&layouts.c_type(result), "returned", Some("emela_arg_0"));
+            retain_frame_value(layouts, result, "returned", writer);
+            writer.line(&format!(
+                "*(({} *)resume->result) = returned;",
+                layouts.c_type(result)
+            ));
+            writer.end_block();
+        }
+        writer.line("emela_resume_commit(resume);");
+        writer.end_block();
+    }
+}
+
+pub(super) fn emit_operation(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    handler: VarId,
+    effect: EffectId,
+    operation: usize,
+    args: &[Operand],
+    caller: &str,
+    result: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let index = *layouts.handler_layout_ids.get(&effect).ok_or_else(|| {
+        invalid_flow_ir(&function.name, "suspend operation without handler layout")
+    })?;
+    let ty = layouts.handler_layouts[index].operations[operation];
+    let Type::Fn(ft) = &layouts.types[ty] else {
+        unreachable!()
+    };
+    if ft.fails || ft.ev || !ft.suspends {
+        return Err(unsupported(
+            &function.name,
+            "suspend operation with failure or unsupported effect ABI",
+        ));
+    }
+    let resume_ty = *ft.params.last().expect("resume parameter");
+    let pointer = format!(
+        "(({} *){})",
+        TypeLayouts::handler_type_name(effect),
+        variable_name(handler)
+    );
+    writer.line(&format!(
+        "if ({pointer} == NULL) emela_scheduler_invalid();"
+    ));
+    writer.line(&format!("if (!{pointer}->active) emela_board_defect(EMELA_DEFECT_PANIC, {pointer}->released_message, {pointer}->released_message_length);"));
+    if let Some(dst) = dst {
+        prepare_result(layouts, function, Some(dst), writer);
+    }
+    writer.line(&format!("emela_fiber *implementation = emela_operation_begin({caller}, {result}, {pointer}->resume_error_{operation}, {pointer}->resume_error_length_{operation});"));
+    let mut arguments = vec![
+        "implementation".to_owned(),
+        format!("{pointer}->op_{operation}.env"),
+    ];
+    arguments.extend(
+        args.iter()
+            .map(operand_expression)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|why| unsupported(&function.name, why))?,
+    );
+    arguments.push(format!(
+        "({}){{emela_resume_value_{}, implementation->perform}}",
+        layouts.c_type(resume_ty),
+        resume_ty.index()
+    ));
+    writer.line(&format!(
+        "if ({pointer}->op_{operation}.call == NULL) emela_scheduler_invalid();"
+    ));
+    writer.line("emela_fiber *saved_context = emela_current_fiber;");
+    writer.line("emela_current_fiber = implementation;");
+    writer.line(&format!(
+        "{pointer}->op_{operation}.call({});",
+        arguments.join(", ")
+    ));
+    writer.line("emela_current_fiber = saved_context;");
+    writer.begin_block(
+        "if (implementation->top == NULL && implementation->state == EMELA_FIBER_RUNNING)",
+    );
+    writer.line("implementation->state = EMELA_FIBER_DONE;");
+    writer.line("emela_resume_after_step(implementation);");
+    writer.end_block();
+    writer.begin_block("else if (implementation->state == EMELA_FIBER_RUNNING)");
+    writer.line("emela_ready_push(implementation);");
+    writer.end_block();
+    Ok(())
+}
+
+pub(super) fn emit_sync_operation(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    handler: VarId,
+    effect: EffectId,
+    operation: usize,
+    args: &[Operand],
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    writer.begin_block("");
+    writer.line("EmelaFiber sync_handle = emela_fiber_create();");
+    writer.line("emela_fiber *sync_caller = emela_fiber_get(sync_handle);");
+    writer.line("if (emela_current_fiber != NULL) sync_caller->root = emela_current_fiber->root;");
+    let result = dst
+        .map(|id| format!("&{}", variable_name(id)))
+        .unwrap_or_else(|| "NULL".to_owned());
+    emit_operation(
+        layouts,
+        function,
+        dst,
+        handler,
+        effect,
+        operation,
+        args,
+        "sync_caller",
+        &result,
+        writer,
+    )?;
+    writer.begin_block("if (implementation->state == EMELA_FIBER_READY)");
+    writer.line("emela_ready_remove(implementation); emela_resume_drive(implementation);");
+    writer.end_block();
+    writer.begin_block("if (sync_caller->state != EMELA_FIBER_READY)");
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"immediate operation did not resume\", UINT16_C(34));");
+    writer.end_block();
+    writer.line("emela_ready_remove(sync_caller); sync_caller->state = EMELA_FIBER_DONE;");
+    writer.line("emela_resume_sweep(); emela_fiber_release(sync_handle);");
+    writer.end_block();
+    Ok(())
+}
