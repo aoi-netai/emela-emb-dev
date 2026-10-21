@@ -12,9 +12,18 @@ use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 
 const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
+#[path = "error.rs"]
+mod error_runtime;
+#[path = "owned.rs"]
+mod owned;
+
 const BOARD_HEADER_FILE: &str = "emela_board.h";
 
-pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
+pub(crate) fn emit(
+    flow: &emela_lir::Module,
+    options: &Options,
+    discarded: &crate::discarded::Results,
+) -> Result<Output, Vec<Error>> {
     if !(1..=512).contains(&options.string_capacity()) {
         return Err(vec![Error {
             kind: ErrorKind::InvalidOptions,
@@ -26,6 +35,22 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     let emitted_functions = runtime_reachable(flow);
     let layouts = TypeLayouts::new(flow, &emitted_functions)?;
+    let heap_required = flow.functions.iter().any(|(id, function)| {
+        emitted_functions.contains(&id) && function_needs_heap(function, &layouts)
+    });
+    if options.heap_bytes() == 0 && heap_required {
+        let (_, function) = flow
+            .functions
+            .iter()
+            .find(|(id, function)| {
+                emitted_functions.contains(id) && function_needs_heap(function, &layouts)
+            })
+            .expect("heap requirement came from an emitted function");
+        return Err(unsupported(
+            &function.name,
+            "heap-backed List or recursive values with heap_bytes = 0; configure Options::with_heap_bytes",
+        ));
+    }
     let mut const_outcomes = HashMap::new();
     for (id, function) in flow
         .functions
@@ -78,6 +103,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         };
         names.insert(id, implementation_name);
     }
+    validate_isr_entries(flow, &emitted_functions, &layouts, &names, options)?;
     let string_output_functions = functions_with_string_output(flow, &emitted_functions, &layouts);
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
@@ -129,6 +155,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if main_entry.is_some() {
         header.line("void emela_embedded_start(void);");
     }
+    if heap_required {
+        header.line("/* Retains an owned List value before copying it. */");
+        header.line("void emela_embedded_retain(void *value);");
+        header.line("/* Releases an owned List value returned by this module. */");
+        header.line("void emela_embedded_release(void *value);");
+        header.line("/* Retains the backing owner of an EmelaString value. */");
+        header.line("void emela_embedded_retain_string(const EmelaString *value);");
+        header.line("/* Releases the backing owner of an EmelaString value. */");
+        header.line("void emela_embedded_release_string(EmelaString *value);");
+        layouts.emit_public_release_declarations(&mut header);
+    }
 
     header.blank();
     header.line("#endif");
@@ -161,27 +198,35 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     board_header.line("} EmelaDefectKind;");
     board_header.blank();
-    let needs_defect_hook = has_prim(
-        flow,
-        &emitted_functions,
-        PrimTy::I32,
-        &[PrimOp::Div, PrimOp::Rem],
-    ) || has_prim(
-        flow,
-        &emitted_functions,
-        PrimTy::I64,
-        &[PrimOp::Div, PrimOp::Rem],
-    ) || const_outcomes.values().any(|outcome| {
-        matches!(
-            outcome,
-            ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+    let needs_defect_hook = heap_required
+        || has_prim(
+            flow,
+            &emitted_functions,
+            PrimTy::I32,
+            &[PrimOp::Div, PrimOp::Rem],
         )
-    }) || has_runtime_string_append(flow, &emitted_functions)
+        || has_prim(
+            flow,
+            &emitted_functions,
+            PrimTy::I64,
+            &[PrimOp::Div, PrimOp::Rem],
+        )
+        || const_outcomes.values().any(|outcome| {
+            matches!(
+                outcome,
+                ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
+            )
+        })
+        || has_runtime_string_append(flow, &emitted_functions)
         || has_runtime_string_show(flow, &emitted_functions)
         || has_runtime_int_string(flow, &emitted_functions)
         || has_runtime_float_to_string(flow, &emitted_functions)
         || !string_output_functions.is_empty()
-        || has_builtin(flow, &emitted_functions, &[Builtin::StringLength])
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[Builtin::StringLength, Builtin::StringJoin],
+        )
         || has_runtime_string_from_code_point(flow, &emitted_functions)
         || has_builtin(
             flow,
@@ -248,6 +293,28 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
     source.blank();
+    source.line("#include <stddef.h>");
+    if heap_required {
+        layouts.emit_list_node_declarations(&mut source);
+        crate::heap::emit_runtime(&mut source, options.heap_bytes());
+        emit_owned_string_copy_helper(&layouts, &mut source);
+        error_runtime::emit_ownership_declarations(&layouts, &mut source);
+        layouts.emit_heap_ownership_helpers(&mut source);
+        owned::emit_helpers(&layouts, &mut source);
+        error_runtime::emit_ownership(&layouts, true, &mut source);
+        layouts.emit_heap_destroy_switch(&mut source);
+        layouts.emit_public_release_helpers(&mut source);
+        crate::heap::emit_public_retain(&mut source);
+        crate::heap::emit_public_release(&mut source);
+        emit_public_string_ownership(&mut source);
+    } else {
+        source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
+        source.line("static inline void emela_heap_release(void *value) { (void)value; }");
+        error_runtime::emit_ownership(&layouts, false, &mut source);
+        layouts.emit_noheap_ownership_stubs(&mut source);
+        source.blank();
+    }
+
     if has_prim(
         flow,
         &emitted_functions,
@@ -367,18 +434,24 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_builtin(flow, &emitted_functions, &[Builtin::StringEndsWith]) {
         emit_string_ends_with_helper(&mut source);
     }
-    if has_builtin(
-        flow,
-        &emitted_functions,
-        &[Builtin::StringTrim, Builtin::StringLength],
-    ) {
+    let grapheme_runtime = has_grapheme_runtime(flow, &emitted_functions);
+    if grapheme_runtime
+        || has_builtin(
+            flow,
+            &emitted_functions,
+            &[Builtin::StringTrim, Builtin::StringCodePoints],
+        )
+    {
         emit_utf8_decode_helper(&mut source);
+    }
+    if grapheme_runtime {
+        crate::unicode_grapheme::emit_runtime(&mut source);
     }
     if has_builtin(flow, &emitted_functions, &[Builtin::StringTrim]) {
         emit_string_trim_helper(&mut source);
     }
-    if has_builtin(flow, &emitted_functions, &[Builtin::StringLength]) {
-        crate::unicode_grapheme::emit_runtime(&mut source);
+    if has_builtin(flow, &emitted_functions, &[Builtin::StringJoin]) {
+        emit_string_join_helper(&mut source);
     }
     if has_runtime_string_append(flow, &emitted_functions) {
         emit_string_append_helper(&mut source);
@@ -524,16 +597,16 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 )),
             );
         }
-        let string_buffers = StringBufferPlan::new(
+        let mut string_buffers = StringBufferPlan::new(
             &layouts,
             function,
             options.string_capacity(),
             &string_output_functions,
             takes_string_output,
         );
+        string_buffers.discarded = discarded.get(&id).cloned().unwrap_or_default();
         if !string_buffers.declarations.is_empty()
-            && (type_contains_string(&layouts, function.ret, &mut HashSet::new())
-                || failure_value_contains_string(&layouts, function))
+            && layouts.has_inline_string(function.ret)
             && !takes_string_output
         {
             return Err(unsupported(
@@ -625,7 +698,21 @@ fn emit_local_declarations(
 ) {
     for (id, variable) in function.vars.iter() {
         if !function.params.contains(&id) {
-            writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
+            if layouts.is_managed_value(variable.ty) {
+                let initial = if layouts.is_managed_list(variable.ty) {
+                    "NULL"
+                } else {
+                    "{0}"
+                };
+                writer.decl(
+                    &layouts.c_type(variable.ty),
+                    &variable_name(id),
+                    Some(initial),
+                );
+                writer.decl("int", &owned_variable_name(id), Some("INT32_C(0)"));
+            } else {
+                writer.decl(&layouts.c_type(variable.ty), &variable_name(id), None);
+            }
         }
     }
     for (name, capacity) in &string_buffers.declarations {
@@ -633,7 +720,84 @@ fn emit_local_declarations(
     }
 }
 
+fn emit_release_if_owned(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    variable: VarId,
+    writer: &mut Writer,
+) {
+    let ty = function.vars[variable].ty;
+    if !layouts.is_managed_value(ty) {
+        return;
+    }
+    writer.begin_block(&format!(
+        "if ({} != INT32_C(0))",
+        owned_variable_name(variable)
+    ));
+    layouts.emit_release_value_expression(ty, &variable_name(variable), writer);
+    writer.end_block();
+    writer.assign(&owned_variable_name(variable), "INT32_C(0)");
+}
+
+fn emit_retain_operand(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    operand: &Operand,
+    writer: &mut Writer,
+) {
+    if let Operand::Var(variable) = operand
+        && layouts.is_managed_value(function.vars[*variable].ty)
+    {
+        layouts.emit_retain_value_expression(
+            function.vars[*variable].ty,
+            &variable_name(*variable),
+            writer,
+        );
+    }
+}
+
+fn emit_owned_cleanup(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    except: Option<VarId>,
+    writer: &mut Writer,
+) {
+    for (variable, data) in function.vars.iter() {
+        if except == Some(variable)
+            || function.params.contains(&variable)
+            || !layouts.is_managed_value(data.ty)
+        {
+            continue;
+        }
+        emit_release_if_owned(layouts, function, variable, writer);
+    }
+}
+
+fn emit_owned_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
+    let kind = layouts.string_owner_kind();
+    writer.begin_block("static inline EmelaString emela_heap_copy_string(EmelaString value)");
+    writer.line(&format!(
+        "char *bytes = (char *)emela_heap_allocate((size_t)value.length, UINT32_C({kind}));"
+    ));
+    writer.line("for (uint32_t index = UINT32_C(0); index < (uint32_t)value.length; ++index)");
+    writer.begin_block("");
+    writer.line("bytes[index] = value.data[index];");
+    writer.end_block();
+    writer.line("EmelaString copy = { bytes, value.length, bytes };");
+    writer.ret(Some("copy"));
+    writer.end_block();
+    writer.blank();
+    writer.begin_block("static inline EmelaString emela_heap_own_string(EmelaString value)");
+    writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
+    writer.line("if (value.owner == NULL) return emela_heap_copy_string(value);");
+    writer.line("emela_heap_retain(value.owner);");
+    writer.line("return value;");
+    writer.end_block();
+    writer.blank();
+}
+
 struct StringBufferPlan {
+    discarded: HashSet<VarId>,
     buffers: HashMap<VarId, (Option<usize>, u16)>,
     declarations: Vec<(String, usize)>,
     output_calls: HashSet<FnId>,
@@ -724,6 +888,15 @@ impl StringBufferPlan {
                     buffer_producers.insert(*dst);
                     producer_positions.insert(*dst, statement_id);
                 }
+                Value::Builtin {
+                    op: Builtin::StringJoin,
+                    args,
+                } if args.len() == 2
+                    && matches!(layouts.types[function.vars[*dst].ty], Type::String) =>
+                {
+                    buffer_producers.insert(*dst);
+                    producer_positions.insert(*dst, statement_id);
+                }
                 _ => {}
             }
         }
@@ -792,6 +965,10 @@ impl StringBufferPlan {
                                 | Builtin::StringAppend,
                             args,
                         } => !append_has_empty_constant(args),
+                        Value::Builtin {
+                            op: Builtin::StringJoin,
+                            ..
+                        } => true,
                         Value::Runtime {
                             op: RuntimeOp::ShowString | RuntimeOp::DebugPrint,
                             ..
@@ -945,6 +1122,10 @@ impl StringBufferPlan {
                         op: Builtin::StringFromCodePoint,
                         ..
                     } => 4.min(usize::from(capacity)),
+                    Value::Builtin {
+                        op: Builtin::StringJoin,
+                        ..
+                    } => usize::from(capacity),
                     _ => usize::from(capacity),
                 };
                 let bound = match value {
@@ -1086,6 +1267,7 @@ impl StringBufferPlan {
             })
             .collect();
         Self {
+            discarded: HashSet::new(),
             buffers,
             declarations,
             output_calls: output_calls.clone(),
@@ -1255,53 +1437,6 @@ fn string_buffer_name(slot: usize) -> String {
     format!("emela_string_buffer_{slot}")
 }
 
-fn type_contains_string(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-    let mut types = layouts.types.clone();
-    type_contains_string_with_types(layouts, &mut types, ty, seen)
-}
-
-fn failure_value_contains_string(layouts: &TypeLayouts<'_>, function: &Function) -> bool {
-    function.seqs.iter().any(|(_, sequence)| {
-        let Term::Fail(operand) = &sequence.term else {
-            return false;
-        };
-        match operand {
-            Operand::Var(variable) => {
-                type_contains_string(layouts, function.vars[*variable].ty, &mut HashSet::new())
-            }
-            Operand::Const(Const::String(_)) => true,
-            Operand::Const(_) => false,
-        }
-    })
-}
-
-fn type_contains_string_with_types(
-    layouts: &TypeLayouts<'_>,
-    types: &mut TypeTable,
-    ty: TypeId,
-    seen: &mut HashSet<TypeId>,
-) -> bool {
-    if !seen.insert(ty) {
-        return false;
-    }
-    match types[ty].clone() {
-        Type::String | Type::Any => true,
-        Type::Tuple(fields) => fields
-            .into_iter()
-            .any(|field| type_contains_string_with_types(layouts, types, field, seen)),
-        Type::List(element) | Type::Cell(element) => {
-            type_contains_string_with_types(layouts, types, element, seen)
-        }
-        Type::Enum(enum_id, args) => layouts.core.enums[enum_id].variants.iter().any(|variant| {
-            variant.tys.iter().any(|&field| {
-                let field = types.subst(field, &args);
-                type_contains_string_with_types(layouts, types, field, seen)
-            })
-        }),
-        _ => false,
-    }
-}
-
 fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     let mut pending: Vec<FnId> = flow
         .functions
@@ -1342,6 +1477,210 @@ fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     reachable
 }
 
+fn validate_isr_entries(
+    flow: &emela_lir::Module,
+    emitted: &HashSet<FnId>,
+    layouts: &TypeLayouts<'_>,
+    names: &HashMap<FnId, String>,
+    options: &Options,
+) -> Result<(), Vec<Error>> {
+    for entry_name in &options.isr_entries {
+        let Some((entry, _)) = flow.functions.iter().find(|(id, function)| {
+            emitted.contains(id) && function.exported && function.name == *entry_name
+        }) else {
+            return Err(vec![Error {
+                kind: ErrorKind::InvalidOptions,
+                message: format!(
+                    "ISR entry `{entry_name}` must name an emitted exported Emela function"
+                ),
+            }]);
+        };
+        validate_isr_function(
+            flow,
+            entry,
+            entry_name,
+            layouts,
+            names,
+            options,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_isr_function(
+    flow: &emela_lir::Module,
+    id: FnId,
+    entry_name: &str,
+    layouts: &TypeLayouts<'_>,
+    names: &HashMap<FnId, String>,
+    options: &Options,
+    active: &mut HashSet<FnId>,
+    complete: &mut HashSet<FnId>,
+) -> Result<(), Vec<Error>> {
+    if active.contains(&id) {
+        return Err(unsupported(
+            &flow.functions[id].name,
+            &format!("recursive call reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+    if complete.contains(&id) {
+        return Ok(());
+    }
+    let function = &flow.functions[id];
+    if function.suspends {
+        return Err(unsupported(
+            &function.name,
+            &format!("suspending function reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+    if function_needs_heap(function, layouts) {
+        return Err(unsupported(
+            &function.name,
+            &format!("heap allocation reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+    if std::iter::once(function.ret)
+        .chain(function.vars.iter().map(|(_, variable)| variable.ty))
+        .any(|ty| layouts.contains_heap_ref(ty, &mut HashSet::new()))
+    {
+        return Err(unsupported(
+            &function.name,
+            &format!("heap-backed value reachable from ISR entry `{entry_name}`"),
+        ));
+    }
+
+    active.insert(id);
+    for (_, statement) in function.stmts.iter() {
+        let Stmt::Let {
+            value: Value::Call {
+                callee, suspends, ..
+            },
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        if *suspends {
+            active.remove(&id);
+            return Err(unsupported(
+                &function.name,
+                &format!("suspending call reachable from ISR entry `{entry_name}`"),
+            ));
+        }
+        match callee {
+            Callee::Direct(callee_id) => {
+                let callee = &flow.functions[*callee_id];
+                if callee.suspends {
+                    active.remove(&id);
+                    return Err(unsupported(
+                        &function.name,
+                        &format!("suspending call reachable from ISR entry `{entry_name}`"),
+                    ));
+                }
+                if callee.external.is_some() {
+                    let symbol = &names[callee_id];
+                    if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
+                        active.remove(&id);
+                        return Err(unsupported(
+                            &function.name,
+                            &format!(
+                                "external C function `{symbol}` reachable from ISR entry `{entry_name}` is not marked ISR-safe"
+                            ),
+                        ));
+                    }
+                } else if !callee.constant {
+                    validate_isr_function(
+                        flow, *callee_id, entry_name, layouts, names, options, active, complete,
+                    )?;
+                }
+            }
+            Callee::Indirect(_) | Callee::Op { .. } => {
+                active.remove(&id);
+                return Err(unsupported(
+                    &function.name,
+                    &format!("dynamic call reachable from ISR entry `{entry_name}`"),
+                ));
+            }
+        }
+    }
+    active.remove(&id);
+    complete.insert(id);
+    Ok(())
+}
+
+fn function_needs_heap(function: &Function, layouts: &TypeLayouts<'_>) -> bool {
+    let mut known_empty = HashSet::new();
+    for (_, statement) in function.stmts.iter() {
+        let Stmt::Let {
+            dst: Some(dst),
+            value: Value::List { elems, tail },
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        if !elems.is_empty() {
+            continue;
+        }
+        match tail {
+            None => {
+                known_empty.insert(*dst);
+            }
+            Some(Operand::Var(tail)) if known_empty.contains(tail) => {
+                known_empty.insert(*dst);
+            }
+            _ => {}
+        }
+    }
+
+    let statement_needs_heap = function.stmts.iter().any(|(_, statement)| match statement {
+        Stmt::Let {
+            value:
+                Value::List {
+                    elems,
+                    tail: Some(tail),
+                },
+            ..
+        } if !elems.is_empty()
+            || !matches!(tail, Operand::Var(variable) if known_empty.contains(variable)) =>
+        {
+            true
+        }
+        Stmt::Let {
+            value: Value::List { elems, tail: None },
+            ..
+        } => !elems.is_empty(),
+        Stmt::Let {
+            value: Value::ListHead(_) | Value::ListTail(_),
+            ..
+        } => true,
+        _ => false,
+    });
+    let returns_managed_alias = matches!(layouts.types[function.ret], Type::List(_))
+        && function.seqs.iter().any(|(_, sequence)| {
+            matches!(
+                sequence.term,
+                Term::Return(Some(Operand::Var(variable)))
+                    if function.vars[variable].ty == function.ret
+                        && !known_empty.contains(&variable)
+            )
+        });
+    let local_managed_value = function.vars.iter().any(|(variable, data)| {
+        !function.params.contains(&variable)
+            && layouts.contains_heap_ref(data.ty, &mut HashSet::new())
+            && !known_empty.contains(&variable)
+    });
+    let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
+        && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
+    (function.fails && layouts.managed_error_payloads)
+        || statement_needs_heap
+        || returns_managed_alias
+        || local_managed_value
+        || returns_managed_aggregate
+}
+
 fn directly_calls(caller: &Function, target: FnId) -> bool {
     caller.stmts.iter().any(|(_, statement)| {
         matches!(
@@ -1362,6 +1701,22 @@ fn operand_is_string(layouts: &TypeLayouts<'_>, function: &Function, operand: &O
         Operand::Const(Const::String(_)) => true,
         Operand::Var(variable) => {
             matches!(layouts.types[function.vars[*variable].ty], Type::String)
+        }
+        _ => false,
+    }
+}
+
+fn operand_is_string_list(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    operand: &Operand,
+) -> bool {
+    match operand {
+        Operand::Var(variable) => {
+            matches!(
+                layouts.types[function.vars[*variable].ty],
+                Type::List(TypeId::STRING)
+            )
         }
         _ => false,
     }
@@ -1492,6 +1847,10 @@ fn emit_builtin(
         Builtin::StringLength => (1, Type::Int),
         Builtin::StringAppend => (2, Type::String),
         Builtin::StringByteSize => (1, Type::Int),
+        Builtin::StringChars => (1, Type::List(TypeId::STRING)),
+        Builtin::StringCodePoints => (1, Type::List(TypeId::INT)),
+        Builtin::StringJoin => (2, Type::String),
+        Builtin::StringSplit => (2, Type::List(TypeId::STRING)),
         Builtin::StringContains | Builtin::StringStartsWith | Builtin::StringEndsWith => {
             (2, Type::Bool)
         }
@@ -1557,6 +1916,17 @@ fn emit_builtin(
         Builtin::StringFromCodePoint => args
             .iter()
             .all(|operand| operand_is_int(layouts, function, operand)),
+        Builtin::StringLength | Builtin::StringChars => {
+            operand_is_string(layouts, function, &args[0])
+        }
+        Builtin::StringCodePoints => operand_is_string(layouts, function, &args[0]),
+        Builtin::StringSplit => args
+            .iter()
+            .all(|operand| operand_is_string(layouts, function, operand)),
+        Builtin::StringJoin => {
+            operand_is_string_list(layouts, function, &args[0])
+                && operand_is_string(layouts, function, &args[1])
+        }
         Builtin::IntParse => args
             .iter()
             .all(|operand| operand_is_string(layouts, function, operand)),
@@ -1600,6 +1970,16 @@ fn emit_builtin(
     } else if op == Builtin::StringFromCodePoint {
         option_payload_type(layouts, function.vars[dst].ty)
             .is_some_and(|ty| matches!(layouts.types[ty], Type::String))
+    } else if op == Builtin::StringCodePoints {
+        matches!(
+            layouts.types[function.vars[dst].ty],
+            Type::List(TypeId::INT)
+        )
+    } else if op == Builtin::StringSplit || op == Builtin::StringChars {
+        matches!(
+            layouts.types[function.vars[dst].ty],
+            Type::List(TypeId::STRING)
+        )
     } else {
         layouts.types[function.vars[dst].ty] == result_type
     };
@@ -1615,6 +1995,53 @@ fn emit_builtin(
         .map(operand_expression)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|variant| unsupported(&function.name, variant))?;
+    if op == Builtin::StringSplit {
+        let separator_may_be_empty = !matches!(
+            args.get(1),
+            Some(Operand::Const(Const::String(separator))) if !separator.is_empty()
+        );
+        emit_string_split(
+            layouts,
+            function,
+            dst,
+            &expressions[0],
+            &expressions[1],
+            separator_may_be_empty,
+            writer,
+        )?;
+        return Ok(());
+    }
+    if op == Builtin::StringLength {
+        emit_string_length(dst, &expressions[0], writer);
+        return Ok(());
+    }
+    if op == Builtin::StringChars {
+        emit_string_chars(layouts, function, dst, &expressions[0], writer)?;
+        return Ok(());
+    }
+    if op == Builtin::StringJoin {
+        let Operand::Var(list) = args[0] else {
+            return Err(invalid_flow_ir(
+                &function.name,
+                "StringJoin first argument is not a List variable",
+            ));
+        };
+        emit_string_join(
+            layouts,
+            function,
+            dst,
+            function.vars[list].ty,
+            &expressions[0],
+            &expressions[1],
+            string_buffers,
+            writer,
+        )?;
+        return Ok(());
+    }
+    if op == Builtin::StringCodePoints {
+        emit_string_code_points(layouts, function, dst, &expressions[0], writer)?;
+        return Ok(());
+    }
     if op == Builtin::IntCheckedAdd {
         let ty = function.vars[dst].ty;
         let sum_name = format!("{}_checked_sum", variable_name(dst));
@@ -1999,6 +2426,23 @@ fn emit_builtin(
     };
     writer.assign(&variable_name(dst), &expression);
     Ok(())
+}
+
+fn emit_public_string_ownership(writer: &mut Writer) {
+    writer.begin_block("void emela_embedded_retain_string(const EmelaString *value)");
+    writer.begin_block("if (value != NULL)");
+    writer.line("emela_heap_retain(value->owner);");
+    writer.end_block();
+    writer.end_block();
+    writer.blank();
+
+    writer.begin_block("void emela_embedded_release_string(EmelaString *value)");
+    writer.begin_block("if (value != NULL)");
+    writer.line("emela_heap_release(value->owner);");
+    writer.line("*value = (EmelaString){0};");
+    writer.end_block();
+    writer.end_block();
+    writer.blank();
 }
 
 fn emit_runtime(
@@ -2412,6 +2856,24 @@ fn emit_utf8_decode_helper(writer: &mut Writer) {
     writer.blank();
 }
 
+fn emit_string_join_helper(writer: &mut Writer) {
+    writer.begin_block(
+        "static inline void emela_emb_string_join_put(char *buffer, uint16_t capacity, uint32_t *length, EmelaString value)",
+    );
+    writer.begin_block("if ((uint32_t)value.length > (uint32_t)capacity - *length)");
+    writer.line(
+        "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
+    );
+    writer.end_block();
+    writer.line("for (uint32_t index = UINT32_C(0); index < (uint32_t)value.length; ++index)");
+    writer.begin_block("");
+    writer.line("buffer[*length + index] = value.data[index];");
+    writer.end_block();
+    writer.line("*length += (uint32_t)value.length;");
+    writer.end_block();
+    writer.blank();
+}
+
 fn emit_string_trim_helper(writer: &mut Writer) {
     writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
     writer.line(
@@ -2462,6 +2924,89 @@ fn emit_string_trim_helper(writer: &mut Writer) {
 }
 
 fn emit_statement(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    statement: &Stmt,
+    writer: &mut Writer,
+    names: &HashMap<FnId, String>,
+    string_buffers: &StringBufferPlan,
+    loops: &mut Vec<Vec<VarId>>,
+    blocks: &mut Vec<BlockTarget>,
+    protects: &mut Vec<ProtectTarget>,
+    next_temp: &mut usize,
+    next_label: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let managed_dst = statement
+        .dst()
+        .filter(|&dst| layouts.is_managed_value(function.vars[dst].ty));
+    if let Some(dst) = managed_dst {
+        emit_release_if_owned(layouts, function, dst, writer);
+    }
+    let retain_result = match statement {
+        Stmt::Let {
+            value:
+                Value::ListHead(_)
+                | Value::ListTail(_)
+                | Value::Field { .. }
+                | Value::TupleGet { .. }
+                | Value::AsError { .. },
+            ..
+        } => true,
+        Stmt::Let {
+            value:
+                Value::Builtin {
+                    op: Builtin::StringTrim,
+                    ..
+                },
+            ..
+        } => true,
+        Stmt::Let {
+            value:
+                Value::Builtin {
+                    op: Builtin::StringAppend,
+                    args,
+                },
+            ..
+        } if append_has_empty_constant(args) => true,
+        Stmt::Let {
+            value: Value::List {
+                elems,
+                tail: Some(_),
+            },
+            ..
+        } => elems.is_empty(),
+        _ => false,
+    };
+    emit_statement_inner(
+        layouts,
+        function,
+        statement,
+        writer,
+        names,
+        string_buffers,
+        loops,
+        blocks,
+        protects,
+        next_temp,
+        next_label,
+    )?;
+    if let Some(dst) = managed_dst {
+        if retain_result {
+            layouts.emit_retain_value_expression(
+                function.vars[dst].ty,
+                &variable_name(dst),
+                writer,
+            );
+        }
+        writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+        if string_buffers.discarded.contains(&dst) {
+            emit_release_if_owned(layouts, function, dst, writer);
+        }
+    }
+    Ok(())
+}
+
+fn emit_statement_inner(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
@@ -2629,6 +3174,33 @@ fn emit_statement(
                 }
                 Value::TupleGet { base, index } => {
                     emit_tuple_get(layouts, function, *dst, *base, *index, writer)?;
+                }
+                Value::List { elems, tail } => emit_list_value(
+                    layouts,
+                    function,
+                    *dst,
+                    elems,
+                    tail.as_ref(),
+                    writer,
+                    next_temp,
+                )?,
+                Value::ListIsEmpty(list) => {
+                    let Some(dst) = dst else {
+                        return Ok(());
+                    };
+                    writer.assign(
+                        &variable_name(*dst),
+                        &format!(
+                            "({} == NULL) ? INT32_C(1) : INT32_C(0)",
+                            variable_name(*list)
+                        ),
+                    );
+                }
+                Value::ListHead(list) => {
+                    emit_list_head(layouts, function, *dst, *list, writer)?;
+                }
+                Value::ListTail(list) => {
+                    emit_list_tail(layouts, function, *dst, *list, writer)?;
                 }
                 Value::IsError { error, enum_id } => {
                     if !matches!(layouts.types[function.vars[*error].ty], Type::Any) {
@@ -2969,6 +3541,591 @@ fn invalid_flow_ir(function: &str, reason: &str) -> Vec<Error> {
     }]
 }
 
+fn emit_list_value(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    elems: &[Operand],
+    tail: Option<&Operand>,
+    writer: &mut Writer,
+    next_temp: &mut usize,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Value::List has no destination",
+        ));
+    };
+    let list_ty = function.vars[dst].ty;
+    let Type::List(element_ty) = layouts.types[list_ty].clone() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "Value::List destination is not a List",
+        ));
+    };
+    if elems.is_empty() {
+        let expression = match tail {
+            Some(tail) => {
+                operand_expression(tail).map_err(|variant| unsupported(&function.name, variant))?
+            }
+            None => "NULL".to_owned(),
+        };
+        writer.assign(&variable_name(dst), &expression);
+        return Ok(());
+    }
+
+    let list_name = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let temp = format!("emela_list_build_{}", *next_temp);
+    *next_temp += 1;
+    let node_temp = format!("emela_list_node_tmp_{}", *next_temp);
+    *next_temp += 1;
+    let initial_tail = match tail {
+        Some(tail) => {
+            operand_expression(tail).map_err(|variant| unsupported(&function.name, variant))?
+        }
+        None => "NULL".to_owned(),
+    };
+    writer.decl("void *", &temp, Some(&initial_tail));
+    writer.decl("void *", &node_temp, None);
+    if tail.is_some() {
+        writer.line(&format!("emela_heap_retain({temp});"));
+    }
+    for elem in elems.iter().rev() {
+        writer.assign(
+            &node_temp,
+            &format!(
+                "({list_name} *)emela_heap_allocate(sizeof({list_name}), UINT32_C({list_kind}))"
+            ),
+        );
+        if layouts.type_repr(element_ty) == Repr::Void {
+            writer.assign(
+                &format!("(({list_name} *){node_temp})->_unit"),
+                "UINT8_C(0)",
+            );
+        } else {
+            let expression =
+                operand_expression(elem).map_err(|variant| unsupported(&function.name, variant))?;
+            layouts.emit_owned_value_store(
+                element_ty,
+                &expression,
+                &format!("(({list_name} *){node_temp})->head"),
+                writer,
+            );
+        }
+        writer.assign(&format!("(({list_name} *){node_temp})->tail"), &temp);
+        writer.assign(&temp, &node_temp);
+    }
+    writer.assign(&variable_name(dst), &temp);
+    Ok(())
+}
+
+fn emit_string_code_points(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::INT)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringCodePoints destination is not List[Int]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_code_points_input_{suffix}");
+    let offset_name = format!("emela_code_points_offset_{suffix}");
+    let code_point_name = format!("emela_code_points_value_{suffix}");
+    let width_name = format!("emela_code_points_width_{suffix}");
+    let head_name = format!("emela_code_points_head_{suffix}");
+    let last_name = format!("emela_code_points_last_{suffix}");
+    let node_name = format!("emela_code_points_node_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &code_point_name, None);
+    writer.decl("uint32_t", &width_name, None);
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_utf8_decode({input_name}, {offset_name}, &{code_point_name}, &{width_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(
+        &node_name,
+        &format!("({list_node} *)emela_heap_allocate(sizeof({list_node}), UINT32_C({list_kind}))"),
+    );
+    writer.assign(
+        &format!("{node_name}->head"),
+        &format!("(int32_t){code_point_name}"),
+    );
+    writer.assign(&format!("{node_name}->tail"), "NULL");
+    writer.begin_block(&format!("if ({last_name} == NULL)"));
+    writer.assign(&head_name, &node_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.assign(&format!("{last_name}->tail"), &node_name);
+    writer.end_block();
+    writer.assign(&last_name, &node_name);
+    writer.line(&format!("{offset_name} += {width_name};"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
+    Ok(())
+}
+
+fn emit_string_length(dst: VarId, input: &str, writer: &mut Writer) {
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_length_input_{suffix}");
+    let offset_name = format!("emela_string_length_offset_{suffix}");
+    let next_name = format!("emela_string_length_next_{suffix}");
+    let count_name = format!("emela_string_length_count_{suffix}");
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &next_name, None);
+    writer.decl("int32_t", &count_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(&offset_name, &next_name);
+    writer.line(&format!("++{count_name};"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &count_name);
+}
+
+fn emit_string_split(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    separator: &str,
+    separator_may_be_empty: bool,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::STRING)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringSplit destination is not List[String]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_split_input_{suffix}");
+    let separator_name = format!("emela_string_split_separator_{suffix}");
+    let bytes_name = format!("emela_string_split_bytes_{suffix}");
+    let owner_name = format!("emela_string_split_owner_{suffix}");
+    let owner_created_name = format!("emela_string_split_owner_created_{suffix}");
+    let head_name = format!("emela_string_split_head_{suffix}");
+    let last_name = format!("emela_string_split_last_{suffix}");
+    let node_name = format!("emela_string_split_node_{suffix}");
+    let start_name = format!("emela_string_split_start_{suffix}");
+    let scan_name = format!("emela_string_split_scan_{suffix}");
+    let matched_name = format!("emela_string_split_matched_{suffix}");
+    let separator_index_name = format!("emela_string_split_separator_index_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let string_owner_kind = layouts.string_owner_kind();
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl("EmelaString", &separator_name, Some(separator));
+
+    writer.decl(
+        "const char *",
+        &bytes_name,
+        Some(&format!("{input_name}.data")),
+    );
+    writer.decl("void *", &owner_name, Some(&format!("{input_name}.owner")));
+    writer.decl("int", &owner_created_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "if ({owner_name} == NULL && {input_name}.length != UINT16_C(0))"
+    ));
+    writer.assign(
+        &owner_name,
+        &format!("emela_heap_allocate((size_t){input_name}.length, UINT32_C({string_owner_kind}))"),
+    );
+    writer.assign(&bytes_name, &format!("(const char *){owner_name}"));
+    let copy_index_name = format!("emela_string_split_copy_index_{suffix}");
+    writer.decl("uint32_t", &copy_index_name, Some("UINT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({copy_index_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.line(&format!(
+        "((char *){owner_name})[{copy_index_name}] = {input_name}.data[{copy_index_name}];"
+    ));
+    writer.line(&format!("++{copy_index_name};"));
+    writer.end_block();
+    writer.assign(&owner_created_name, "INT32_C(1)");
+    writer.end_block();
+    writer.begin_block(&format!("if ({bytes_name} == NULL)"));
+    writer.assign(&bytes_name, "\"\"");
+    writer.end_block();
+
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+    if separator_may_be_empty {
+        writer.begin_block(&format!("if ({separator_name}.length == UINT16_C(0))"));
+        let cluster_offset_name = format!("emela_string_split_cluster_offset_{suffix}");
+        let cluster_next_name = format!("emela_string_split_cluster_next_{suffix}");
+        let cluster_length_name = format!("emela_string_split_cluster_length_{suffix}");
+        writer.decl("uint32_t", &cluster_offset_name, Some("UINT32_C(0)"));
+        writer.decl("uint32_t", &cluster_next_name, None);
+        writer.decl("uint32_t", &cluster_length_name, None);
+        writer.begin_block(&format!(
+            "while ({cluster_offset_name} < (uint32_t){input_name}.length)"
+        ));
+        writer.begin_block(&format!(
+            "if (!emela_emb_grapheme_next({input_name}, {cluster_offset_name}, &{cluster_next_name}))"
+        ));
+        writer.line(
+            "emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));",
+        );
+        writer.end_block();
+        writer.assign(
+            &cluster_length_name,
+            &format!("{cluster_next_name} - {cluster_offset_name}"),
+        );
+        emit_string_split_push(
+            writer,
+            &node_name,
+            &list_node,
+            list_kind,
+            &bytes_name,
+            &cluster_offset_name,
+            &cluster_length_name,
+            &owner_name,
+            &last_name,
+            &head_name,
+        );
+        writer.assign(&cluster_offset_name, &cluster_next_name);
+        writer.end_block();
+        writer.end_block();
+        writer.begin_block("else");
+    }
+    writer.decl("uint32_t", &start_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &scan_name, Some("UINT32_C(0)"));
+    writer.decl("int", &matched_name, None);
+    writer.decl("uint32_t", &separator_index_name, None);
+    writer.begin_block(&format!(
+        "while ({scan_name} <= (uint32_t){input_name}.length && (uint32_t){separator_name}.length <= (uint32_t){input_name}.length - {scan_name})"
+    ));
+    writer.assign(&matched_name, "INT32_C(1)");
+    writer.assign(&separator_index_name, "UINT32_C(0)");
+    writer.begin_block(&format!(
+        "while ({separator_index_name} < (uint32_t){separator_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if ({bytes_name}[{scan_name} + {separator_index_name}] != {separator_name}.data[{separator_index_name}])"
+    ));
+    writer.assign(&matched_name, "INT32_C(0)");
+    writer.line("break;");
+    writer.end_block();
+    writer.line(&format!("++{separator_index_name};"));
+    writer.end_block();
+    writer.begin_block(&format!("if ({matched_name} != INT32_C(0))"));
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &start_name,
+        &format!("{scan_name} - {start_name}"),
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    writer.line(&format!(
+        "{scan_name} += (uint32_t){separator_name}.length;"
+    ));
+    writer.assign(&start_name, &scan_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.line(&format!("++{scan_name};"));
+    writer.end_block();
+    writer.end_block();
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &start_name,
+        &format!("(uint32_t){input_name}.length - {start_name}"),
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    if separator_may_be_empty {
+        writer.end_block();
+    }
+    writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
+    writer.line(&format!("emela_heap_release({owner_name});"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
+    Ok(())
+}
+
+fn emit_string_split_push(
+    writer: &mut Writer,
+    node_name: &str,
+    list_node: &str,
+    list_kind: u32,
+    bytes: &str,
+    start: &str,
+    length: &str,
+    owner: &str,
+    last: &str,
+    head: &str,
+) {
+    writer.assign(
+        node_name,
+        &format!("({list_node} *)emela_heap_allocate(sizeof({list_node}), UINT32_C({list_kind}))"),
+    );
+    writer.assign(
+        &format!("{node_name}->head"),
+        &format!(
+            "(EmelaString){{ .data = {bytes} + ({start}), .length = (uint16_t)({length}), .owner = {owner} }}"
+        ),
+    );
+    writer.line(&format!("emela_heap_retain({owner});"));
+    writer.assign(&format!("{node_name}->tail"), "NULL");
+    writer.begin_block(&format!("if ({last} == NULL)"));
+    writer.assign(head, node_name);
+    writer.end_block();
+    writer.begin_block("else");
+    writer.assign(&format!("{last}->tail"), node_name);
+    writer.end_block();
+    writer.assign(last, node_name);
+}
+
+fn emit_string_chars(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    input: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[dst].ty;
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::STRING)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringChars destination is not List[String]",
+        ));
+    }
+
+    let suffix = u32::from(dst.into_raw());
+    let input_name = format!("emela_string_chars_input_{suffix}");
+    let copy_index_name = format!("emela_string_chars_copy_index_{suffix}");
+    let bytes_name = format!("emela_string_chars_bytes_{suffix}");
+    let owner_name = format!("emela_string_chars_owner_{suffix}");
+    let owner_created_name = format!("emela_string_chars_owner_created_{suffix}");
+    let head_name = format!("emela_string_chars_head_{suffix}");
+    let last_name = format!("emela_string_chars_last_{suffix}");
+    let node_name = format!("emela_string_chars_node_{suffix}");
+    let offset_name = format!("emela_string_chars_offset_{suffix}");
+    let next_name = format!("emela_string_chars_next_{suffix}");
+    let length_name = format!("emela_string_chars_length_{suffix}");
+    let list_node = layouts.list_node_name(list_ty);
+    let list_kind = layouts.list_index(list_ty);
+    let string_owner_kind = layouts.string_owner_kind();
+
+    writer.decl("EmelaString", &input_name, Some(input));
+    writer.decl(
+        "const char *",
+        &bytes_name,
+        Some(&format!("{input_name}.data")),
+    );
+    writer.decl("void *", &owner_name, Some(&format!("{input_name}.owner")));
+    writer.decl("int", &owner_created_name, Some("INT32_C(0)"));
+    writer.begin_block(&format!(
+        "if ({owner_name} == NULL && {input_name}.length != UINT16_C(0))"
+    ));
+    writer.assign(
+        &owner_name,
+        &format!("emela_heap_allocate((size_t){input_name}.length, UINT32_C({string_owner_kind}))"),
+    );
+    writer.assign(&bytes_name, &format!("(const char *){owner_name}"));
+    writer.decl("uint32_t", &copy_index_name, Some("UINT32_C(0)"));
+    writer.begin_block(&format!(
+        "while ({copy_index_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.line(&format!(
+        "((char *){owner_name})[{copy_index_name}] = {input_name}.data[{copy_index_name}];"
+    ));
+    writer.line(&format!("++{copy_index_name};"));
+    writer.end_block();
+    writer.assign(&owner_created_name, "INT32_C(1)");
+    writer.end_block();
+    writer.begin_block(&format!("if ({bytes_name} == NULL)"));
+    writer.assign(&bytes_name, "\"\"");
+    writer.end_block();
+
+    writer.decl("void *", &head_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &last_name, Some("NULL"));
+    writer.decl(&format!("{list_node} *"), &node_name, None);
+    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
+    writer.decl("uint32_t", &next_name, None);
+    writer.decl("uint32_t", &length_name, None);
+    writer.begin_block(&format!(
+        "while ({offset_name} < (uint32_t){input_name}.length)"
+    ));
+    writer.begin_block(&format!(
+        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
+    ));
+    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
+    writer.end_block();
+    writer.assign(&length_name, &format!("{next_name} - {offset_name}"));
+    emit_string_split_push(
+        writer,
+        &node_name,
+        &list_node,
+        list_kind,
+        &bytes_name,
+        &offset_name,
+        &length_name,
+        &owner_name,
+        &last_name,
+        &head_name,
+    );
+    writer.assign(&offset_name, &next_name);
+    writer.end_block();
+    writer.begin_block(&format!("if ({owner_created_name} != INT32_C(0))"));
+    writer.line(&format!("emela_heap_release({owner_name});"));
+    writer.end_block();
+    writer.assign(&variable_name(dst), &head_name);
+    Ok(())
+}
+
+fn emit_string_join(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: VarId,
+    list_ty: TypeId,
+    parts: &str,
+    separator: &str,
+    string_buffers: &StringBufferPlan,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    if !matches!(layouts.types[list_ty], Type::List(TypeId::STRING)) {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringJoin first argument is not List[String]",
+        ));
+    }
+    let Some((buffer, capacity)) = string_buffers.buffer(dst) else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "StringJoin has no planned output buffer",
+        ));
+    };
+    let suffix = u32::from(dst.into_raw());
+    let list_node = layouts.list_node_name(list_ty);
+    let cursor_name = format!("emela_string_join_cursor_{suffix}");
+    let length_name = format!("emela_string_join_length_{suffix}");
+    let first_name = format!("emela_string_join_first_{suffix}");
+
+    writer.decl(
+        &format!("const {list_node} *"),
+        &cursor_name,
+        Some(&format!("(const {list_node} *)({parts})")),
+    );
+    writer.decl("uint32_t", &length_name, Some("UINT32_C(0)"));
+    writer.decl("int", &first_name, Some("INT32_C(1)"));
+    writer.begin_block(&format!("while ({cursor_name} != NULL)"));
+    writer.begin_block(&format!("if ({first_name} == INT32_C(0))"));
+    writer.line(&format!(
+        "emela_emb_string_join_put({buffer}, {capacity}, &{length_name}, {separator});"
+    ));
+    writer.end_block();
+    writer.line(&format!(
+        "emela_emb_string_join_put({buffer}, {capacity}, &{length_name}, {cursor_name}->head);"
+    ));
+    writer.assign(&first_name, "INT32_C(0)");
+    writer.assign(
+        &cursor_name,
+        &format!("(const {list_node} *){cursor_name}->tail"),
+    );
+    writer.end_block();
+    writer.assign(
+        &variable_name(dst),
+        &format!("(EmelaString){{ .data = {buffer}, .length = (uint16_t){length_name} }}"),
+    );
+    Ok(())
+}
+
+fn emit_list_head(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    list: VarId,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let list_ty = function.vars[list].ty;
+    let Type::List(element_ty) = layouts.types[list_ty].clone() else {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListHead operand is not a List",
+        ));
+    };
+    let has_repr = layouts.type_repr(element_ty) != Repr::Void;
+    if dst.is_some() && !has_repr {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListHead destination does not match its element representation",
+        ));
+    }
+    if let Some(dst) = dst {
+        let node_type = layouts.list_node_name(list_ty);
+        writer.assign(
+            &variable_name(dst),
+            &format!("(({node_type} *){})->head", variable_name(list)),
+        );
+    }
+    Ok(())
+}
+
+fn emit_list_tail(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    dst: Option<VarId>,
+    list: VarId,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let Some(dst) = dst else {
+        return Ok(());
+    };
+    let list_ty = function.vars[list].ty;
+    if !matches!(layouts.types[list_ty], Type::List(_)) || function.vars[dst].ty != list_ty {
+        return Err(invalid_flow_ir(
+            &function.name,
+            "ListTail operand and destination types differ",
+        ));
+    }
+    let node_type = layouts.list_node_name(list_ty);
+    writer.assign(
+        &variable_name(dst),
+        &format!("(({node_type} *){})->tail", variable_name(list)),
+    );
+    Ok(())
+}
+
 fn emit_loop(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -2994,7 +4151,12 @@ fn emit_loop(
     for (&variable, initial) in vars.iter().zip(inits) {
         let expression =
             operand_expression(initial).map_err(|variant| unsupported(&function.name, variant))?;
+        emit_retain_operand(layouts, function, initial, writer);
+        emit_release_if_owned(layouts, function, variable, writer);
         writer.assign(&variable_name(variable), &expression);
+        if layouts.is_managed_value(function.vars[variable].ty) {
+            writer.assign(&owned_variable_name(variable), "INT32_C(1)");
+        }
     }
     writer.begin_block("for (;;)");
     loops.push(vars.to_vec());
@@ -3052,9 +4214,13 @@ fn emit_compound_sequence(
     match &sequence.term {
         Term::Yield(value) => match (dst, value) {
             (Some(dst), Some(value)) => {
+                emit_retain_operand(layouts, function, value, writer);
                 let expression = operand_expression(value)
                     .map_err(|variant| unsupported(&function.name, variant))?;
                 writer.assign(&variable_name(dst), &expression);
+                if layouts.is_managed_value(function.vars[dst].ty) {
+                    writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+                }
             }
             (Some(_), None) => {
                 return Err(invalid_flow_ir(
@@ -3078,9 +4244,27 @@ fn emit_compound_sequence(
             let protect_depth = blocks[target_index].protect_depth;
             match (target_dst, value) {
                 (Some(dst), Some(value)) => {
-                    let expression = operand_expression(value)
-                        .map_err(|variant| unsupported(&function.name, variant))?;
-                    writer.assign(&variable_name(dst), &expression);
+                    if function.vars[dst].ty == TypeId::ANY
+                        && matches!(value, Operand::Var(v) if layouts.error_enum(function.vars[*v].ty).is_some())
+                    {
+                        emit_release_if_owned(layouts, function, dst, writer);
+                        emit_error_assignment(
+                            layouts,
+                            function,
+                            value,
+                            &variable_name(dst),
+                            writer,
+                        )?;
+                    } else {
+                        emit_retain_operand(layouts, function, value, writer);
+                        emit_release_if_owned(layouts, function, dst, writer);
+                        let expression = operand_expression(value)
+                            .map_err(|variant| unsupported(&function.name, variant))?;
+                        writer.assign(&variable_name(dst), &expression);
+                    }
+                    if layouts.is_managed_value(function.vars[dst].ty) {
+                        writer.assign(&owned_variable_name(dst), "INT32_C(1)");
+                    }
                 }
                 (Some(_), None) => {
                     return Err(invalid_flow_ir(
@@ -3129,6 +4313,7 @@ fn emit_compound_sequence(
                     "Fail appears in a function without a failure channel",
                 ));
             }
+            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_pending_cleanups(
                 layouts,
                 function,
@@ -3142,7 +4327,6 @@ fn emit_compound_sequence(
                 next_temp,
                 next_label,
             )?;
-            emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
         }
         Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
@@ -3198,8 +4382,19 @@ fn emit_recur(
         );
         temporaries.push(temporary);
     }
+    for (&variable, temporary) in vars.iter().zip(&temporaries) {
+        if layouts.is_managed_value(function.vars[variable].ty) {
+            layouts.emit_retain_value_expression(function.vars[variable].ty, temporary, writer);
+        }
+    }
+    for &variable in vars {
+        emit_release_if_owned(layouts, function, variable, writer);
+    }
     for (&variable, temporary) in vars.iter().zip(temporaries) {
         writer.assign(&variable_name(variable), &temporary);
+        if layouts.is_managed_value(function.vars[variable].ty) {
+            writer.assign(&owned_variable_name(variable), "INT32_C(1)");
+        }
     }
     writer.line("continue;");
     Ok(())
@@ -3241,7 +4436,11 @@ fn emit_call_failure_edge(
                     "failing call target does not use the EmelaError representation",
                 ));
             }
+            emit_release_if_owned(layouts, function, target_dst, writer);
             writer.assign(&variable_name(target_dst), error_name);
+            if layouts.is_managed_value(function.vars[target_dst].ty) {
+                writer.assign(&owned_variable_name(target_dst), "INT32_C(1)");
+            }
             emit_pending_cleanups(
                 layouts,
                 function,
@@ -3306,6 +4505,7 @@ fn emit_error_assignment(
     let ty = function.vars[*variable].ty;
     if matches!(layouts.types[ty], Type::Any) {
         writer.assign(target, &variable_name(*variable));
+        writer.line(&format!("emela_error_retain({target});"));
         return Ok(());
     }
     let Some(enum_id) = layouts.error_enum(ty) else {
@@ -3321,18 +4521,22 @@ fn emit_error_assignment(
         ));
     }
     let object = format!("({target})");
+    writer.assign(target, "(EmelaError){0}");
     writer.assign(
         &format!("{object}.tag"),
         &format!("UINT32_C({})", enum_index(enum_id) + 1),
     );
-    writer.assign(
-        &format!("{object}.payload.e{}", enum_index(enum_id)),
+    layouts.emit_owned_value_store(
+        ty,
         &variable_name(*variable),
+        &format!("{object}.payload.e{}", enum_index(enum_id)),
+        writer,
     );
     Ok(())
 }
 
 fn emit_failure_return(layouts: &TypeLayouts<'_>, function: &Function, writer: &mut Writer) {
+    emit_owned_cleanup(layouts, function, None, writer);
     if layouts.type_repr(function.ret) == Repr::Void {
         writer.ret(None);
     } else {
@@ -3613,12 +4817,17 @@ fn emit_make(
             continue;
         }
         represented = true;
-        let expression =
-            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
-        writer.assign(
+        emit_aggregate_field_store(
+            layouts,
+            function,
+            ty,
+            ctor.variant,
+            index,
+            *field_ty,
+            arg,
             &format!("{target}.payload.v{}.f{index}", ctor.variant),
-            &expression,
-        );
+            writer,
+        )?;
     }
     if !represented {
         writer.assign(
@@ -3689,10 +4898,13 @@ fn emit_field(
         }]);
     }
     if let Some(dst) = dst {
-        writer.assign(
-            &variable_name(dst),
-            &format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant),
-        );
+        let access = format!("{}.payload.v{}.f{index}", variable_name(base), ctor.variant);
+        let expression = if layouts.is_recursive_box_field(base_ty, ctor.variant, index) {
+            format!("*(({} *){access})", layouts.c_type(field_ty))
+        } else {
+            access
+        };
+        writer.assign(&variable_name(dst), &expression);
     }
     Ok(())
 }
@@ -3773,9 +4985,17 @@ fn emit_tuple(
             continue;
         }
         represented = true;
-        let expression =
-            operand_expression(arg).map_err(|variant| unsupported(&function.name, variant))?;
-        writer.assign(&format!("{target}.f{index}"), &expression);
+        emit_aggregate_field_store(
+            layouts,
+            function,
+            ty,
+            0,
+            index,
+            field_ty,
+            arg,
+            &format!("{target}.f{index}"),
+            writer,
+        )?;
     }
     if !represented {
         writer.assign(&format!("{target}._unit"), "UINT8_C(0)");
@@ -3821,10 +5041,52 @@ fn emit_tuple_get(
         }]);
     }
     if let Some(dst) = dst {
+        let access = format!("{}.f{index}", variable_name(base));
+        let expression = if layouts.is_recursive_box_field(base_ty, 0, index) {
+            format!("*(({} *){access})", layouts.c_type(field_ty))
+        } else {
+            access
+        };
+        writer.assign(&variable_name(dst), &expression);
+    }
+    Ok(())
+}
+
+fn emit_aggregate_field_store(
+    layouts: &TypeLayouts<'_>,
+    function: &Function,
+    owner_ty: TypeId,
+    variant: usize,
+    field: usize,
+    field_ty: TypeId,
+    value: &Operand,
+    target: &str,
+    writer: &mut Writer,
+) -> Result<(), Vec<Error>> {
+    let expression = operand_expression(value).map_err(|kind| unsupported(&function.name, kind))?;
+    if layouts.is_recursive_box_field(owner_ty, variant, field) {
+        let box_kind = layouts.recursive_box_kind(field_ty).ok_or_else(|| {
+            invalid_flow_ir(
+                &function.name,
+                "recursive aggregate field has no heap box layout",
+            )
+        })?;
+        let field_type = layouts.c_type(field_ty);
         writer.assign(
-            &variable_name(dst),
-            &format!("{}.f{index}", variable_name(base)),
+            target,
+            &format!("emela_heap_allocate(sizeof({field_type}), UINT32_C({box_kind}))"),
         );
+        layouts.emit_owned_value_store(
+            field_ty,
+            &expression,
+            &format!("*(({field_type} *){target})"),
+            writer,
+        );
+    } else {
+        if layouts.is_managed_value(field_ty) {
+            emit_retain_operand(layouts, function, value, writer);
+        }
+        writer.assign(target, &expression);
     }
     Ok(())
 }
@@ -4245,6 +5507,31 @@ fn has_builtin(flow: &emela_lir::Module, emitted: &HashSet<FnId>, ops: &[Builtin
     })
 }
 
+fn has_grapheme_runtime(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
+    flow.functions
+        .iter()
+        .filter(|(id, function)| emitted.contains(id) && !function.constant)
+        .any(|(_, function)| {
+            function.stmts.iter().any(|(_, statement)| {
+                let Stmt::Let {
+                    value: Value::Builtin { op, args },
+                    ..
+                } = statement
+                else {
+                    return false;
+                };
+                match op {
+                    Builtin::StringLength | Builtin::StringChars => true,
+                    Builtin::StringSplit => !matches!(
+                        args.get(1),
+                        Some(Operand::Const(Const::String(separator))) if !separator.is_empty()
+                    ),
+                    _ => false,
+                }
+            })
+        })
+}
+
 fn has_runtime_string_append(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool {
     flow.functions
         .iter()
@@ -4343,6 +5630,10 @@ fn functions_with_string_output(
                             | Builtin::StringFromCodePoint,
                         args,
                     } => args.len() == 1 && matches!(args[0], Operand::Var(_)),
+                    Value::Builtin {
+                        op: Builtin::StringJoin,
+                        ..
+                    } => true,
                     Value::Runtime {
                         op: RuntimeOp::ShowString,
                         args,
@@ -4474,18 +5765,34 @@ fn emit_return(
     writer: &mut Writer,
 ) -> Result<(), Vec<Error>> {
     match term {
-        Term::Return(None) => writer.ret(None),
+        Term::Return(None) => {
+            emit_owned_cleanup(layouts, function, None, writer);
+            writer.ret(None);
+        }
         Term::Return(Some(operand)) => {
             let mut expression = operand_expression(operand)
                 .map_err(|variant| unsupported(&function.name, variant))?;
-            if string_buffers.returns_to_caller
-                && matches!(layouts.types[function.ret], Type::String)
-            {
+            let copies_string_to_caller = string_buffers.returns_to_caller
+                && matches!(layouts.types[function.ret], Type::String);
+            if copies_string_to_caller {
                 expression = format!(
                     "emela_emb_string_copy_to_output({expression}, emela_string_output, emela_emb_string_output_capacity, UINT16_C({}))",
                     string_buffers.capacity
                 );
             }
+            let mut moved = None;
+            if !copies_string_to_caller
+                && layouts.is_managed_value(function.ret)
+                && let Operand::Var(variable) = operand
+            {
+                if function.params.contains(variable) {
+                    emit_retain_operand(layouts, function, operand, writer);
+                } else {
+                    writer.assign(&owned_variable_name(*variable), "INT32_C(0)");
+                    moved = Some(*variable);
+                }
+            }
+            emit_owned_cleanup(layouts, function, moved, writer);
             writer.ret(Some(&expression));
         }
         Term::Fail(error) => {
@@ -4682,8 +5989,14 @@ struct TypeLayouts<'a> {
     types: TypeTable,
     aggregates: Vec<AggregateLayout>,
     aggregate_ids: HashMap<TypeId, usize>,
+    recursive_edges: HashSet<(TypeId, usize, usize)>,
+    recursive_box_types: Vec<TypeId>,
+    recursive_box_ids: HashMap<TypeId, usize>,
+    list_types: Vec<TypeId>,
+    list_ids: HashMap<TypeId, usize>,
     error_types: Vec<(EnumId, TypeId)>,
     has_error_abi: bool,
+    managed_error_payloads: bool,
 }
 
 impl<'a> TypeLayouts<'a> {
@@ -4693,7 +6006,13 @@ impl<'a> TypeLayouts<'a> {
             types: flow.core.types.clone(),
             aggregates: Vec::new(),
             aggregate_ids: HashMap::new(),
+            recursive_edges: HashSet::new(),
+            recursive_box_types: Vec::new(),
+            recursive_box_ids: HashMap::new(),
+            list_types: Vec::new(),
+            list_ids: HashMap::new(),
             error_types: Vec::new(),
+            managed_error_payloads: false,
             has_error_abi: flow.functions.iter().any(|(id, function)| {
                 emitted.contains(&id)
                     && (function.fails
@@ -4734,6 +6053,66 @@ impl<'a> TypeLayouts<'a> {
                 layouts.collect(variable.ty, &function.name, &mut states)?;
             }
         }
+        let mut index = 0;
+        while index < layouts.list_types.len() {
+            let list_ty = layouts.list_types[index];
+            let Type::List(element) = layouts.types[list_ty].clone() else {
+                unreachable!("list layout has a non-List type")
+            };
+            layouts.collect(element, "List element", &mut states)?;
+            index += 1;
+        }
+        for aggregate in &layouts.aggregates {
+            let fields = match &aggregate.kind {
+                AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+                AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+            };
+            for (variant, fields) in fields.into_iter().enumerate() {
+                for (field, &field_ty) in fields.iter().enumerate() {
+                    if layouts
+                        .recursive_edges
+                        .contains(&(aggregate.ty, variant, field))
+                        && !layouts.recursive_box_ids.contains_key(&field_ty)
+                    {
+                        let index = layouts.recursive_box_types.len();
+                        layouts.recursive_box_types.push(field_ty);
+                        layouts.recursive_box_ids.insert(field_ty, index);
+                    }
+                }
+            }
+        }
+        layouts.managed_error_payloads = layouts
+            .error_types
+            .iter()
+            .any(|&(_, ty)| layouts.is_managed_value(ty));
+        for (id, function) in flow.functions.iter() {
+            if !emitted.contains(&id) {
+                continue;
+            }
+            let mut types = function
+                .vars
+                .iter()
+                .map(|(_, variable)| variable.ty)
+                .collect::<Vec<_>>();
+            types.push(function.ret);
+            types.extend(layouts.list_types.iter().copied());
+            for ty in types {
+                if !layouts.contains_heap_ref(ty, &mut HashSet::new()) {
+                    continue;
+                }
+                match layouts.types[ty].clone() {
+                    Type::List(_) => {}
+                    Type::Any => {}
+                    Type::Tuple(_) | Type::Enum(_, _) => {}
+                    _ => {
+                        return Err(unsupported(
+                            &function.name,
+                            "managed List reference in an unsupported value type",
+                        ));
+                    }
+                }
+            }
+        }
         Ok(layouts)
     }
 
@@ -4743,6 +6122,14 @@ impl<'a> TypeLayouts<'a> {
         function: &str,
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>> {
+        if matches!(self.types[ty], Type::List(_)) {
+            if !self.list_ids.contains_key(&ty) {
+                let index = self.list_types.len();
+                self.list_types.push(ty);
+                self.list_ids.insert(ty, index);
+            }
+            return Ok(());
+        }
         let kind = match self.types[ty].clone() {
             Type::Tuple(fields) => Some(AggregateKind::Tuple(fields)),
             Type::Enum(id, args) if self.enum_layout_required(id) => {
@@ -4768,6 +6155,19 @@ impl<'a> TypeLayouts<'a> {
             return Ok(());
         };
 
+        if let Type::Enum(enum_id, _) = self.types[ty]
+            && states.iter().any(|(active_ty, state)| {
+                *state == 1
+                    && *active_ty != ty
+                    && matches!(self.types[*active_ty], Type::Enum(active_id, _) if active_id == enum_id)
+            })
+        {
+            return Err(unsupported(
+                function,
+                "recursive enum type that changes its type arguments",
+            ));
+        }
+
         match states.get(&ty) {
             Some(2) => return Ok(()),
             Some(1) => {
@@ -4780,13 +6180,20 @@ impl<'a> TypeLayouts<'a> {
         }
         states.insert(ty, 1);
 
-        let fields: Vec<TypeId> = match &kind {
-            AggregateKind::Tuple(fields) => fields.clone(),
-            AggregateKind::Enum(variants) => variants.iter().flatten().copied().collect(),
+        let variants = match &kind {
+            AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+            AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
         };
-        for field in fields {
-            if self.type_repr(field) != Repr::Void {
-                self.collect(field, function, states)?;
+        for (variant, fields) in variants.into_iter().enumerate() {
+            for (index, &field) in fields.iter().enumerate() {
+                if self.type_repr(field) == Repr::Void {
+                    continue;
+                }
+                if matches!(states.get(&field), Some(1)) {
+                    self.recursive_edges.insert((ty, variant, index));
+                } else {
+                    self.collect(field, function, states)?;
+                }
             }
         }
 
@@ -4857,6 +6264,434 @@ impl<'a> TypeLayouts<'a> {
         }
     }
 
+    fn list_node_name(&self, ty: TypeId) -> String {
+        format!("emela_list_node_{}", self.list_ids[&ty])
+    }
+
+    fn list_index(&self, ty: TypeId) -> u32 {
+        u32::try_from(self.list_ids[&ty]).expect("too many concrete List layouts")
+    }
+
+    fn is_managed_list(&self, ty: TypeId) -> bool {
+        matches!(self.types[ty], Type::List(_))
+    }
+
+    fn is_managed_value(&self, ty: TypeId) -> bool {
+        self.contains_owned_ref(ty, &mut HashSet::new())
+    }
+
+    fn contains_owned_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if matches!(self.types[ty], Type::Any) {
+            return self.managed_error_payloads;
+        }
+        if matches!(self.types[ty], Type::String | Type::List(_)) {
+            return true;
+        }
+        if !seen.insert(ty) {
+            return false;
+        }
+        let Some(&aggregate_index) = self.aggregate_ids.get(&ty) else {
+            return false;
+        };
+        let aggregate = &self.aggregates[aggregate_index];
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => fields.iter().enumerate().any(|(index, &field)| {
+                self.recursive_edges.contains(&(ty, 0, index))
+                    || self.contains_owned_ref(field, seen)
+            }),
+            AggregateKind::Enum(variants) => {
+                variants.iter().enumerate().any(|(variant, fields)| {
+                    fields.iter().enumerate().any(|(index, &field)| {
+                        self.recursive_edges.contains(&(ty, variant, index))
+                            || self.contains_owned_ref(field, seen)
+                    })
+                })
+            }
+        }
+    }
+
+    fn contains_heap_ref(&self, ty: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        if matches!(self.types[ty], Type::Any) {
+            return self.managed_error_payloads;
+        }
+        if matches!(self.types[ty], Type::List(_)) {
+            return true;
+        }
+        if !seen.insert(ty) {
+            return false;
+        }
+        let Some(&aggregate_index) = self.aggregate_ids.get(&ty) else {
+            return false;
+        };
+        let aggregate = &self.aggregates[aggregate_index];
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => fields.iter().enumerate().any(|(index, &field)| {
+                self.recursive_edges.contains(&(ty, 0, index))
+                    || self.contains_heap_ref(field, seen)
+            }),
+            AggregateKind::Enum(variants) => {
+                variants.iter().enumerate().any(|(variant, fields)| {
+                    fields.iter().enumerate().any(|(index, &field)| {
+                        self.recursive_edges.contains(&(ty, variant, index))
+                            || self.contains_heap_ref(field, seen)
+                    })
+                })
+            }
+        }
+    }
+
+    fn is_recursive_box_field(&self, owner: TypeId, variant: usize, field: usize) -> bool {
+        self.recursive_edges.contains(&(owner, variant, field))
+    }
+
+    fn recursive_box_kind(&self, ty: TypeId) -> Option<u32> {
+        let index = *self.recursive_box_ids.get(&ty)?;
+        u32::try_from(self.list_types.len() + index).ok()
+    }
+
+    fn string_owner_kind(&self) -> u32 {
+        u32::try_from(self.list_types.len() + self.recursive_box_types.len())
+            .expect("too many fixed-heap object kinds")
+    }
+
+    fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize> {
+        let index = *self.aggregate_ids.get(&ty)?;
+        self.is_managed_value(ty).then_some(index)
+    }
+
+    fn emit_retain_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
+        if matches!(self.types[ty], Type::Any) && self.managed_error_payloads {
+            writer.line(&format!("emela_error_retain({expression});"));
+        } else if self.is_managed_list(ty) {
+            writer.line(&format!("emela_heap_retain({expression});"));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!("emela_heap_retain(({expression}).owner);"));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_retain_value_{index}(&({expression}));"
+            ));
+        }
+    }
+
+    fn emit_enqueue_value_expression(
+        &self,
+        ty: TypeId,
+        expression: &str,
+        pending: &str,
+        tail: &str,
+        writer: &mut Writer,
+    ) {
+        if matches!(self.types[ty], Type::Any) && self.managed_error_payloads {
+            writer.line(&format!(
+                "emela_error_enqueue({expression}, {pending}, {tail});"
+            ));
+        } else if self.is_managed_list(ty) {
+            writer.line(&format!(
+                "emela_heap_enqueue({expression}, {pending}, {tail});"
+            ));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!(
+                "emela_heap_enqueue(({expression}).owner, {pending}, {tail});"
+            ));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{index}(&({expression}), {pending}, {tail});"
+            ));
+        }
+    }
+
+    fn emit_release_value_expression(&self, ty: TypeId, expression: &str, writer: &mut Writer) {
+        if matches!(self.types[ty], Type::Any) && self.managed_error_payloads {
+            writer.line(&format!("emela_error_release({expression});"));
+        } else if self.is_managed_list(ty) {
+            writer.line(&format!("emela_heap_release({expression});"));
+        } else if matches!(self.types[ty], Type::String) {
+            writer.line(&format!("emela_heap_release(({expression}).owner);"));
+        } else if let Some(index) = self.aggregate_helper_index(ty) {
+            writer.line(&format!(
+                "emela_heap_release_value_{index}(&({expression}));"
+            ));
+        }
+    }
+
+    fn emit_noheap_ownership_stubs(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty)
+                || self.contains_heap_ref(aggregate.ty, &mut HashSet::new())
+            {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "static inline void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.line("(void)value;");
+            writer.end_block();
+            writer.begin_block(&format!(
+                "static inline void emela_heap_release_value_{index}({aggregate_type} *value)"
+            ));
+            writer.line("(void)value;");
+            writer.end_block();
+            writer.blank();
+        }
+    }
+
+    fn emit_heap_ownership_helpers(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "static void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            self.emit_aggregate_retain_body(aggregate, writer);
+            writer.end_block();
+
+            writer.begin_block(&format!(
+                "static void emela_heap_enqueue_value_{index}(const {aggregate_type} *value, emela_heap_block **pending, emela_heap_block **tail)"
+            ));
+            self.emit_aggregate_enqueue_body(aggregate, writer);
+            writer.end_block();
+
+            writer.begin_block(&format!(
+                "static void emela_heap_release_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.line("emela_heap_block *pending = NULL;");
+            writer.line("emela_heap_block *tail = NULL;");
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{index}(value, &pending, &tail);"
+            ));
+            writer.line("emela_heap_drain(pending, tail);");
+            writer.end_block();
+            writer.blank();
+        }
+    }
+
+    fn emit_aggregate_retain_body(&self, aggregate: &AggregateLayout, writer: &mut Writer) {
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => {
+                for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                        writer.line(&format!("emela_heap_retain(value->f{index});"));
+                        continue;
+                    }
+                    if self.is_managed_value(field_ty) {
+                        self.emit_retain_value_expression(
+                            field_ty,
+                            &format!("value->f{index}"),
+                            writer,
+                        );
+                    }
+                }
+            }
+            AggregateKind::Enum(variants) => {
+                writer.begin_block("switch (value->tag)");
+                for (variant, fields) in variants.iter().enumerate() {
+                    writer.line(&format!("case INT32_C({variant}):"));
+                    writer.begin_block("");
+                    for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_recursive_box_field(aggregate.ty, variant, index) {
+                            writer.line(&format!(
+                                "emela_heap_retain(value->payload.v{variant}.f{index});"
+                            ));
+                            continue;
+                        }
+                        if self.is_managed_value(field_ty) {
+                            self.emit_retain_value_expression(
+                                field_ty,
+                                &format!("value->payload.v{variant}.f{index}"),
+                                writer,
+                            );
+                        }
+                    }
+                    writer.line("break;");
+                    writer.end_block();
+                }
+                writer.line("default:");
+                writer.begin_block("");
+                writer.line("break;");
+                writer.end_block();
+                writer.end_block();
+            }
+        }
+    }
+
+    fn emit_aggregate_enqueue_body(&self, aggregate: &AggregateLayout, writer: &mut Writer) {
+        match &aggregate.kind {
+            AggregateKind::Tuple(fields) => {
+                for (index, &field_ty) in fields.iter().enumerate() {
+                    if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                        writer.line(&format!(
+                            "emela_heap_enqueue(value->f{index}, pending, tail);"
+                        ));
+                        continue;
+                    }
+                    if self.is_managed_value(field_ty) {
+                        self.emit_enqueue_value_expression(
+                            field_ty,
+                            &format!("value->f{index}"),
+                            "pending",
+                            "tail",
+                            writer,
+                        );
+                    }
+                }
+            }
+            AggregateKind::Enum(variants) => {
+                writer.begin_block("switch (value->tag)");
+                for (variant, fields) in variants.iter().enumerate() {
+                    writer.line(&format!("case INT32_C({variant}):"));
+                    writer.begin_block("");
+                    for (index, &field_ty) in fields.iter().enumerate() {
+                        if self.is_recursive_box_field(aggregate.ty, variant, index) {
+                            writer.line(&format!(
+                                "emela_heap_enqueue(value->payload.v{variant}.f{index}, pending, tail);"
+                            ));
+                            continue;
+                        }
+                        if self.is_managed_value(field_ty) {
+                            self.emit_enqueue_value_expression(
+                                field_ty,
+                                &format!("value->payload.v{variant}.f{index}"),
+                                "pending",
+                                "tail",
+                                writer,
+                            );
+                        }
+                    }
+                    writer.line("break;");
+                    writer.end_block();
+                }
+                writer.line("default:");
+                writer.begin_block("");
+                writer.line("break;");
+                writer.end_block();
+                writer.end_block();
+            }
+        }
+    }
+
+    fn emit_heap_destroy_switch(&self, writer: &mut Writer) {
+        writer.begin_block(
+            "static void emela_heap_destroy(uint32_t kind, void *value, emela_heap_block **pending, emela_heap_block **tail)",
+        );
+        writer.begin_block("switch (kind)");
+        for &list_ty in &self.list_types {
+            let Type::List(element) = self.types[list_ty] else {
+                unreachable!("list layout has a non-List type")
+            };
+            let node_type = self.list_node_name(list_ty);
+            let kind = self.list_index(list_ty);
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            writer.line(&format!("{node_type} *node = ({node_type} *)value;"));
+            if self.type_repr(element) != Repr::Void && self.is_managed_value(element) {
+                self.emit_enqueue_value_expression(
+                    element,
+                    "node->head",
+                    "pending",
+                    "tail",
+                    writer,
+                );
+            }
+            writer.line("emela_heap_enqueue(node->tail, pending, tail);");
+            writer.line("break;");
+            writer.end_block();
+        }
+        for &box_ty in &self.recursive_box_types {
+            let box_index = self.recursive_box_ids[&box_ty];
+            let kind = self.list_types.len() + box_index;
+            let aggregate_index = self
+                .aggregate_helper_index(box_ty)
+                .expect("recursive box payload must have an ownership helper");
+            writer.line(&format!("case UINT32_C({kind}):"));
+            writer.begin_block("");
+            writer.line(&format!(
+                "emela_heap_enqueue_value_{aggregate_index}((const {} *)value, pending, tail);",
+                self.c_type(box_ty)
+            ));
+            writer.line("break;");
+            writer.end_block();
+        }
+        let string_owner_kind = self.string_owner_kind();
+        writer.line(&format!("case UINT32_C({string_owner_kind}):"));
+        writer.begin_block("");
+        writer.line("break;");
+        writer.end_block();
+        writer.line("default:");
+        writer.begin_block("");
+        writer.line(&format!(
+            "emela_board_defect(EMELA_DEFECT_PANIC, {}, UINT16_C({}));",
+            c_string_literal(b"invalid fixed heap reference"),
+            b"invalid fixed heap reference".len()
+        ));
+        writer.line("break;");
+        writer.end_block();
+        writer.end_block();
+        writer.end_block();
+        writer.blank();
+    }
+
+    fn emit_public_release_declarations(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.line("/* Retains heap references before copying this aggregate value. */");
+            writer.line(&format!(
+                "void emela_embedded_retain_value_{index}(const {aggregate_type} *value);"
+            ));
+            writer.line("/* Releases the heap references owned by this aggregate value. */");
+            writer.line(&format!(
+                "void emela_embedded_release_value_{index}({aggregate_type} *value);"
+            ));
+        }
+    }
+
+    fn emit_public_release_helpers(&self, writer: &mut Writer) {
+        for (index, aggregate) in self.aggregates.iter().enumerate() {
+            if !self.is_managed_value(aggregate.ty) {
+                continue;
+            }
+            let aggregate_type = self.c_type(aggregate.ty);
+            writer.begin_block(&format!(
+                "void emela_embedded_retain_value_{index}(const {aggregate_type} *value)"
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line(&format!("emela_heap_retain_value_{index}(value);"));
+            writer.end_block();
+            writer.end_block();
+            writer.begin_block(&format!(
+                "void emela_embedded_release_value_{index}({aggregate_type} *value)"
+            ));
+            writer.begin_block("if (value != NULL)");
+            writer.line(&format!("emela_heap_release_value_{index}(value);"));
+            writer.line(&format!("*value = ({aggregate_type}){{0}};"));
+            writer.end_block();
+            writer.end_block();
+            writer.blank();
+        }
+    }
+
+    fn emit_list_node_declarations(&self, writer: &mut Writer) {
+        for &ty in &self.list_types {
+            let Type::List(element) = self.types[ty].clone() else {
+                unreachable!("list layout has a non-List type")
+            };
+            writer.line(&format!("typedef struct {} {{", self.list_node_name(ty)));
+            if self.type_repr(element) == Repr::Void {
+                writer.line("  uint8_t _unit;");
+            } else {
+                writer.line(&format!("  {} head;", self.c_type(element)));
+            }
+            writer.line("  void *tail;");
+            writer.line(&format!("}} {};", self.list_node_name(ty)));
+            writer.blank();
+        }
+    }
+
     fn emit_declarations(&self, writer: &mut Writer) {
         for aggregate in &self.aggregates {
             writer.line("typedef struct {");
@@ -4868,7 +6703,12 @@ impl<'a> TypeLayouts<'a> {
                             continue;
                         }
                         represented = true;
-                        writer.line(&format!("  {} f{index};", self.c_type(field)));
+                        let field_type = if self.is_recursive_box_field(aggregate.ty, 0, index) {
+                            "void *".to_owned()
+                        } else {
+                            self.c_type(field)
+                        };
+                        writer.line(&format!("  {field_type} f{index};"));
                     }
                     if !represented {
                         writer.line("  uint8_t _unit;");
@@ -4883,7 +6723,16 @@ impl<'a> TypeLayouts<'a> {
                             .enumerate()
                             .filter(|(_, field)| self.type_repr(**field) != Repr::Void)
                             .map(|(field_index, field)| {
-                                format!("{} f{field_index};", self.c_type(*field))
+                                let field_type = if self.is_recursive_box_field(
+                                    aggregate.ty,
+                                    variant_index,
+                                    field_index,
+                                ) {
+                                    "void *".to_owned()
+                                } else {
+                                    self.c_type(*field)
+                                };
+                                format!("{field_type} f{field_index};")
                             })
                             .collect::<Vec<_>>();
                         let body = if represented_fields.is_empty() {
@@ -4979,6 +6828,10 @@ fn c_identifier(name: &str) -> String {
 
 fn variable_name(id: VarId) -> String {
     format!("emela_v_{}", u32::from(id.into_raw()))
+}
+
+fn owned_variable_name(id: VarId) -> String {
+    format!("emela_owned_v_{}", u32::from(id.into_raw()))
 }
 
 fn statement_name(statement: &emela_lir::Stmt) -> &'static str {
@@ -5078,29 +6931,4 @@ fn emit_string_comparison_helper(writer: &mut Writer) {
     writer.line("return left->length < right->length ? -INT32_C(1) : left->length > right->length ? INT32_C(1) : INT32_C(0);");
     writer.end_block();
     writer.blank();
-}
-
-fn emit_string_length(dst: VarId, input: &str, writer: &mut Writer) {
-    let suffix = u32::from(dst.into_raw());
-    let input_name = format!("emela_string_length_input_{suffix}");
-    let offset_name = format!("emela_string_length_offset_{suffix}");
-    let next_name = format!("emela_string_length_next_{suffix}");
-    let count_name = format!("emela_string_length_count_{suffix}");
-
-    writer.decl("EmelaString", &input_name, Some(input));
-    writer.decl("uint32_t", &offset_name, Some("UINT32_C(0)"));
-    writer.decl("uint32_t", &next_name, None);
-    writer.decl("int32_t", &count_name, Some("INT32_C(0)"));
-    writer.begin_block(&format!(
-        "while ({offset_name} < (uint32_t){input_name}.length)"
-    ));
-    writer.begin_block(&format!(
-        "if (!emela_emb_grapheme_next({input_name}, {offset_name}, &{next_name}))"
-    ));
-    writer.line("emela_board_defect(EMELA_DEFECT_PANIC, \"invalid UTF-8 string\", UINT16_C(20));");
-    writer.end_block();
-    writer.assign(&offset_name, &next_name);
-    writer.line(&format!("++{count_name};"));
-    writer.end_block();
-    writer.assign(&variable_name(dst), &count_name);
 }

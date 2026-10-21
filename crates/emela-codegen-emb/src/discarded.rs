@@ -1,6 +1,6 @@
 //! Materialize discarded runtime results without retaining them until function return.
 use emela_core::{Builtin, Sig, Type, TypeId};
-use emela_lir::{FnId, Function, Module, RuntimeOp, Stmt, Value, VarData, VarId};
+use emela_lir::{Const, FnId, Function, Module, Operand, RuntimeOp, Stmt, Value, VarData, VarId};
 use std::collections::{HashMap, HashSet};
 
 // Function names need not be unique in a caller-supplied verified Flow module.
@@ -52,10 +52,23 @@ pub(crate) fn normalize(module: &mut Module) -> Results {
 
 fn result_type(
     core: &mut emela_core::Module,
-    _function: &Function,
+    function: &Function,
     value: &Value,
 ) -> Option<TypeId> {
     match value {
+        Value::List { elems, tail } => {
+            if let Some(tail) = tail {
+                let ty = operand_type(function, tail);
+                if matches!(core.types[ty], Type::List(_)) {
+                    return Some(ty);
+                }
+                return None;
+            }
+            let element = elems
+                .first()
+                .map_or(TypeId::UNIT, |value| operand_type(function, value));
+            Some(core.list(element))
+        }
         Value::Builtin {
             op:
                 Builtin::CellNew
@@ -95,4 +108,18 @@ fn signature_type(core: &mut emela_core::Module, sig: Sig) -> Option<TypeId> {
         }
         Sig::Param(_) => return None,
     })
+}
+
+fn operand_type(function: &Function, operand: &Operand) -> TypeId {
+    match operand {
+        Operand::Var(value) => function.vars[*value].ty,
+        Operand::Const(value) => match value {
+            Const::Int(_) => TypeId::INT,
+            Const::Int64(_) => TypeId::INT64,
+            Const::Float(_) => TypeId::FLOAT,
+            Const::Bool(_) => TypeId::BOOL,
+            Const::String(_) => TypeId::STRING,
+            Const::Unit => TypeId::UNIT,
+        },
+    }
 }

@@ -1,3 +1,7 @@
+mod builtin_audit;
+mod owned;
+#[path = "../../emela-core/tests/support/mod.rs"]
+mod support;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -5,7 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use emela_codegen_emb::{ErrorKind, Options, Output, compile, compile_flow};
 use emela_core::{
-    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, TypeId, VariantDef,
+    BinOp, Builtin, CtorRef, EnumDef, External, ExternalBinding, HostRef, OpTy, Roots, Type,
+    TypeId, VariantDef,
 };
 use emela_lir::{
     Callee, CaseKey, Const, FnBuilder, Module, OnFail, Operand, PrimOp, PrimTy, RuntimeOp,
@@ -3888,3 +3893,1601 @@ fn dynamic_float_formatting_uses_a_bounded_runtime_and_float_parse_uses_the_boun
 }
 
 mod string_comparison;
+
+#[test]
+fn emits_empty_list_and_checks_list_emptiness() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+
+    let empty_function = {
+        let mut builder = FnBuilder::new(&core, "empty_list");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let empty = builder.assign(
+            "empty",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: None,
+            },
+        );
+        let is_empty = builder.assign("is_empty", TypeId::BOOL, Value::ListIsEmpty(empty));
+        builder.term(Term::Return(Some(is_empty.into())));
+        builder.finish()
+    };
+
+    let check_function = {
+        let mut builder = FnBuilder::new(&core, "check_list");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.param("list", list_int);
+        let is_empty = builder.assign("is_empty", TypeId::BOOL, Value::ListIsEmpty(list));
+        builder.term(Term::Return(Some(is_empty.into())));
+        builder.finish()
+    };
+
+    let empty_value_function = {
+        let mut builder = FnBuilder::new(&core, "empty_value");
+        builder.set_ret(list_int).set_exported();
+        let empty = builder.assign(
+            "empty",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+
+    let mut flow = Module::new(core);
+    flow.add(empty_function);
+    flow.add(check_function);
+    flow.add(empty_value_function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit empty List operations");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nint main(void) { int value = 0; return emela_export_empty_list_0() == INT32_C(1) && emela_export_check_list_1((void *)0) == INT32_C(1) && emela_export_check_list_1(&value) == INT32_C(0) && emela_export_empty_value_2() == (void *)0 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_nonempty_list_values() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "first_item");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default()).expect_err("require a configured heap");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+    assert_eq!(Options::default().with_heap_bytes(512).heap_bytes(), 512);
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_returned_list_aliases() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "identity_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("returning a borrowed List requires reference management");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_a_list_tail_alias() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "alias_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        let alias = builder.assign(
+            "alias",
+            list_int,
+            Value::List {
+                elems: Vec::new(),
+                tail: Some(list.into()),
+            },
+        );
+        builder.term(Term::Return(Some(alias.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("a List alias needs retain/release support");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_list_head() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "first_item");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.param("list", list_int);
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("reading a List head requires heap-backed List support");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_list_tail() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "list_tail");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.param("list", list_int);
+        let tail = builder.assign("tail", list_int, Value::ListTail(list));
+        builder.term(Term::Return(Some(tail.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("reading a List tail requires reference management");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn reads_list_heads_and_keeps_shared_tails_alive() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let identity = {
+        let mut builder = FnBuilder::new(&core, "identity_list");
+        builder.set_ret(list_int);
+        let list = builder.param("list", list_int);
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let identity_id = flow.add(identity);
+    let sum = {
+        let mut builder = FnBuilder::new(&flow.core, "sum_first_two");
+        builder.set_ret(TypeId::INT).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![
+                    Const::Int(10).into(),
+                    Const::Int(20).into(),
+                    Const::Int(30).into(),
+                ],
+                tail: None,
+            },
+        );
+        let alias = builder.assign(
+            "alias",
+            list_int,
+            Value::Call {
+                callee: Callee::Direct(identity_id),
+                args: vec![list.into()],
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        let first = builder.assign("first", TypeId::INT, Value::ListHead(list));
+        let tail = builder.assign("tail", list_int, Value::ListTail(alias));
+        let second = builder.assign("second", TypeId::INT, Value::ListHead(tail));
+        let result = builder.assign(
+            "sum",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: PrimTy::I32,
+                args: vec![first.into(), second.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    flow.add(sum);
+    let list_unit = flow.core.types.intern(Type::List(TypeId::UNIT));
+    let unit_head = {
+        let mut builder = FnBuilder::new(&flow.core, "unit_head");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.assign(
+            "list",
+            list_unit,
+            Value::List {
+                elems: vec![Const::Unit.into()],
+                tail: None,
+            },
+        );
+        builder.let_(None, Value::ListHead(list));
+        builder.term(Term::Return(Some(Const::Bool(true).into())));
+        builder.finish()
+    };
+    flow.add(unit_head);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit ListHead and ListTail operations");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_sum_first_two_1() != INT32_C(30)) return 2; return emela_export_unit_head_2() == INT32_C(1) ? 0 : 3; }\n",
+    );
+}
+
+#[test]
+fn stores_and_releases_nested_lists() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let nested_list = core.types.intern(Type::List(list_int));
+    let make_nested = {
+        let mut builder = FnBuilder::new(&core, "extract_inner_list");
+        builder.set_ret(list_int);
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let outer = builder.assign(
+            "outer",
+            nested_list,
+            Value::List {
+                elems: vec![inner.into()],
+                tail: None,
+            },
+        );
+        let extracted = builder.assign("extracted", list_int, Value::ListHead(outer));
+        builder.term(Term::Return(Some(extracted.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    let make_nested_id = flow.add(make_nested);
+    let nested_head = {
+        let mut builder = FnBuilder::new(&flow.core, "nested_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::Call {
+                callee: Callee::Direct(make_nested_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(inner));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+    flow.add(nested_head);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit nested List ownership");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_nested_head_1() != INT32_C(42)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
+fn stores_and_releases_list_references_inside_tuples_and_list_elements() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let tuple_with_list = core.types.intern(Type::Tuple(vec![list_int]));
+    let list_tuple = core.types.intern(Type::List(tuple_with_list));
+
+    let tuple_function = {
+        let mut builder = FnBuilder::new(&core, "tuple_list_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        let extracted = builder.assign(
+            "extracted",
+            list_int,
+            Value::TupleGet {
+                base: tuple,
+                index: 0,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(extracted));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+
+    let list_element_function = {
+        let mut builder = FnBuilder::new(&core, "list_tuple_head");
+        builder.set_ret(TypeId::INT).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(73).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        let outer = builder.assign(
+            "outer",
+            list_tuple,
+            Value::List {
+                elems: vec![tuple.into()],
+                tail: None,
+            },
+        );
+        let extracted_tuple =
+            builder.assign("extracted_tuple", tuple_with_list, Value::ListHead(outer));
+        let extracted_list = builder.assign(
+            "extracted_list",
+            list_int,
+            Value::TupleGet {
+                base: extracted_tuple,
+                index: 0,
+            },
+        );
+        let head = builder.assign("head", TypeId::INT, Value::ListHead(extracted_list));
+        builder.term(Term::Return(Some(head.into())));
+        builder.finish()
+    };
+
+    let returned_tuple_function = {
+        let mut builder = FnBuilder::new(&core, "tuple_value");
+        builder.set_ret(tuple_with_list).set_exported();
+        let inner = builder.assign(
+            "inner",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(5).into()],
+                tail: None,
+            },
+        );
+        let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![inner.into()]));
+        builder.term(Term::Return(Some(tuple.into())));
+        builder.finish()
+    };
+
+    let mut flow = Module::new(core);
+    flow.add(tuple_function);
+    flow.add(list_element_function);
+    flow.add(returned_tuple_function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit List references inside inline tuple values");
+    let tuple_c_type = format!("emela_type_{}", tuple_with_list.index());
+    let harness = format!(
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ (void)kind; (void)message; (void)length; exit(1); }}\nint main(void) {{ for (int i = 0; i < 1000; i++) {{ if (emela_export_tuple_list_head_0() != INT32_C(42)) return 2; if (emela_export_list_tuple_head_1() != INT32_C(73)) return 3; {tuple_c_type} value = emela_export_tuple_value_2(); emela_embedded_release_value_0(&value); }} return 0; }}\n"
+    );
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn stores_and_releases_list_references_inside_enum_fields() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let enum_id = core.add_enum(EnumDef {
+        name: "ListBox".to_owned(),
+        params: 0,
+        variants: vec![
+            VariantDef::positional("Some", vec![list_int]),
+            VariantDef::unit("None"),
+        ],
+        error: false,
+        external: false,
+    });
+    let enum_ty = core.enum_type(enum_id, Vec::new());
+    let mut builder = FnBuilder::new(&core, "enum_list_head");
+    builder.set_ret(TypeId::INT).set_exported();
+    let inner = builder.assign(
+        "inner",
+        list_int,
+        Value::List {
+            elems: vec![Const::Int(91).into()],
+            tail: None,
+        },
+    );
+    let boxed = builder.assign(
+        "boxed",
+        enum_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: vec![inner.into()],
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(boxed));
+    let list = builder.assign(
+        "list",
+        list_int,
+        Value::Field {
+            base: boxed,
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            index: 0,
+        },
+    );
+    let head = builder.assign("head", TypeId::INT, Value::ListHead(list));
+    let result = builder.assign(
+        "result",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![head.into(), tag.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit List references inside enum payloads");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_enum_list_head_0() != INT32_C(91)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
+fn requires_fixed_heap_capacity_for_managed_aggregate_values() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let tuple_with_list = core.types.intern(Type::Tuple(vec![list_int]));
+    let mut builder = FnBuilder::new(&core, "managed_tuple");
+    builder.set_ret(TypeId::INT).set_exported();
+    let list = builder.assign(
+        "list",
+        list_int,
+        Value::List {
+            elems: vec![Const::Int(1).into()],
+            tail: None,
+        },
+    );
+    let tuple = builder.assign("tuple", tuple_with_list, Value::Tuple(vec![list.into()]));
+    let field = builder.assign(
+        "field",
+        list_int,
+        Value::TupleGet {
+            base: tuple,
+            index: 0,
+        },
+    );
+    let head = builder.assign("head", TypeId::INT, Value::ListHead(field));
+    builder.term(Term::Return(Some(head.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default())
+        .expect_err("managed aggregate values require heap-backed reference management");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("heap_bytes = 0"));
+}
+
+#[test]
+fn boxes_recursive_enum_fields_and_releases_deep_values_iteratively() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Chain".to_owned(),
+        params: 0,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let chain_ty = core.enum_type(enum_id, Vec::new());
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Link", vec![chain_ty]),
+    ];
+
+    let mut builder = FnBuilder::new(&core, "recursive_chain");
+    builder.set_ret(TypeId::INT).set_exported();
+    let current = builder.var("current", chain_ty);
+    let depth = builder.var("depth", TypeId::INT);
+    let result = builder.var("result", TypeId::INT);
+    let end = builder.assign(
+        "end",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    builder.loop_(
+        Some(result),
+        vec![(current, end.into()), (depth, Const::Int(0).into())],
+        |loop_| {
+            let is_deep = loop_.assign(
+                "is_deep",
+                TypeId::BOOL,
+                Value::Prim {
+                    op: PrimOp::Eq,
+                    ty: PrimTy::I32,
+                    args: vec![depth.into(), Const::Int(128).into()],
+                },
+            );
+            let branch = loop_.var("branch", TypeId::INT);
+            loop_.if_(
+                Some(branch),
+                is_deep,
+                |done| {
+                    let child = done.assign(
+                        "child",
+                        chain_ty,
+                        Value::Field {
+                            base: current,
+                            ctor: CtorRef {
+                                enum_id,
+                                variant: 1,
+                            },
+                            index: 0,
+                        },
+                    );
+                    let child_tag = done.assign("child_tag", TypeId::INT, Value::Tag(child));
+                    done.term(Term::Yield(Some(child_tag.into())));
+                },
+                |more| {
+                    let next = more.assign(
+                        "next",
+                        chain_ty,
+                        Value::Make {
+                            ctor: CtorRef {
+                                enum_id,
+                                variant: 1,
+                            },
+                            args: vec![current.into()],
+                        },
+                    );
+                    let next_depth = more.assign(
+                        "next_depth",
+                        TypeId::INT,
+                        Value::Prim {
+                            op: PrimOp::Add,
+                            ty: PrimTy::I32,
+                            args: vec![depth.into(), Const::Int(1).into()],
+                        },
+                    );
+                    more.term(Term::Recur(vec![next.into(), next_depth.into()]));
+                },
+            );
+            loop_.term(Term::Yield(Some(branch.into())));
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let no_heap = compile_flow(&flow, &Options::default())
+        .expect_err("recursive enum boxes require a configured fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+    let isr = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(8192)
+            .with_isr_entry("recursive_chain"),
+    )
+    .expect_err("reject recursive heap values reachable from an ISR");
+    assert!(isr[0].message.contains("heap-backed value"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(8192))
+        .expect("emit a boxed recursive enum");
+    let source = &output
+        .files
+        .iter()
+        .find(|file| file.path == "emela_embedded.c")
+        .expect("generated source")
+        .contents;
+    assert!(source.contains("emela_heap_allocate(sizeof(emela_type_"));
+    assert!(source.contains("emela_heap_drain(pending, tail)"));
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 100; i++) if (emela_export_recursive_chain_0() != INT32_C(1)) return 2; return 0; }\n",
+    );
+
+    let exhausted = compile_flow(&flow, &Options::default().with_heap_bytes(1))
+        .expect("emit recursive boxes with an intentionally undersized heap");
+    compile_and_run(
+        exhausted,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 1); }\nint main(void) { (void)emela_export_recursive_chain_0(); return 2; }\n",
+    );
+}
+
+#[test]
+fn rejects_recursive_enum_types_that_change_type_arguments() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "Growing".to_owned(),
+        params: 1,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let parameter = core.type_param(0);
+    let nested_parameter = core.list(parameter);
+    let nested_type = core.enum_type(enum_id, vec![nested_parameter]);
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Next", vec![nested_type]),
+    ];
+    let concrete_type = core.enum_type(enum_id, vec![TypeId::INT]);
+    let mut builder = FnBuilder::new(&core, "growing_enum");
+    builder.set_ret(concrete_type).set_exported();
+    let value = builder.assign(
+        "value",
+        concrete_type,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    builder.term(Term::Return(Some(value.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect_err("reject infinitely expanding generic recursive layouts");
+    assert_eq!(errors[0].kind, ErrorKind::Unsupported);
+    assert!(errors[0].message.contains("changes its type arguments"));
+}
+
+#[test]
+fn boxes_recursive_fields_nested_inside_tuples() {
+    let mut core = emela_core::Module::new();
+    let enum_id = core.add_enum(EnumDef {
+        name: "TupleChain".to_owned(),
+        params: 0,
+        variants: Vec::new(),
+        error: false,
+        external: false,
+    });
+    let chain_ty = core.enum_type(enum_id, Vec::new());
+    let tuple_ty = core.tuple(vec![TypeId::INT, chain_ty]);
+    core.enums[enum_id].variants = vec![
+        VariantDef::unit("End"),
+        VariantDef::positional("Link", vec![tuple_ty]),
+    ];
+
+    let mut builder = FnBuilder::new(&core, "tuple_recursive_field");
+    builder.set_ret(TypeId::INT).set_exported();
+    let end = builder.assign(
+        "end",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 0,
+            },
+            args: Vec::new(),
+        },
+    );
+    let tuple = builder.assign(
+        "tuple",
+        tuple_ty,
+        Value::Tuple(vec![Const::Int(7).into(), end.into()]),
+    );
+    let link = builder.assign(
+        "link",
+        chain_ty,
+        Value::Make {
+            ctor: CtorRef {
+                enum_id,
+                variant: 1,
+            },
+            args: vec![tuple.into()],
+        },
+    );
+    let payload = builder.assign(
+        "payload",
+        tuple_ty,
+        Value::Field {
+            base: link,
+            ctor: CtorRef {
+                enum_id,
+                variant: 1,
+            },
+            index: 0,
+        },
+    );
+    let number = builder.assign(
+        "number",
+        TypeId::INT,
+        Value::TupleGet {
+            base: payload,
+            index: 0,
+        },
+    );
+    let child = builder.assign(
+        "child",
+        chain_ty,
+        Value::TupleGet {
+            base: payload,
+            index: 1,
+        },
+    );
+    let tag = builder.assign("tag", TypeId::INT, Value::Tag(child));
+    let result = builder.assign(
+        "result",
+        TypeId::INT,
+        Value::Prim {
+            op: PrimOp::Add,
+            ty: PrimTy::I32,
+            args: vec![number.into(), tag.into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit a recursive edge nested in a tuple");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(1); }\nint main(void) { for (int i = 0; i < 1000; i++) if (emela_export_tuple_recursive_field_0() != INT32_C(7)) return 2; return 0; }\n",
+    );
+}
+
+#[test]
+fn allocates_and_releases_lists_in_the_fixed_heap() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let make_list = {
+        let mut builder = FnBuilder::new(&core, "make_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(4).into(), Const::Int(5).into()],
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(make_list);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit fixed-heap List construction");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 2 : 3); }\nint main(void) { for (int i = 0; i < 1000; i++) emela_embedded_release(emela_export_make_list_0()); return 0; }\n",
+    );
+}
+
+#[test]
+fn string_code_points_builds_and_releases_a_list_in_code_point_order() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let code_points = {
+        let mut builder = FnBuilder::new(&core, "string_code_points");
+        builder.set_ret(TypeId::INT).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let points = builder.assign(
+            "points",
+            list_int,
+            Value::Builtin {
+                op: Builtin::StringCodePoints,
+                args: vec![input.into()],
+            },
+        );
+        let first = builder.assign("first", TypeId::INT, Value::ListHead(points));
+        let rest = builder.assign("rest", list_int, Value::ListTail(points));
+        let second = builder.assign("second", TypeId::INT, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_int, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::INT, Value::ListHead(rest));
+
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first.into(), Const::Int(1_000_000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second.into(), Const::Int(100).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let packed = builder.assign(
+            "packed",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), third.into()],
+            },
+        );
+        builder.term(Term::Return(Some(packed.into())));
+        builder.finish()
+    };
+    let empty_code_points = {
+        let mut builder = FnBuilder::new(&core, "empty_code_points");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let points = builder.assign(
+            "points",
+            list_int,
+            Value::Builtin {
+                op: Builtin::StringCodePoints,
+                args: vec![input.into()],
+            },
+        );
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(points));
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(code_points);
+    flow.add(empty_code_points);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1024))
+        .expect("emit String.code_points");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == UINT16_C(20) && message[0] == 'i' ? 0 : 3); }\nint main(void) { EmelaString value = { .data = \"A\\xe2\\x82\\xac\\xf0\\x90\\x80\\x80\", .length = UINT16_C(8) }; for (int i = 0; i < 1000; ++i) if (emela_export_string_code_points_0(value) != INT32_C(65901936)) return 1; EmelaString empty = { .data = 0, .length = UINT16_C(0) }; if (emela_export_empty_code_points_1(empty) != INT32_C(1)) return 2; EmelaString malformed = { .data = \"\\xff\", .length = UINT16_C(1) }; (void)emela_export_string_code_points_0(malformed); return 4; }\n",
+    );
+}
+
+#[test]
+fn string_chars_handles_unicode_graphemes() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let chars = {
+        let mut builder = FnBuilder::new(&core, "string_chars");
+        builder.set_ret(list_string).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let chars = builder.assign(
+            "chars",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringChars,
+                args: vec![input.into()],
+            },
+        );
+        builder.term(Term::Return(Some(chars.into())));
+        builder.finish()
+    };
+    let signature = {
+        let mut builder = FnBuilder::new(&core, "chars_signature");
+        builder.set_ret(TypeId::INT).set_exported();
+        let chars = builder.param("chars", list_string);
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(chars));
+        let rest = builder.assign("rest", list_string, Value::ListTail(chars));
+        let second = builder.assign("second", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::STRING, Value::ListHead(rest));
+        let first_matches = builder.assign(
+            "first_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![first.into(), Const::String("a".to_owned()).into()],
+            },
+        );
+        let second_length = builder.assign(
+            "second_length",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![second.into()],
+            },
+        );
+        let second_matches = builder.assign(
+            "second_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![second.into(), Const::String("\r\n".to_owned()).into()],
+            },
+        );
+        let third_matches = builder.assign(
+            "third_matches",
+            TypeId::BOOL,
+            Value::Builtin {
+                op: Builtin::StringContains,
+                args: vec![third.into(), Const::String("β".to_owned()).into()],
+            },
+        );
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_matches.into(), Const::Int(1000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_length.into(), Const::Int(100).into()],
+            },
+        );
+        let second_match_scaled = builder.assign(
+            "second_match_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_matches.into(), Const::Int(10).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let first_three = builder.assign(
+            "first_three",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), second_match_scaled.into()],
+            },
+        );
+        let packed = builder.assign(
+            "packed",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_three.into(), third_matches.into()],
+            },
+        );
+        builder.term(Term::Return(Some(packed.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(chars);
+    flow.add(signature);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit constrained String.chars");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char invalid[] = \"invalid UTF-8 string\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == sizeof invalid - 1 && memcmp(message, invalid, length) == 0 ? 0 : 3); }\nint main(void) { for (int i = 0; i < 1000; ++i) { char input[] = \"a\\xcc\\x88\\r\\n\\xce\\xb2\"; EmelaString source = { .data = input, .length = UINT16_C(7) }; void *chars = emela_export_string_chars_0(source); memset(input, 'x', sizeof input - 1); if (emela_export_chars_signature_1(chars) != INT32_C(1211)) return 1; emela_embedded_release(chars); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_string_chars_0(empty) != NULL) return 2; EmelaString malformed = { .data = \"\\xff\", .length = UINT16_C(1) }; (void)emela_export_string_chars_0(malformed); return 4; }\n",
+    );
+
+    let exhausted = compile_flow(&flow, &Options::default().with_heap_bytes(64))
+        .expect("emit String.chars with a small fixed heap");
+    compile_and_run(
+        exhausted,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 3); }\nint main(void) { char input[] = \"a\\r\\nb\"; EmelaString source = { .data = input, .length = UINT16_C(4) }; (void)emela_export_string_chars_0(source); return 4; }\n",
+    );
+}
+
+#[test]
+fn string_length_uses_unicode_18_extended_grapheme_clusters() {
+    let core = emela_core::Module::new();
+    let mut builder = FnBuilder::new(&core, "string_length");
+    builder.set_ret(TypeId::INT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let length = builder.assign(
+        "length",
+        TypeId::INT,
+        Value::Builtin {
+            op: Builtin::StringLength,
+            args: vec![input.into()],
+        },
+    );
+    builder.term(Term::Return(Some(length.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default()).expect("emit String.length");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\nstatic const char invalid[] = \"invalid UTF-8 string\";\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { exit(kind == EMELA_DEFECT_PANIC && length == sizeof invalid - 1 && memcmp(message, invalid, length) == 0 ? 0 : 3); }\nstatic int32_t length_of(const char *data, uint16_t length) { EmelaString value = { .data = data, .length = length }; return emela_export_string_length_0(value); }\nint main(void) { if (length_of(\"\", 0) != 0) return 1; if (length_of(\"a\\xcc\\x88\\x62\", 4) != 2) return 2; if (length_of(\"\\r\\n\", 2) != 1) return 3; if (length_of(\"\\xe1\\x84\\x80\\xe1\\x85\\xa1\\xe1\\x86\\xa8\", 9) != 1) return 4; if (length_of(\"\\xf0\\x9f\\x91\\xa9\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa9\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa7\\xe2\\x80\\x8d\\xf0\\x9f\\x91\\xa6\", 25) != 1) return 5; if (length_of(\"\\xf0\\x9f\\x87\\xba\\xf0\\x9f\\x87\\xb8\", 8) != 1) return 6; if (length_of(\"\\xe0\\xa4\\x95\\xe0\\xa5\\x8d\\xe0\\xa4\\xb7\", 9) != 1) return 7; (void)length_of(\"\\xff\", 1); return 8; }\n",
+    );
+}
+
+#[test]
+fn string_chars_matches_the_unicode_18_grapheme_break_test() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let mut builder = FnBuilder::new(&core, "grapheme_break_test");
+    builder.set_ret(TypeId::UNIT).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let chars = builder.assign(
+        "chars",
+        list_string,
+        Value::Builtin {
+            op: Builtin::StringChars,
+            args: vec![input.into()],
+        },
+    );
+    let separated = builder.assign(
+        "separated",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringJoin,
+            args: vec![chars.into(), Const::String("|".to_owned()).into()],
+        },
+    );
+    builder.let_(
+        None,
+        Value::Runtime {
+            op: RuntimeOp::DebugPrint,
+            args: vec![separated.into()],
+        },
+    );
+    builder.term(Term::Return(None));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(4096))
+        .expect("emit the Unicode grapheme test entry");
+    let mut harness = String::from(
+        r#"#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "emela_embedded.h"
+#include "emela_board.h"
+static const uint8_t *expected_bytes;
+static uint16_t expected_length;
+static uint32_t current_case;
+static uint32_t debug_calls;
+_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(90); }
+void emela_board_debug(const char *bytes, uint16_t length) {
+    if (length != expected_length || memcmp(bytes, expected_bytes, length) != 0) {
+        fprintf(stderr, "GraphemeBreakTest case %u mismatch: expected", current_case);
+        for (uint16_t i = 0; i < expected_length; ++i) fprintf(stderr, " %02x", expected_bytes[i]);
+        fprintf(stderr, "; got");
+        for (uint16_t i = 0; i < length; ++i) fprintf(stderr, " %02x", (uint8_t)bytes[i]);
+        fputc('\n', stderr);
+        exit(91);
+    }
+    ++debug_calls;
+}
+int main(void) {
+"#,
+    );
+    let mut case_count = 0usize;
+    for line in include_str!("data/GraphemeBreakTest-18.0.0.txt").lines() {
+        let input_line = line.split('#').next().unwrap_or_default().trim();
+        if input_line.is_empty() {
+            continue;
+        }
+        let mut input_bytes = Vec::new();
+        let mut expected = Vec::new();
+        let mut break_before_next = false;
+        for token in input_line.split_whitespace() {
+            match token {
+                "÷" => break_before_next = !input_bytes.is_empty(),
+                "×" => break_before_next = false,
+                code_point => {
+                    if break_before_next {
+                        expected.push(b'|');
+                    }
+                    break_before_next = false;
+                    let value = u32::from_str_radix(code_point, 16)
+                        .expect("parse code point in Unicode test vector");
+                    let scalar = char::from_u32(value).expect("test vector uses a scalar value");
+                    let mut encoded = [0; 4];
+                    let bytes = scalar.encode_utf8(&mut encoded).as_bytes();
+                    input_bytes.extend_from_slice(bytes);
+                    expected.extend_from_slice(bytes);
+                }
+            }
+        }
+        let input_values = input_bytes
+            .iter()
+            .map(|byte| format!("UINT8_C(0x{byte:02x})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected_values = expected
+            .iter()
+            .map(|byte| format!("UINT8_C(0x{byte:02x})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        harness.push_str(&format!(
+            "  static const uint8_t input_{case_count}[] = {{ {input_values} }};\n  static const uint8_t expected_{case_count}[] = {{ {expected_values} }};\n  expected_bytes = expected_{case_count};\n  expected_length = UINT16_C({});\n  current_case = UINT32_C({case_count});\n  emela_export_grapheme_break_test_0((EmelaString){{ .data = (const char *)input_{case_count}, .length = UINT16_C({}) }});\n",
+            expected.len(),
+            input_bytes.len(),
+        ));
+        case_count += 1;
+    }
+    assert!(
+        case_count > 800,
+        "the official test fixture should be complete"
+    );
+    harness.push_str(&format!(
+        "  return debug_calls == UINT32_C({case_count}) ? 0 : 2;\n}}\n"
+    ));
+    compile_and_run(output, &harness);
+}
+
+#[test]
+fn string_split_keeps_views_alive_after_copying_the_source() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let first_trimmed = {
+        let mut builder = FnBuilder::new(&core, "first_trimmed_split");
+        builder.set_ret(TypeId::STRING).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(parts));
+        let trimmed = builder.assign(
+            "trimmed",
+            TypeId::STRING,
+            Value::Builtin {
+                op: Builtin::StringTrim,
+                args: vec![first.into()],
+            },
+        );
+        builder.term(Term::Return(Some(trimmed.into())));
+        builder.finish()
+    };
+    let trailing_empty = {
+        let mut builder = FnBuilder::new(&core, "trailing_split_item_is_empty");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        let middle = builder.assign("middle", list_string, Value::ListTail(parts));
+        let last = builder.assign("last", list_string, Value::ListTail(middle));
+        let last_item = builder.assign("last_item", TypeId::STRING, Value::ListHead(last));
+        let length = builder.assign(
+            "length",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![last_item.into()],
+            },
+        );
+        let empty = builder.assign(
+            "empty",
+            TypeId::BOOL,
+            Value::Prim {
+                op: PrimOp::Eq,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![length.into(), Const::Int(0).into()],
+            },
+        );
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let dynamic_empty_separator = {
+        let mut builder = FnBuilder::new(&core, "dynamic_empty_separator");
+        builder.set_ret(list_string).set_exported();
+        let input = builder.param("input", TypeId::STRING);
+        let separator = builder.param("separator", TypeId::STRING);
+        let parts = builder.assign(
+            "parts",
+            list_string,
+            Value::Builtin {
+                op: Builtin::StringSplit,
+                args: vec![input.into(), separator.into()],
+            },
+        );
+        builder.term(Term::Return(Some(parts.into())));
+        builder.finish()
+    };
+    let grapheme_split_signature = {
+        let mut builder = FnBuilder::new(&core, "grapheme_split_signature");
+        builder.set_ret(TypeId::INT).set_exported();
+        let parts = builder.param("parts", list_string);
+        let first = builder.assign("first", TypeId::STRING, Value::ListHead(parts));
+        let rest = builder.assign("rest", list_string, Value::ListTail(parts));
+        let second = builder.assign("second", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let third = builder.assign("third", TypeId::STRING, Value::ListHead(rest));
+        let rest = builder.assign("rest", list_string, Value::ListTail(rest));
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(rest));
+        let first_size = builder.assign(
+            "first_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![first.into()],
+            },
+        );
+        let second_size = builder.assign(
+            "second_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![second.into()],
+            },
+        );
+        let third_size = builder.assign(
+            "third_size",
+            TypeId::INT,
+            Value::Builtin {
+                op: Builtin::StringByteSize,
+                args: vec![third.into()],
+            },
+        );
+        let first_scaled = builder.assign(
+            "first_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_size.into(), Const::Int(1000).into()],
+            },
+        );
+        let second_scaled = builder.assign(
+            "second_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![second_size.into(), Const::Int(100).into()],
+            },
+        );
+        let third_scaled = builder.assign(
+            "third_scaled",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Mul,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![third_size.into(), Const::Int(10).into()],
+            },
+        );
+        let first_two = builder.assign(
+            "first_two",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_scaled.into(), second_scaled.into()],
+            },
+        );
+        let first_three = builder.assign(
+            "first_three",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_two.into(), third_scaled.into()],
+            },
+        );
+        let result = builder.assign(
+            "result",
+            TypeId::INT,
+            Value::Prim {
+                op: PrimOp::Add,
+                ty: emela_lir::PrimTy::I32,
+                args: vec![first_three.into(), empty.into()],
+            },
+        );
+        builder.term(Term::Return(Some(result.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(first_trimmed);
+    flow.add(trailing_empty);
+    flow.add(dynamic_empty_separator);
+    flow.add(grapheme_split_signature);
+
+    let no_heap = compile_flow(&flow, &Options::default()).expect_err("require fixed heap");
+    assert_eq!(no_heap[0].kind, ErrorKind::Unsupported);
+    assert!(no_heap[0].message.contains("heap_bytes = 0"));
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit String.split with nonempty and empty separators");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include <string.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(3); }\nint main(void) { EmelaString separator = { .data = \"::\", .length = UINT16_C(2) }; for (int i = 0; i < 1000; ++i) { char input[] = \"  alpha  ::beta::\"; EmelaString source = { .data = input, .length = (uint16_t)(sizeof input - 1) }; if (emela_export_trailing_split_item_is_empty_1(source, separator) != INT32_C(1)) return 1; EmelaString value = emela_export_first_trimmed_split_0(source, separator); memset(input, 'x', sizeof input - 1); if (value.length != UINT16_C(5) || memcmp(value.data, \"alpha\", 5) != 0) return 2; emela_embedded_release_string(&value); } EmelaString empty = { .data = \"\", .length = UINT16_C(0) }; if (emela_export_dynamic_empty_separator_2(empty, empty) != NULL) return 3; char input_bytes[] = \"a\\xcc\\x88\\r\\n\\xce\\xb2\"; EmelaString input = { .data = input_bytes, .length = UINT16_C(7) }; void *parts = emela_export_dynamic_empty_separator_2(input, empty); memset(input_bytes, 'x', sizeof input_bytes - 1); if (emela_export_grapheme_split_signature_3(parts) != INT32_C(3221)) return 4; emela_embedded_release(parts); return 0; }\n",
+    );
+}
+
+#[test]
+fn string_join_reads_split_views_into_a_bounded_stack_buffer() {
+    let mut core = emela_core::Module::new();
+    let list_string = core.types.intern(Type::List(TypeId::STRING));
+    let mut builder = FnBuilder::new(&core, "split_join_matches");
+    builder.set_ret(TypeId::BOOL).set_exported();
+    let input = builder.param("input", TypeId::STRING);
+    let parts = builder.assign(
+        "parts",
+        list_string,
+        Value::Builtin {
+            op: Builtin::StringSplit,
+            args: vec![input.into(), Const::String("::".to_owned()).into()],
+        },
+    );
+    let joined = builder.assign(
+        "joined",
+        TypeId::STRING,
+        Value::Builtin {
+            op: Builtin::StringJoin,
+            args: vec![parts.into(), Const::String("|".to_owned()).into()],
+        },
+    );
+    let result = builder.assign(
+        "result",
+        TypeId::BOOL,
+        Value::Builtin {
+            op: Builtin::StringContains,
+            args: vec![joined.into(), Const::String("alpha|βeta".to_owned()).into()],
+        },
+    );
+    builder.term(Term::Return(Some(result.into())));
+    let function = builder.finish();
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(2048))
+        .expect("emit bounded String.join");
+    compile_and_run(
+        output,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; exit(2); }\nint main(void) { EmelaString input = { .data = \"alpha::\\xce\\xb2\" \"eta\", .length = UINT16_C(12) }; return emela_export_split_join_matches_0(input) == INT32_C(1) ? 0 : 1; }\n",
+    );
+
+    let limited = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(2048)
+            .with_string_capacity(5),
+    )
+    .expect("emit String.join with a short output limit");
+    compile_and_run(
+        limited,
+        "#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_STRING_CAPACITY ? 0 : 3); }\nint main(void) { EmelaString input = { .data = \"alpha::beta\", .length = UINT16_C(11) }; (void)emela_export_split_join_matches_0(input); return 4; }\n",
+    );
+}
+
+#[test]
+fn fixed_heap_exhaustion_calls_the_board_defect_hook() {
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "make_list");
+        builder.set_ret(list_int).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(42).into()],
+                tail: None,
+            },
+        );
+        builder.term(Term::Return(Some(list.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let output = compile_flow(&flow, &Options::default().with_heap_bytes(1))
+        .expect("emit a List with an undersized fixed heap");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n#include <stdlib.h>\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) { (void)message; (void)length; exit(kind == EMELA_DEFECT_HEAP_EXHAUSTED ? 0 : 1); }\nint main(void) { (void)emela_export_make_list_0(); return 2; }\n",
+    );
+}
+
+#[test]
+fn validates_isr_entries_and_external_safety() {
+    let core = emela_core::Module::new();
+    let external = {
+        let builder = FnBuilder::new(&core, "timer_tick");
+        builder.finish_external(External {
+            bindings: vec![ExternalBinding {
+                target: "c".to_owned(),
+                host: HostRef::Global("board_timer_tick".to_owned()),
+            }],
+        })
+    };
+    let mut flow = Module::new(core);
+    let external_id = flow.add(external);
+    let entry = {
+        let mut builder = FnBuilder::new(&flow.core, "on_timer");
+        builder.set_exported();
+        builder.let_(
+            None,
+            Value::Call {
+                callee: Callee::Direct(external_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    flow.add(entry);
+
+    let errors = compile_flow(&flow, &Options::default().with_isr_entry("on_timer"))
+        .expect_err("require an ISR-safe annotation for external C calls");
+    assert!(errors[0].message.contains("not marked ISR-safe"));
+
+    let output = compile_flow(
+        &flow,
+        &Options::default()
+            .with_isr_entry("on_timer")
+            .with_isr_safe_external("board_timer_tick"),
+    )
+    .expect("accept an explicitly ISR-safe external C function");
+    compile_and_run(
+        output,
+        "#include \"emela_embedded.h\"\nstatic int tick_count;\nvoid board_timer_tick(void) { tick_count++; }\nint main(void) { emela_export_on_timer_1(); return tick_count == 1 ? 0 : 1; }\n",
+    );
+}
+
+#[test]
+fn rejects_unknown_or_heap_using_isr_entries() {
+    let core = emela_core::Module::new();
+    let function = {
+        let mut builder = FnBuilder::new(&core, "plain_interrupt");
+        builder.set_ret(TypeId::UNIT).set_exported();
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default().with_isr_entry("missing_interrupt"),
+    )
+    .expect_err("require configured ISR entries to name exported functions");
+    assert_eq!(errors[0].kind, ErrorKind::InvalidOptions);
+
+    let mut core = emela_core::Module::new();
+    let list_int = core.types.intern(Type::List(TypeId::INT));
+    let function = {
+        let mut builder = FnBuilder::new(&core, "list_interrupt");
+        builder.set_ret(TypeId::BOOL).set_exported();
+        let list = builder.assign(
+            "list",
+            list_int,
+            Value::List {
+                elems: vec![Const::Int(1).into()],
+                tail: None,
+            },
+        );
+        let empty = builder.assign("empty", TypeId::BOOL, Value::ListIsEmpty(list));
+        builder.term(Term::Return(Some(empty.into())));
+        builder.finish()
+    };
+    let mut flow = Module::new(core);
+    flow.add(function);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default()
+            .with_heap_bytes(1024)
+            .with_isr_entry("list_interrupt"),
+    )
+    .expect_err("reject heap-backed List values reachable from an ISR");
+    assert!(errors[0].message.contains("heap-backed value"));
+}
+
+#[test]
+fn rejects_recursive_calls_reachable_from_isr_entries() {
+    let core = emela_core::Module::new();
+    let mut flow = Module::new(core);
+    let entry_id = flow.declare("recursive_interrupt");
+    let entry = {
+        let mut builder = FnBuilder::new(&flow.core, "recursive_interrupt");
+        builder.set_ret(TypeId::UNIT).set_exported();
+        builder.let_(
+            None,
+            Value::Call {
+                callee: Callee::Direct(entry_id),
+                args: Vec::new(),
+                suspends: false,
+                on_fail: None,
+            },
+        );
+        builder.term(Term::Return(None));
+        builder.finish()
+    };
+    flow.define(entry_id, entry);
+
+    let errors = compile_flow(
+        &flow,
+        &Options::default().with_isr_entry("recursive_interrupt"),
+    )
+    .expect_err("reject recursive call graphs reachable from an ISR");
+    assert!(errors[0].message.contains("recursive call"));
+}

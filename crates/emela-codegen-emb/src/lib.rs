@@ -5,6 +5,7 @@ mod discarded;
 mod emit;
 mod float_parse;
 mod float_to_string;
+mod heap;
 mod unicode_grapheme;
 mod writer;
 
@@ -15,12 +16,18 @@ mod writer;
 #[non_exhaustive]
 pub struct Options {
     string_capacity: u16,
+    heap_bytes: u32,
+    isr_entries: Vec<String>,
+    isr_safe_externals: Vec<String>,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             string_capacity: 256,
+            heap_bytes: 0,
+            isr_entries: Vec::new(),
+            isr_safe_externals: Vec::new(),
         }
     }
 }
@@ -38,6 +45,31 @@ impl Options {
     /// Returns the maximum configured size in bytes for a dynamically generated String buffer.
     pub fn string_capacity(&self) -> u16 {
         self.string_capacity
+    }
+
+    /// Sets the total byte capacity reserved for the generated fixed heap.
+    ///
+    /// A capacity of zero disables heap-backed values. The default is zero.
+    pub fn with_heap_bytes(mut self, bytes: u32) -> Self {
+        self.heap_bytes = bytes;
+        self
+    }
+
+    /// Returns the configured byte capacity for the generated fixed heap.
+    pub fn heap_bytes(&self) -> u32 {
+        self.heap_bytes
+    }
+
+    /// Marks an exported Emela function as an interrupt-service entry point.
+    pub fn with_isr_entry(mut self, function_name: impl Into<String>) -> Self {
+        self.isr_entries.push(function_name.into());
+        self
+    }
+
+    /// Marks a C symbol as safe to call from a configured interrupt-service entry point.
+    pub fn with_isr_safe_external(mut self, symbol: impl Into<String>) -> Self {
+        self.isr_safe_externals.push(symbol.into());
+        self
     }
 }
 
@@ -99,9 +131,9 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
     verify_flow(flow)?;
     let mut normalized = flow.clone();
-    discarded::normalize(&mut normalized);
+    let discarded = discarded::normalize(&mut normalized);
     verify_flow(&normalized)?;
-    emit::emit(&normalized, options)
+    emit::emit(&normalized, options, &discarded)
 }
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
