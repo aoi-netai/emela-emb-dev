@@ -77,6 +77,8 @@ python3 crates/emela-codegen-emb/tools/run_stm32f4_matrix.py \
 
 ## 確認結果
 
+以下はF4共通化時点の確認記録である。その後に行ったupstream v0.24.0追従後の全20 caseと資源の再測定は新しい検証記録を参照する。
+
 2026-10-21、Renode 1.16.1・Arm GNU GCC 13.2.1で上記commandを実行した。7 CLI profileのO0/O2の**14 buildすべて成功**、Flash resetの**20 caseすべて成功**した。
 
 | matrix case | O0 | O2 |
