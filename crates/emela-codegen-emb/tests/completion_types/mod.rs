@@ -87,7 +87,7 @@ fn growing_recursive_enum_materializes_only_payload_types_used_by_the_program() 
         &[(
             "main.emel",
             r#"
-pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 pub fn work(n: Int) -> Int {
   value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42])) }
   value match { End(number) -> number
@@ -228,9 +228,9 @@ fn growing_enum_keeps_owned_closure_and_string_payloads_across_suspension() {
             r#"
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 pub fn work(n: Int) -> Int use Async {
   text = Int.to_string(n)
   value: Grow[fn() -> String] = End(fn() { text })
@@ -395,7 +395,7 @@ fn growing_recursive_equality_and_show_use_only_materialized_payload_kinds() {
         &[(
             "main.emel",
             r##"
-pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 pub fn show(n: Int) -> String {
   value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42, 7])) }
   "#{value}"

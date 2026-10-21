@@ -202,6 +202,8 @@ pub(super) fn task_signature(layouts: &TypeLayouts<'_>, function: &Function, nam
     format!("void {name}({})", params.join(", "))
 }
 
+// Keep each generated runtime feature explicit at this emission boundary.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_runtime(
     writer: &mut Writer,
     options: &Options,
@@ -584,6 +586,8 @@ impl Graph {
     }
 }
 
+// The entry combines independent layout, ownership, and runtime plans.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_function(
     flow: &emela_lir::Module,
     layouts: &TypeLayouts<'_>,
@@ -1237,7 +1241,7 @@ pub(super) fn emit_function(
                     }
                     writer.decl(&layouts.c_type(function.ret), "returned", Some(&expression));
                     retain_frame_value(layouts, function.ret, "returned", writer);
-                    writer.line(&format!("*frame->result = returned;"));
+                    writer.line("*frame->result = returned;");
                     writer.end_block();
                 }
                 writer.line("emela_frame_return(fiber); return;");
@@ -1673,6 +1677,8 @@ pub(super) fn emit_scope_runtime(
     Ok(())
 }
 
+// Forward the operation operands and emission context without changing their ABI.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fiber_value(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1727,6 +1733,8 @@ pub(super) fn emit_fiber_value(
     Ok(())
 }
 
+// The suspension boundary needs both operation state and the caller emission context.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_operation(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1812,6 +1820,8 @@ pub(super) fn emit_operation(
     Ok(())
 }
 
+// The synchronous adapter shares the suspension emission context.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_sync_operation(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1877,10 +1887,9 @@ fn emit_sync_statement(
         value: Value::Call { on_fail, .. } | Value::Fiber { on_fail, .. },
         ..
     } = &mut statement
+        && on_fail.is_some()
     {
-        if on_fail.is_some() {
-            *on_fail = Some(OnFail::Break(label));
-        }
+        *on_fail = Some(OnFail::Break(label));
     }
     let mut blocks = if failing {
         vec![BlockTarget {

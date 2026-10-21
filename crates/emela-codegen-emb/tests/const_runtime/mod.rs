@@ -97,7 +97,7 @@ fn caches_runtime_const_external_results_and_discards_without_reinitializing() {
 @external(c, "fixture_seed")
 fn raw_seed() -> Int
 effect Seed { fn read() -> Int }
-handler BoardSeed implements Seed { fn read() { raw_seed() } }
+handler BoardSeed: Seed { fn read() { raw_seed() } }
 fn seed() -> Int { with BoardSeed { (use Seed).read() } }
 const VALUE = seed()
 const UNUSED = seed()
@@ -128,7 +128,7 @@ fn memoizes_nested_const_defects_and_retries_self_reference_without_prefix() {
 @external(c, "fixture_zero")
 fn raw_zero() -> Int
 effect Zero { fn read() -> Int }
-handler BoardZero implements Zero { fn read() { raw_zero() } }
+handler BoardZero: Zero { fn read() { raw_zero() } }
 fn zero() -> Int { with BoardZero { (use Zero).read() } }
 const B = 1 / zero()
 const A = { dbg("A")
@@ -180,7 +180,7 @@ fn rejects_runtime_const_reachable_from_isr_but_preserves_static_fold() {
 @external(c, "fixture_seed")
 fn raw_seed() -> Int
 effect Seed { fn read() -> Int }
-handler BoardSeed implements Seed { fn read() { raw_seed() } }
+handler BoardSeed: Seed { fn read() { raw_seed() } }
 const V = with BoardSeed { (use Seed).read() }
 pub fn read() -> Int { V }
 "#,
@@ -383,8 +383,7 @@ int main(void) {{ for (volatile int i=0; i<1000; i++) if (setjmp(target)==0) {{ 
     );
 }
 
-#[path = "../../examples/support/gc_anchor.rs"]
-mod gc_anchor;
+use crate::gc_anchor;
 
 #[test]
 fn persistent_const_roots_survive_cycle_collection_and_caller_release() {

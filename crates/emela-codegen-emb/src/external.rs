@@ -178,13 +178,12 @@ pub(super) fn resolve(
         }
         if let Some(previous) =
             declarations.insert(binding.symbol.clone(), (abi.clone(), binding.result))
+            && previous != (abi, binding.result)
         {
-            if previous != (abi, binding.result) {
-                return Err(unsupported(
-                    &f.name,
-                    "external symbol is instantiated with incompatible signatures or result ownership",
-                ));
-            }
+            return Err(unsupported(
+                &f.name,
+                "external symbol is instantiated with incompatible signatures or result ownership",
+            ));
         }
         if binding.adapted {
             for ty in f
@@ -209,13 +208,13 @@ pub(super) fn resolve(
         let symbol = suspend::external_symbol(f, options)?;
         let mut abi = vec!["void".into(), "EmelaTask".into()];
         abi.extend(f.params.iter().map(|&p| layouts.c_type(f.vars[p].ty)));
-        if let Some(previous) = declarations.insert(symbol, (abi.clone(), ExternalResult::Owned)) {
-            if previous != (abi, ExternalResult::Owned) {
-                return Err(unsupported(
-                    &f.name,
-                    "external symbol is instantiated with incompatible synchronous and task signatures",
-                ));
-            }
+        if let Some(previous) = declarations.insert(symbol, (abi.clone(), ExternalResult::Owned))
+            && previous != (abi, ExternalResult::Owned)
+        {
+            return Err(unsupported(
+                &f.name,
+                "external symbol is instantiated with incompatible synchronous and task signatures",
+            ));
         }
     }
     layouts.managed_error_payloads = layouts

@@ -1,7 +1,6 @@
 use super::*;
 
-#[path = "../../examples/support/gc_anchor.rs"]
-mod gc_anchor;
+use crate::gc_anchor;
 
 fn entry(input: TypeId, result: TypeId, symbol: &str) -> Module {
     let mut flow = Module::new(emela_core::Module::new());

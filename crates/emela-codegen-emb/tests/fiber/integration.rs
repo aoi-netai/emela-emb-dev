@@ -1,4 +1,5 @@
 use super::*;
+use crate::gc_anchor;
 
 #[path = "../../examples/support/phase7_integration_flow.rs"]
 mod fixture;

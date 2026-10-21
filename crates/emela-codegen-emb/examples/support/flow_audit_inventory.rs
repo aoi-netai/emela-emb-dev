@@ -257,7 +257,7 @@ pub fn check(crate_root: &Path) -> Result<Vec<(String, usize)>, String> {
         let expected = enum_variants(&source, name)?;
         check_document(name, &expected, &document)?;
         if name == "Builtin" {
-            // Cell builtins are deliberately internal and absent from the public ALL table.
+            // Lowering-only cell/display builtins are absent from the public ALL table.
             let public: BTreeSet<_> = emela_core::Builtin::ALL
                 .iter()
                 .map(|op| format!("{op:?}"))
@@ -265,12 +265,12 @@ pub fn check(crate_root: &Path) -> Result<Vec<(String, usize)>, String> {
             if public.len() != emela_core::Builtin::ALL.len() {
                 return Err("Builtin::ALL has duplicate entries".into());
             }
-            let internal = ["CellNew", "CellGet", "CellSet"]
+            let internal = ["CellNew", "CellGet", "CellSet", "ShowString", "DebugPrint"]
                 .map(str::to_owned)
                 .into_iter()
                 .collect();
             if public.union(&internal).cloned().collect::<BTreeSet<_>>() != expected {
-                return Err("Builtin enum differs from ALL plus internal Cell builtins".into());
+                return Err("Builtin enum differs from ALL plus internal lowering builtins".into());
             }
         }
         counts.push((name.to_owned(), expected.len()));

@@ -2,7 +2,7 @@ import Std.Fiber.{Fiber, Scope, Success, Failure}
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 
 fn rounds(n: Int, total: Int) -> Int use {Scope[{}, {}], Async} {
   if n == 0 { total } else {

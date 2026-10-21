@@ -79,7 +79,7 @@ fn source_handler_can_call_native_external_int64_and_float_with_mixed_arguments(
 @external(c, "board_mix")
 fn mix(a: Int64, b: Float) -> Float
 effect Sensor { fn read(a: Int64, b: Float) -> Float }
-handler BoardSensor implements Sensor { fn read(a,b) { mix(a,b) } }
+handler BoardSensor: Sensor { fn read(a,b) { mix(a,b) } }
 pub fn read(a: Int64, b: Float) -> Float { with BoardSensor { (use Sensor).read(a,b) } }
 "#;
     let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();

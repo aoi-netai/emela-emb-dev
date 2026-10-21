@@ -34,9 +34,9 @@ fn operation_failure_before_resume_transfers_and_releases_its_string_payload() {
     let source = r#"
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Boom(message: String)
+error Boom(message: String) derive Show
 effect Wait { suspend fn get(n: Int) -> Int fails Boom }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) {
     value = wait(n)
     if n == 0 { resume(value) } else { fail Boom(message: Int.to_string(value)) }
@@ -199,11 +199,11 @@ fn list_error_payloads_survive_suspending_cleanup_and_are_dropped_on_cancellatio
     let source = r#"
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Batch(items: List[String])
+error Batch(items: List[String]) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
   fn read() { 0 }
   release { (use Wait).get(2) }
 }

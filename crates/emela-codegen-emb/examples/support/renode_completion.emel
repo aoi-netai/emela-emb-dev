@@ -13,7 +13,7 @@ fn text(value: (List[String], fn(String) -> String)) -> Int {
   (items, apply) = value
   List.length(items) + String.byte_size(apply("42"))
 }
-enum Grow[A] { End(A), Next(Grow[List[A]]) }
+enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 const GROW_VALUE: Grow[Int] = Next(End([42, 7]))
 const GROW_OTHER: Grow[Int] = Next(End([42, 7]))
 const GROW_TEXT = "#{GROW_VALUE}"

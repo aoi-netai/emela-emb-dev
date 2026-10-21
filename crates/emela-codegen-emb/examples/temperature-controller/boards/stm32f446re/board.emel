@@ -15,7 +15,7 @@ pub effect TemperatureSensor {
 @external(c, "temperature_sensor_read")
 fn sensor_read() -> Int use {}
 
-pub handler BoardSensor implements TemperatureSensor {
+pub handler BoardSensor: TemperatureSensor {
   fn read() { sensor_read() }
 }
 

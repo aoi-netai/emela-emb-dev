@@ -224,14 +224,25 @@ fn rejects_heap_only_runtime_operations_at_flow_stage() {
 
 #[test]
 fn rejects_source_builtins_that_must_lower_to_flow_control_or_runtime() {
-    for op in [Builtin::Panic, Builtin::Todo, Builtin::Dbg] {
+    for op in [
+        Builtin::Panic,
+        Builtin::Todo,
+        Builtin::Dbg,
+        Builtin::Inspect,
+        Builtin::ShowNested,
+        Builtin::ShowString,
+        Builtin::DebugPrint,
+    ] {
         let mut module = Module::new(emela_core::Module::new());
         let mut builder = FnBuilder::new(&module.core, "unlowered_builtin");
         builder.set_exported();
         let args = match op {
             Builtin::Panic => vec![Const::String("panic".into()).into()],
             Builtin::Todo => vec![],
-            Builtin::Dbg => vec![Const::Int(42).into()],
+            Builtin::Dbg | Builtin::Inspect | Builtin::ShowNested => vec![Const::Int(42).into()],
+            Builtin::ShowString | Builtin::DebugPrint => {
+                vec![Const::String("debug".into()).into()]
+            }
             _ => unreachable!(),
         };
         builder.let_(None, Value::Builtin { op, args });
@@ -356,8 +367,7 @@ fn isr_entries_reject_discarded_cell_allocations_even_without_cell_variables() {
                 .with_heap_bytes(256)
                 .with_isr_entry(entry),
         )
-        .err()
-        .expect("ISR validation must inspect allocations without a represented destination");
+        .expect_err("ISR validation must inspect allocations without a represented destination");
         assert!(
             errors.iter().any(|e| e.kind == ErrorKind::Unsupported
                 && e.message.contains("heap-backed")
@@ -434,8 +444,7 @@ fn isr_entries_reject_owned_string_aggregate_producers_and_direct_callers() {
                     .with_heap_bytes(1024)
                     .with_isr_entry(entry),
             )
-            .err()
-            .expect("ISR validation must inspect owned backing promotion");
+            .expect_err("ISR validation must inspect owned backing promotion");
             assert!(
                 errors.iter().any(|e| e.kind == ErrorKind::Unsupported
                     && e.message.contains("heap-backed")

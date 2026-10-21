@@ -101,6 +101,9 @@
 | `FloatFloor`, `FloatCeil`, `FloatRound`, `FloatTruncate` | Floatの整数丸め | 対応 | 静的に対応可能（libmまたは同等helper） | toolchainのlibmをlinkするか、同じ規則のhelperを出力する。 |
 | `Panic`, `Todo` | defectを発生させる | Flow IRでは不正 | Flow IR対象外 | 正常なFlow IRでは `Term::Defect` になる。 |
 | `Dbg` | 値をdebug出力して返す | Flow IRでは不正 | Flow IR対象外 | 正常なFlow IRでは `RuntimeOp::DebugPrint` になる。 |
+| `Inspect` | Showを満たす値のdebug文字列を返す | Flow IRでは不正 | Flow IR対象外 | 通常はShow関数と`RuntimeOp::ShowString`へlowerされる。Stringは最上位でもquoteする。 |
+| `ShowNested` | aggregate内の要素をShow表示する | Flow IRでは不正 | Flow IR対象外 | monoで`Show.show`呼出しかString専用の`ShowString`へ置換する。通常Flowには残らない。 |
+| `ShowString`, `DebugPrint` | quote付きString化・表示済みStringのdebug出力 | Flow IRでは不正 | Flow IR対象外 | lowering内部Builtin。対応する`RuntimeOp::ShowString`・`RuntimeOp::DebugPrint`へ変換する。 |
 | `CellNew`, `CellGet`, `CellSet` | State.run用のCellを生成・読取・更新 | 対応 | ヒープで対応可能（共有Cell） | 固定heap上のtyped Cellを所有参照で共有し、Stringのsnapshot、capture、suspend、引数・結果を扱う。cycleが作れる型を含むmoduleだけに回収処理を生成する。局所Cellの静的特殊化は将来の最適化候補。 |
 
 ## Flow IR `Stmt` の対応表

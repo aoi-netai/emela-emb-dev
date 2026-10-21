@@ -62,9 +62,9 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(3)
     (use Wait).get(3)
     mark(4) } }
@@ -133,9 +133,9 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(5)
     (use Wait).get(2)
     mark(6) } }
@@ -205,15 +205,15 @@ fn operation_tails_do_not_keep_a_copy_of_an_expired_cleanup_mask() {
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Finish { suspend fn go() -> () }
-handler Finishing implements Finish { suspend fn go(resume) {
+handler Finishing: Finish { suspend fn go(resume) {
   resume(())
   (use Wait).get(1)
   ()
 } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { (use Finish).go() } }
 pub fn work() -> Int use Async { with Waiting, Finishing, Resource { 42 } }
 "#,
@@ -648,7 +648,7 @@ import Std.Deferred.{Deferred}
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(4) } }
 pub fn work() -> Bool use Async {
   Fiber.scope(fn() {
@@ -765,9 +765,9 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { (use Wait).get(3)
     mark(3) } }
 fn cleanup() -> () use {Async, Wait} {

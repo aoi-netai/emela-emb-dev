@@ -67,10 +67,10 @@ pub(crate) fn needs_deferred_pool(module: &Module, closures: &ClosureLowering) -
                             value: Value::FnRef(target),
                             ..
                         } = def
+                            && *dst == ops[index]
+                            && closures.functions.contains_key(target)
                         {
-                            if *dst == ops[index] && closures.functions.contains_key(target) {
-                                constructors.insert(*target);
-                            }
+                            constructors.insert(*target);
                         }
                     }
                 }

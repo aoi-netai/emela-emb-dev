@@ -1,11 +1,11 @@
 @external(c, "mutate")
 fn mutate() -> () use {}
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
   fn read() { 0 }
   release { mutate() }
 }
-error Batch(items: List[String])
+error Batch(items: List[String]) derive Show
 
 fn invalid(n: Int) -> Int fails ParseError {
   Int.parse(String.append(Int.to_string(n), "x"))

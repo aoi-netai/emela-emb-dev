@@ -2,7 +2,7 @@ import Std.Fiber.{Fiber}
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 
 pub fn make(n: Int) -> (String, Option[String]) {
   text = Int.to_string(n)

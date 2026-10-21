@@ -152,12 +152,12 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect FirstResource { fn read() -> Int }
 effect SecondResource { fn read() -> Int }
-handler Outer implements FirstResource { fn read() { 1 }
+handler Outer: FirstResource { fn read() { 1 }
   release { mark(3) } }
-handler Inner implements SecondResource { fn read() { 2 }
+handler Inner: SecondResource { fn read() { 2 }
   release { mark(2) } }
 pub fn work() -> Int use Async {
   with Waiting {
@@ -218,9 +218,9 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(2)
     (use Wait).get(3)
     mark(3) } }
@@ -290,14 +290,14 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(3)
     (use Wait).get(2)
     mark(4) } }
 effect Gate { suspend fn go() -> Int }
-handler Gated implements Gate {
+handler Gated: Gate {
   suspend fn go(resume) { with Resource { mark(1)
     resume(7)
     (use Wait).get(1)
@@ -353,7 +353,7 @@ fn defects_in_suspend_protect_keep_the_configured_immediate_stop_policy() {
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(99) } }
 pub fn work() -> Int use Async { with Resource { panic("bad") } }
 "#,

@@ -48,7 +48,7 @@ fn growing_derivation_preserves_unit_named_fields_numeric_bits_and_escaped_strin
         &[(
             "main.emel",
             r##"
-pub enum Grow[A] { End(value: A), Next(rest: Grow[List[A]]) }
+pub enum Grow[A] { End(value: A), Next(rest: Grow[List[A]]) } derive Eq, Show
 pub fn show(big: Int64, number: Float, text: String) -> String {
   value: Grow[(Int64, Float, String, ())] = End(value: (big, number, text, ()))
   "#{value}"
@@ -100,12 +100,12 @@ for(int i=0;i<1000;i++) {{EmelaString result={show}(INT64_MIN,-0.0,text,buffer,s
 fn growing_and_nested_generic_error_payloads_have_finite_display_functions() {
     for (definition, value, expected) in [
         (
-            "enum Grow[A] { End(A), Next(Grow[List[A]]) }",
+            "enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Show",
             "Next(End([42]))",
             "error: Boom(value: Next(End([42])))",
         ),
         (
-            "enum Wrap[A] { Box(List[A]) }",
+            "enum Wrap[A] { Box(List[A]) } derive Show",
             "Box([42])",
             "error: Boom(value: Box([42]))",
         ),
@@ -115,7 +115,7 @@ fn growing_and_nested_generic_error_payloads_have_finite_display_functions() {
 import Std.Fiber.{{Fiber, Success, Failure}}
 import Std.Cause.{{Cause}}
 {definition}
-error Boom(value: {ty})
+error Boom(value: {ty}) derive Show
 fn bad() -> Int fails Boom {{fail Boom(value: {value})}}
 pub fn show() -> String {{
   Fiber.attempt(bad) match {{Success(_) -> "unexpected"
@@ -169,8 +169,8 @@ fn growing_show_freezes_its_single_buffer_across_suspend_and_releases_null_outpu
 @external(c,"host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
-enum Grow[A] { End(A), Next(Grow[List[A]]) }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Show
 pub fn delayed(n: Int) -> String use Async {
   with Waiting {
     value: Grow[Int] = Next(End([n]))

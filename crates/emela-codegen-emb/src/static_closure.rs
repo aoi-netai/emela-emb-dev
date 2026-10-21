@@ -289,7 +289,7 @@ fn visit_sequence(
     function: &Function,
     sequence: SeqId,
     slice: &mut BodySlice,
-    owner: &str,
+    _owner: &str,
 ) -> Result<(), Vec<Error>> {
     if !slice.sequences.insert(sequence) {
         return Ok(());
@@ -312,13 +312,13 @@ fn visit_sequence(
             } => {
                 if let Value::Closure(closure) = value {
                     slice.variables.extend(closure.params.iter().copied());
-                    visit_sequence(function, closure.body, slice, owner)?;
+                    visit_sequence(function, closure.body, slice, _owner)?;
                 }
                 value.for_each_var(|variable| {
                     slice.variables.insert(variable);
                 });
                 if let Some(sequence) = on_defect {
-                    visit_sequence(function, *sequence, slice, owner)?;
+                    visit_sequence(function, *sequence, slice, _owner)?;
                 }
                 if let Some(Suspend { saved, .. }) = on_suspend {
                     slice.variables.extend(saved.iter().copied());
@@ -334,7 +334,7 @@ fn visit_sequence(
                         }
                         OnFail::Handle { error, body } => {
                             slice.variables.insert(*error);
-                            visit_sequence(function, *body, slice, owner)?;
+                            visit_sequence(function, *body, slice, _owner)?;
                         }
                         OnFail::Propagate => {}
                     }
@@ -344,8 +344,8 @@ fn visit_sequence(
                 cond, then, else_, ..
             } => {
                 add_operand(slice, cond);
-                visit_sequence(function, *then, slice, owner)?;
-                visit_sequence(function, *else_, slice, owner)?;
+                visit_sequence(function, *then, slice, _owner)?;
+                visit_sequence(function, *else_, slice, _owner)?;
             }
             Stmt::Switch {
                 on, cases, default, ..
@@ -354,10 +354,10 @@ fn visit_sequence(
                     SwitchOn::Tag(variable) | SwitchOn::Lit(variable) => *variable,
                 });
                 for case in cases {
-                    visit_sequence(function, case.body, slice, owner)?;
+                    visit_sequence(function, case.body, slice, _owner)?;
                 }
                 if let Some(default) = default {
-                    visit_sequence(function, *default, slice, owner)?;
+                    visit_sequence(function, *default, slice, _owner)?;
                 }
             }
             Stmt::Loop {
@@ -367,15 +367,15 @@ fn visit_sequence(
                 for operand in inits {
                     add_operand(slice, operand);
                 }
-                visit_sequence(function, *body, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
             }
             Stmt::Block { label, body, .. } => {
                 slice.labels.insert(*label);
-                visit_sequence(function, *body, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
             }
             Stmt::Protect { body, cleanup, .. } => {
-                visit_sequence(function, *body, slice, owner)?;
-                visit_sequence(function, *cleanup, slice, owner)?;
+                visit_sequence(function, *body, slice, _owner)?;
+                visit_sequence(function, *cleanup, slice, _owner)?;
             }
             Stmt::Dup(variable) | Stmt::Drop(variable) => {
                 slice.variables.insert(*variable);

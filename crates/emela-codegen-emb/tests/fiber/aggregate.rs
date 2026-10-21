@@ -373,9 +373,7 @@ fn native_string_enum_producers_use_owned_backing_and_heapless_borrowed_tuples_s
         .1
         .ret
         .index();
-    let errors = compile(&core, &Options::default())
-        .err()
-        .expect("owned producer requires a heap");
+    let errors = compile(&core, &Options::default()).expect_err("owned producer requires a heap");
     assert!(
         errors
             .iter()

@@ -1,4 +1,4 @@
-pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 pub fn show(n: Int) -> String {
   value: Grow[Int] = if n == 0 { End(42) } else { Next(End([42, 7])) }
   "#{value}"

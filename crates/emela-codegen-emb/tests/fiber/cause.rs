@@ -5,7 +5,7 @@ fn cause_kind_reads_failure_without_consuming_the_cause() {
     let source = r#"
 import Std.Fiber.{Fiber, Success, Failure}
 import Std.Cause.{Cause, CauseKind, Fail, Die, Interrupt}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 pub fn kind(n: Int) -> Int {
  Fiber.attempt(fn() { fail Boom(n: n) }) match {
   Success(_) -> 0
@@ -38,7 +38,7 @@ fn cause_to_string_uses_error_show_and_caller_output_buffer() {
     let source = r#"
 import Std.Fiber.{Fiber, Success, Failure}
 import Std.Cause.{Cause}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 pub fn make(n: Int) -> Cause[Boom] {
  Fiber.attempt(fn() { fail Boom(n: n) }) match { Success(_) -> panic("unexpected")
   Failure(c) -> c
@@ -78,9 +78,9 @@ import Std.Fiber.{Fiber, Success, Failure}
 import Std.Cause.{Cause}
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Resource { fn read() -> Int }
-handler Res implements Resource { fn read() { 0 }
+handler Res: Resource { fn read() { 0 }
  release { mark(1) }
 }
 fn retry(c: Cause[Boom]) -> Int fails Boom { with Res { Cause.raise(c) } }
@@ -118,12 +118,12 @@ suspend fn wait(n: Int) -> Int
 fn mark(n: Int) -> () use {}
 error Boom
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Inner implements Resource { fn read() { 0 }
+handler Inner: Resource { fn read() { 0 }
  release { mark(1) }
 }
-handler Outer implements Resource { fn read() { 0 }
+handler Outer: Resource { fn read() { 0 }
  release { mark(2) }
 }
 fn bounce(c: Cause[{}]) -> Int { with Inner { Cause.raise(c) } }
@@ -246,9 +246,9 @@ import Std.Cause.{Cause}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 fn bounce(c: Cause[{}]) -> () { Cause.raise(c) }
 fn bounce_async(c: Cause[{}]) -> () use Wait { (use Wait).get(3)
  Cause.raise(c)
@@ -344,11 +344,11 @@ import Std.Cause.{{Cause, Fail, Die, Interrupt}}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {{}}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait {{ suspend fn get(n: Int) -> Int }}
-handler Waiting implements Wait {{ suspend fn get(n,resume) {{ resume(wait(n)) }} }}
+handler Waiting: Wait {{ suspend fn get(n,resume) {{ resume(wait(n)) }} }}
 effect Resource {{ fn read() -> Int }}
-handler Res implements Resource {{ fn read() {{ 0 }}
+handler Res: Resource {{ fn read() {{ 0 }}
  release {{ mark(2) }}
 }}
 fn failure() -> Int fails Boom {{ fail Boom(n: 42) }}

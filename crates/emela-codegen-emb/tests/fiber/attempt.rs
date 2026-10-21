@@ -37,9 +37,9 @@ suspend fn wait(n: Int) -> Int
 fn mark(n: Int) -> () use {}
 error Boom(n: Int)
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
  fn read() { 0 }
  release { mark(1)
   (use Wait).get(2)
@@ -129,7 +129,7 @@ import Std.Fiber.{Fiber, Success, Failure}
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Resource { fn read() -> Int }
-handler Res implements Resource { fn read() { 0 }
+handler Res: Resource { fn read() { 0 }
  release { mark(99) }
 }
 pub fn stopped() -> Int {

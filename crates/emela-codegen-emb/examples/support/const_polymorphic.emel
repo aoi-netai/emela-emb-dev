@@ -41,7 +41,7 @@ pub fn text() -> Int {
 }
 
 effect Read { fn get() -> Int }
-handler Answer implements Read { fn get() { 42 } }
+handler Answer: Read { fn get() { 42 } }
 pub fn evidence() -> Int {
   with Answer { APPLY(fn() { (use Read).get() }) }
 }

@@ -1,8 +1,7 @@
 use emela_core::{External, ExternalBinding, HostRef, Roots};
 use emela_lir::Module;
 
-#[path = "gc_anchor.rs"]
-mod gc_anchor;
+use super::gc_anchor;
 
 pub fn lower(with_collector: bool) -> Module {
     lower_value(with_collector, false)

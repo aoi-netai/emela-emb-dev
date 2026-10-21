@@ -7,9 +7,9 @@ fn suspend_failures_cross_calls_and_preserve_cleanup_before_escape() {
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) { resume(wait(n)) }
   release { mark(2) }
 }
@@ -67,11 +67,11 @@ fn failing_suspend_closure_keeps_error_through_suspending_release() {
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
   fn read() { 0 }
   release { mark(2)
     (use Wait).get(2)
@@ -136,7 +136,7 @@ suspend fn wait(n: Int) -> Int
 fn mark(n: Int) -> () use {}
 error Boom
 effect Wait { suspend fn get() -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
  suspend fn get(resume) { resume(wait(1)) }
  release { mark(1) }
 }
@@ -183,11 +183,11 @@ import Std.Fiber.{Fiber}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
  fn read() { 0 }
  release { mark(1)
   (use Wait).get(3)
@@ -259,9 +259,9 @@ fn suspend_operation_failure_before_resume_reaches_its_call_edge() {
     let source = r#"
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int fails Boom }
-handler Waiting implements Wait {
+handler Waiting: Wait {
  suspend fn get(n,resume) {
   x = wait(n)
   if n == 0 { resume(x) } else { fail Boom(n: x) }
@@ -303,7 +303,7 @@ fn operation_failure_after_resume_stops_without_writing_a_stale_error_pointer() 
     let source = r#"
 error Boom
 effect Tick { suspend fn tick() -> Int fails Boom }
-handler Ticking implements Tick {
+handler Ticking: Tick {
  suspend fn tick(resume) { resume(42)
   fail Boom
  }
@@ -343,9 +343,9 @@ import Std.Cause.{Cause, Fail, Die, Interrupt}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 fn cleanup(child: Fiber[Int], joined: Bool) -> () use Async {
  if joined { Fiber.join(child)
   mark(99)
@@ -577,11 +577,11 @@ fn delayed_failure_after_resume_formats_owned_error_after_the_call_frame_returns
     let source = r#"
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Tick { suspend fn tick() -> Int fails Boom }
-handler Ticking implements Tick {
+handler Ticking: Tick {
  suspend fn tick(resume) { resume(42)
   (use Wait).get(1)
   fail Boom(n: -2147483647 - 1)

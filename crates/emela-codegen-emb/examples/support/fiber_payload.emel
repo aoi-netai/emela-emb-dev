@@ -2,9 +2,9 @@ import Std.Fiber.{Fiber, Success, Failure}
 import Std.Cause.{Cause}
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Boom(message: String)
+error Boom(message: String) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 fn late(n: Int) -> Int fails Boom use Wait {
   text = Int.to_string(n)
   (use Wait).get(n)

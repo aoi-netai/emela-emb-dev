@@ -2,7 +2,7 @@ import Std.Fiber.{Fiber, Exit}
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 
 pub enum Packet { Data((String, Option[String]), List[String])
   Empty }
@@ -36,7 +36,7 @@ pub fn terminal(n: Int, cancel: Bool) -> Exit[Packet, {}] use Async {
   }
 }
 effect Echo { suspend fn echo(value: Packet) -> Packet }
-handler Echoing implements Echo {
+handler Echoing: Echo {
   suspend fn echo(value, resume) {
     wait(50)
     resume(value)

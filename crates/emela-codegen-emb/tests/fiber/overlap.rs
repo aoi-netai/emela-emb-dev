@@ -9,11 +9,11 @@ import Std.Fiber.{Fiber}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource { fn read() { 0 }
+handler Res: Resource { fn read() { 0 }
  release { mark(1)
   (use Wait).get(4)
   mark(2)
@@ -107,9 +107,9 @@ import Std.Fiber.{Fiber, Success, Failure}
 import Std.Cause.{Cause}
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 fn late(n: Int) -> Int fails Boom use Wait { (use Wait).get(n)
  fail Boom(n: n)
 }
@@ -201,11 +201,11 @@ import Std.Cause.{Cause}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource { fn read() { 0 }
+handler Res: Resource { fn read() { 0 }
  release { mark(2) }
 }
 fn cleanup(c: Cause[{}]) -> () { mark(1)

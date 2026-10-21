@@ -14,6 +14,8 @@ mod const_runtime;
 mod deferred;
 mod external_scalar;
 mod fiber;
+#[path = "../examples/support/gc_anchor.rs"]
+mod gc_anchor;
 mod owned;
 mod string_append;
 mod string_comparison;
@@ -40,8 +42,8 @@ fn dynamically_dispatches_through_a_fixed_heap_evidence_table() {
         &[(
             "main.emel",
             "effect Counter { fn get() -> Int }\n\
-             handler Answer implements Counter { fn get() { 42 } }\n\
-             handler Other implements Counter { fn get() { 41 } }\n\
+             handler Answer: Counter { fn get() { 42 } }\n\
+             handler Other: Counter { fn get() { 41 } }\n\
              fn read() -> Int use Counter { (use Counter).get() }\n\
              fn main() -> Int {\n\
                with Answer {\n\
@@ -67,7 +69,7 @@ fn passes_dynamic_effect_evidence_to_a_captured_closure() {
         &[(
             "main.emel",
             "effect Counter { fn get() -> Int }\n\
-             handler Answer implements Counter { fn get() { 2 } }\n\
+             handler Answer: Counter { fn get() { 2 } }\n\
              pub fn apply(x: Int) -> Int {\n\
                with Answer {\n\
                  read = fn() { x + (use Counter).get() }\n\
@@ -2854,7 +2856,7 @@ fn dynamic_float_formatting_uses_a_bounded_runtime_and_float_parse_uses_the_boun
         let significand = (index as u64)
             .wrapping_mul(7_919_287_331)
             .wrapping_add(1_234_567);
-        let exponent = (index % 641) as i32 - 340;
+        let exponent = (index % 641) - 340;
         let text = format!(
             "{}{}e{exponent}",
             if index % 2 == 0 { "-" } else { "" },

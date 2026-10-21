@@ -3,11 +3,11 @@ fn text(n: Int) -> String use {}
 @external(c,"host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 const IDENTITY = { dbg("IDENTITY")
  fn(value) { value }
 }
-pub enum Grow[A] { End(A), Next(Grow[List[A]]) }
+pub enum Grow[A] { End(A), Next(Grow[List[A]]) } derive Eq, Show
 pub fn work(deep: Bool) -> Int use Async {
  message = text(42)
  value: Grow[String] = if deep { Next(End([message])) } else { End(message) }

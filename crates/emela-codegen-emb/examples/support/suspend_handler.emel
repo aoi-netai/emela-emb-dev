@@ -3,7 +3,7 @@ suspend fn wait(n: Int) -> Int
 
 effect Wait { suspend fn get(n: Int) -> Int }
 
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) { resume(wait(n)) }
 }
 

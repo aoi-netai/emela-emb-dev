@@ -133,7 +133,7 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 pub fn work() -> Int use Async {
   with Waiting {
     Fiber.scope(fn() {
@@ -261,7 +261,7 @@ import Std.Deferred.{{Deferred}}
 @external(c, "mark")
 fn mark(n: Int) -> () use {{}}
 effect Gate {{ suspend fn go(child: Fiber[Int]) -> Int }}
-handler Gated implements Gate {{
+handler Gated: Gate {{
   suspend fn go(child, resume) {{
     mark(1)
     resume(7)
@@ -368,7 +368,7 @@ import Std.Deferred.{Deferred}
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Gate { suspend fn go(start: Deferred[fn(Int) -> ()], stop: Deferred[()]) -> Int }
-handler Gated implements Gate {
+handler Gated: Gate {
   suspend fn go(start, stop, resume) {
     Deferred.complete(start, resume)
     Deferred.await(stop)

@@ -1,5 +1,5 @@
 import Std.Fiber.{Fiber, Success, Failure}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 pub fn good(n: Int) -> Int use Async {
  Fiber.scope(fn() {
   child=Fiber.fork(fn() { n+1 })

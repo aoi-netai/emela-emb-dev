@@ -3,6 +3,8 @@ use std::{fs, path::PathBuf};
 
 #[path = "support/phase7_integration_flow.rs"]
 mod fixture;
+#[path = "support/gc_anchor.rs"]
+mod gc_anchor;
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
 

@@ -4,11 +4,11 @@ import Std.Cause.{Cause, Fail, Die, Interrupt}
 suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
-error Boom(n: Int)
+error Boom(n: Int) derive Show
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n,resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n,resume) { resume(wait(n)) } }
 effect Resource { fn read() -> Int }
-handler Res implements Resource {
+handler Res: Resource {
  fn read() { 0 }
  release { mark(1)
   (use Wait).get(3)

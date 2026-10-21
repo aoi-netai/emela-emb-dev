@@ -54,7 +54,7 @@ fn stop_actuators() -> () use Gpio {
 }
 
 # The domain handler owns actuator cleanup; the standard handler owns GPIO access.
-handler Actuators implements Thermostat {
+handler Actuators: Thermostat {
   fn set(mode) {
     # Break before make also covers a direct Heating <-> Cooling transition.
     stop_actuators()

@@ -4,9 +4,9 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 effect Marker { fn read() -> Int }
-handler Resource implements Marker { fn read() { 1 }
+handler Resource: Marker { fn read() { 1 }
   release { mark(3)
     (use Wait).get(3)
     mark(4) } }

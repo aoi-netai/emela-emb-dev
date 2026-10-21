@@ -10,7 +10,7 @@ effect Device {
   suspend fn packet(value: Packet) -> Packet
   suspend fn text(value: String) -> String
 }
-handler Board implements Device {
+handler Board: Device {
   suspend fn packet(value,resume) { resume(packet(value)) }
   suspend fn text(value,resume) { resume(text(value)) }
 }

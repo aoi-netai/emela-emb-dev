@@ -297,7 +297,7 @@ suspend fn wait(n: Int) -> Int
 @external(c, "notify")
 fn notify() -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) {
     resume(n)
     wait(n)
@@ -1141,7 +1141,7 @@ fn immediate_resume_finishes_the_operation_body_before_the_caller_continues() {
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Instant implements Wait {
+handler Instant: Wait {
   suspend fn get(n, resume) {
     mark(1)
     resume(n)
@@ -1191,7 +1191,7 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) {
     mark(n * 10 + 1)
     value = wait(n)
@@ -1267,7 +1267,7 @@ fn duplicate_resume_reports_the_operation_and_handler() {
             "main.emel",
             r#"
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Twice implements Wait {
+handler Twice: Wait {
   suspend fn get(n, resume) {
     resume(n)
     resume(n)

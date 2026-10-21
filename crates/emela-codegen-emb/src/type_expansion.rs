@@ -135,10 +135,10 @@ fn applications(
             for (index, &argument) in args.iter().enumerate() {
                 if let Some(&target) = slots[id].get(index) {
                     parameter_occurrences(core, argument, false, &mut |parameter, grows| {
-                        if let Some(&source) = slots[&owner].get(parameter) {
-                            if !edges[source].contains(&(target, grows)) {
-                                edges[source].push((target, grows));
-                            }
+                        if let Some(&source) = slots[&owner].get(parameter)
+                            && !edges[source].contains(&(target, grows))
+                        {
+                            edges[source].push((target, grows));
                         }
                     });
                 }

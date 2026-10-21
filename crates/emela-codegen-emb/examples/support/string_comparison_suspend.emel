@@ -1,7 +1,7 @@
 @external(c, "host_wait")
 suspend fn wait(n: Int) -> Int
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait { suspend fn get(n, resume) { resume(wait(n)) } }
+handler Waiting: Wait { suspend fn get(n, resume) { resume(wait(n)) } }
 pub fn across(a: String, b: String) -> Bool use Async {
   with Waiting {
     (use Wait).get(1)

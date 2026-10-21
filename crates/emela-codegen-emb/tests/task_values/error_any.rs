@@ -1,7 +1,6 @@
 use super::*;
 
-#[path = "../../examples/support/gc_anchor.rs"]
-mod gc_anchor;
+use crate::gc_anchor;
 
 #[test]
 fn tagged_error_any_successes_and_any_fields_snapshot_strings_and_keep_list_owners() {

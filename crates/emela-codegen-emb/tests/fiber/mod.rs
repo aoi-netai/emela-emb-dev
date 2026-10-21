@@ -180,7 +180,7 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) { resume(wait(n)) }
 }
 pub fn nested() -> Int use Async {
@@ -252,8 +252,8 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Config { fn read() -> Int }
-handler Outer implements Config { fn read() { 10 } }
-handler Inner implements Config { fn read() { 90 } }
+handler Outer: Config { fn read() { 10 } }
+handler Inner: Config { fn read() { 90 } }
 fn read() -> Int use Config { (use Config).read() }
 fn branch() -> () use { Config, Scope[{}, {Config}] } {
   mark(read())
@@ -261,7 +261,7 @@ fn branch() -> () use { Config, Scope[{}, {Config}] } {
   ()
 }
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) { resume(wait(n)) }
 }
 pub fn siblings() -> Int use Async {
@@ -441,7 +441,7 @@ suspend fn wait(n: Int) -> Int
 @external(c, "mark")
 fn mark(n: Int) -> () use {}
 effect Wait { suspend fn get(n: Int) -> Int }
-handler Waiting implements Wait {
+handler Waiting: Wait {
   suspend fn get(n, resume) { resume(wait(n)) }
 }
 pub fn managed(n: Int) -> String use Async {
