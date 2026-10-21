@@ -1,0 +1,170 @@
+//! Embedded C generation from verified Flow IR, without Heap IR passes.
+
+mod emit;
+mod writer;
+
+/// Configuration for embedded C generation.
+///
+/// The initial Flow IR handoff does not need target-specific settings yet. This type is kept
+/// non-exhaustive so board and resource options can be added without requiring struct literals.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct Options {}
+
+/// Generated files returned by the backend.
+///
+/// Paths are relative to the output directory chosen by the caller.
+#[derive(Debug, Clone, Default)]
+pub struct Output {
+    /// Files keyed by their path relative to the generated output directory.
+    pub files: Vec<GeneratedFile>,
+}
+
+/// One file produced by the backend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedFile {
+    /// Path relative to the generated output directory.
+    pub path: String,
+    /// File contents.
+    pub contents: String,
+}
+
+/// The stage that failed while preparing Flow IR for embedded code generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The Core module could not be verified after monomorphization.
+    InvalidCore,
+    /// Core IR could not be converted to Flow IR.
+    FlowLowering,
+    /// The Flow IR module was not valid for the Flow stage.
+    InvalidFlowIr,
+    /// A valid Flow IR construct is not implemented by this backend yet.
+    Unsupported,
+}
+
+/// An error encountered while preparing a module for embedded code generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Converts Core IR to Flow IR and emits embedded C files.
+pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    let flow = flow_from_core(core)?;
+    compile_flow(&flow, options)
+}
+
+/// Verifies and emits a Flow IR module without running Heap IR passes.
+pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
+    verify_flow(flow)?;
+    emit::emit(flow, options)
+}
+
+/// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
+///
+/// This path deliberately stops at Flow IR. It does not call `emela_lir::to_heap`.
+pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Vec<Error>> {
+    let mono = emela_core::monomorphize(core);
+    if let Err(errors) = emela_core::verify_monomorphic(&mono) {
+        return Err(errors
+            .into_iter()
+            .map(|error| Error {
+                kind: ErrorKind::InvalidCore,
+                message: format!("invalid Core IR after monomorphization: {error}"),
+            })
+            .collect());
+    }
+
+    let flow = emela_lir::from_core(mono).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| Error {
+                kind: ErrorKind::FlowLowering,
+                message: format!("failed to lower Core IR to Flow IR: {error}"),
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    verify_flow(&flow)?;
+    Ok(flow)
+}
+
+/// Verifies that a LIR module is still in the Flow stage and satisfies its invariants.
+pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
+    if flow.stage != emela_lir::Stage::Flow {
+        return Err(vec![Error {
+            kind: ErrorKind::InvalidFlowIr,
+            message: format!(
+                "expected Flow IR, found {:?}; embedded codegen does not run Heap IR passes",
+                flow.stage
+            ),
+        }]);
+    }
+
+    emela_lir::verify(flow).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| Error {
+                kind: ErrorKind::InvalidFlowIr,
+                message: format!("invalid Flow IR: {error}"),
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    // The shared verifier checks representations but does not reject every operation that
+    // belongs to a later stage or that from_core must already have lowered into Flow control.
+    let mut errors = Vec::new();
+    for (_, function) in flow.functions.iter() {
+        for (_, statement) in function.stmts.iter() {
+            let emela_lir::Stmt::Let { value, .. } = statement else {
+                continue;
+            };
+            let reason = match value {
+                emela_lir::Value::Runtime {
+                    op:
+                        op @ (emela_lir::RuntimeOp::Defect
+                        | emela_lir::RuntimeOp::DefectTake
+                        | emela_lir::RuntimeOp::DefectResume
+                        | emela_lir::RuntimeOp::Yield
+                        | emela_lir::RuntimeOp::YieldPerform),
+                    ..
+                } => Some(format!("Heap IR runtime `{}` at stage Flow", op.name())),
+                emela_lir::Value::Builtin {
+                    op:
+                        op @ (emela_core::Builtin::Panic
+                        | emela_core::Builtin::Todo
+                        | emela_core::Builtin::Dbg
+                        | emela_core::Builtin::Inspect
+                        | emela_core::Builtin::ShowNested
+                        | emela_core::Builtin::ShowString
+                        | emela_core::Builtin::DebugPrint),
+                    ..
+                } => Some(format!(
+                    "unlowered builtin `{}` at stage Flow",
+                    op.info().path()
+                )),
+                _ => None,
+            };
+            if let Some(reason) = reason {
+                errors.push(Error {
+                    kind: ErrorKind::InvalidFlowIr,
+                    message: format!("invalid Flow IR in function `{}`: {reason}", function.name),
+                });
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
