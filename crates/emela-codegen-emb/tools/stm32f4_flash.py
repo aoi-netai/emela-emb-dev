@@ -110,7 +110,7 @@ def observe(args):
     atomic_json(output / "report.json", report)
     monitor_directory = None
     try:
-        for name in ["uart.log", "renode.log", "run.resc"]:
+        for name in ["uart.log", "renode.log", "model.log", "run.resc"]:
             (output / name).unlink(missing_ok=True)
         firmware = args.firmware_dir.resolve()
         manifest = json.loads((firmware / "firmware.json").read_text())
@@ -165,20 +165,21 @@ def observe(args):
         (output / "machine.repl").write_text(machine)
         uart_path = output / "uart.log"
         uart = "usart" + str(profile["console_uart"]["id"])
-        script = f'include @{monitor}/STM32F4ActuatorObserver.cs\nmach create\nmachine LoadPlatformDescription @{monitor}/machine.repl\nsysbus LoadBinary @{monitor}/firmware.bin 0x08000000\nsysbus.cpu PerformanceInMips 100\nsysbus.{uart} CreateFileBackend @{monitor}/uart.log true\n'
+        script = f'logFile @{monitor}/model.log\nlogLevel 1 file\nlogLevel 3 console\ninclude @{monitor}/STM32F4ActuatorObserver.cs\nmach create\nmachine LoadPlatformDescription @{monitor}/machine.repl\nsysbus LoadBinary @{monitor}/firmware.bin 0x08000000\nsysbus.cpu PerformanceInMips 100\nsysbus.{uart} CreateFileBackend @{monitor}/uart.log true\n'
         for name in ["board_boot_data", "board_boot_bss"]:
             script += f'sysbus WriteDoubleWord 0x{symbols[name]:x} 0xdeadbeef\n'
+        # Logger messages are asynchronous; keep observation labels on the monitor stream.
         script += 'sysbus.cpu Reset\n'
         for sample in range(1, 25):
             duration = "0:00:00.500000" if sample == 1 else "0:00:01.000000"
-            script += f'emulation RunFor "{duration}"\nsysbus InfoLog "EMELA_SAMPLE_HEATER_{sample}"\nsysbus ReadDoubleWord 0x{0x40020014 + (heater_pin // 16) * 0x400:x}\nsysbus InfoLog "EMELA_SAMPLE_COOLER_{sample}"\nsysbus ReadDoubleWord 0x{0x40020014 + (cooler_pin // 16) * 0x400:x}\n'
+            script += f'emulation RunFor "{duration}"\necho "EMELA_SAMPLE_HEATER_{sample}"\nsysbus ReadDoubleWord 0x{0x40020014 + (heater_pin // 16) * 0x400:x}\necho "EMELA_SAMPLE_COOLER_{sample}"\nsysbus ReadDoubleWord 0x{0x40020014 + (cooler_pin // 16) * 0x400:x}\n'
         script += 'emulation RunFor "0:00:01.500000"\n'
         names = ["board_app_completed", "board_app_result", "board_app_failures", "board_ticks",
                  "board_notifications", "board_rejected_notifications", "board_uart_bytes", "board_boot_data", "board_boot_bss",
                  "board_boot_initialized", "emela_validation_stack_used", "emela_validation_stack_capacity",
                  "emela_validation_stack_guard_ok", "emela_validation_stack_samples"]
         for name in names:
-            script += f'sysbus InfoLog "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{symbols[name]:x}\n'
+            script += f'echo "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{symbols[name]:x}\n'
         console = profile["console_uart"]
         register_addresses = {"RCC_AHB1ENR": 0x40023830,
                               "RCC_CONSOLE_APBENR": 0x40023840 if console["apb"] == 1 else 0x40023844}
@@ -188,17 +189,22 @@ def observe(args):
             register_addresses[direction + "_MODER"] = base
             register_addresses[direction + "_AFR"] = base + 0x20 + 4 * ((pin % 16) // 8)
         for name, address in register_addresses.items():
-            script += f'sysbus InfoLog "EMELA_REGISTER_{name}"\nsysbus ReadDoubleWord 0x{address:x}\n'
+            script += f'echo "EMELA_REGISTER_{name}"\nsysbus ReadDoubleWord 0x{address:x}\n'
         for key, command in [("STATE", "matrixObserver State"), ("TRANSITIONS", "matrixObserver TransitionCount"), ("HEATER_LED", "matrixHeater State"), ("COOLER_LED", "matrixCooler State")]:
-            script += f'sysbus InfoLog "EMELA_EXTERNAL_{key}"\nsysbus.{command}\n'
+            script += f'echo "EMELA_EXTERNAL_{key}"\nsysbus.{command}\n'
         (output / "run.resc").write_text(script + 'quit\n')
         with tempfile.TemporaryDirectory(prefix="renode-tmp-", dir=output) as temporary:
             environment = dict(os.environ, TMPDIR=temporary, XDG_CONFIG_HOME=str(output / "renode-config"))
             code, log, timed_out = run_captured([str(renode), "--disable-xwt", "--console", "--plain", "-e", "include @" + str(monitor / "run.resc")], cwd=CRATE, env=environment, timeout=args.timeout)
         (output / "renode.log").write_text(log)
+        model_log_path = output / "model.log"
+        model_log = model_log_path.read_text(encoding="utf-8-sig") if model_log_path.is_file() else ""
         report["renode_process"] = {"exit_code": code, "timed_out": timed_out}
-        if code != 0 or timed_out or re.search(r"\[(?:ERROR|WARNING)\]|There was an error executing command|Unhandled Exception", log):
+        if code != 0 or timed_out or re.search(r"\[(?:ERROR|WARNING)\]|There was an error executing command|Unhandled Exception", log + "\n" + model_log):
             raise ValueError(f"Renode failed or reported a warning (exit={code}, timeout={timed_out})")
+        if not model_log_path.is_file():
+            raise ValueError("missing separate Renode model log")
+        report["model_log_sha256"] = digest(model_log_path)
         version = re.search(r"Renode, version (\S+)", log)
         if not version or version[1] != "1.16.1":
             raise ValueError("this platform matrix is pinned to Renode 1.16.1")
@@ -254,7 +260,7 @@ def observe(args):
         for number in range(2):
             if state & (1 << number):
                 transitions.append((number, 0))
-        actual_transitions = [(int(pin), int(level)) for pin, level in re.findall(r"EMELA_F4_GPIO pin=(\d+) level=(\d+)", log)]
+        actual_transitions = [(int(pin), int(level)) for pin, level in re.findall(r"EMELA_F4_GPIO pin=(\d+) level=(\d+)", model_log)]
         if transitions != actual_transitions:
             raise ValueError(f"external GPIO transitions differ: expected={transitions}, actual={actual_transitions}")
         external_state = 0

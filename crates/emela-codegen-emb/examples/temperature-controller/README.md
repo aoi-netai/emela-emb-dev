@@ -135,6 +135,10 @@ bash crates/emela-codegen-emb/examples/temperature-controller/renode-esp32c3/run
 
 runnerは`controller.emel`をbyte単位で同一のまま出力先の`source/`へcopyし、[ESP32-C3用board.emel](boards/esp32c3/board.emel)を組み合わせて通常のCLIへ渡す。[ESP32-C3用embedded.toml](boards/esp32c3/embedded.toml)を用い、生成Cを加工せずRISC-V向けにcompile・linkする。アプリの状態遷移・effect・標準handlerの実装はSTM32と同じである。この詳細観測runnerのボード選択はrunner内で行い、上のfirmware projectではCLIの`--board`を使う。
 
+`--emela /path/to/emela`を追加すると、既存またはcopyしたCLIへ同じbuild引数を渡せる。実行fileのpathを正規化し、存在と実行可能属性を検査し、SHA-256とversionをreportへ保存する。省略時は従来どおりworkspaceの`cargo run`を使う。
+
+Flash用STM32 runnerとこのC3詳細runnerは、同期の観測markerを`renode.log`、非同期のモデルlog・GPIO遷移を`model.log`へ分ける。console loggerの割り込みによるmarker破断を避け、warning/errorは両logで検査する。
+
 | 入出力 | ESP32-C3での割り当て |
 | --- | --- |
 | 加熱 | GPIO3、HighでON |

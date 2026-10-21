@@ -54,7 +54,7 @@ class TemperatureCase(probe.Case):
             marker.write_text(ownership)
         self.process_tmp = self.out / "process-tmp"
         self.process_tmp.mkdir(exist_ok=True)
-        for name in ["metrics.json", "resources.json", "uart.log", "firmware.elf"]:
+        for name in ["metrics.json", "resources.json", "uart.log", "firmware.elf", "model.log"]:
             (self.out / name).unlink(missing_ok=True)
         self.report = {"status": "running", "case": "temperature-controller-esp32c3",
                        "optimization": args.optimization, "continuous": args.continuous,
@@ -113,8 +113,17 @@ class TemperatureCase(probe.Case):
             "file": str(config), "sha256": sha256(config),
             "fixed_capacities": {name: int(value) for name, value in
                                  re.findall(r"(?m)^([a-z_]+)\s*=\s*(\d+)\s*$", config.read_text())}}
-        self.run("generate", ["cargo", "run", "--manifest-path", WORKSPACE / "Cargo.toml", "--locked", "-q",
-                               "-p", "emela-cli", "--", "build", source / original.name,
+        if self.args.emela is not None:
+            cli = probe.executable(self.args.emela.expanduser(), "emela")
+            self.report["cli"] = {"source": "explicit executable", "executable": str(cli),
+                                  "sha256": sha256(cli)}
+            self.report["cli"]["version"] = self.run("emela-version", [cli, "--version"], timeout=60).strip()
+            command = [cli]
+        else:
+            self.report["cli"] = {"source": "workspace cargo", "manifest": str(WORKSPACE / "Cargo.toml")}
+            command = ["cargo", "run", "--manifest-path", WORKSPACE / "Cargo.toml", "--locked", "-q",
+                       "-p", "emela-cli", "--"]
+        self.run("generate", [*command, "build", source / original.name,
                                "--target", "c-embedded", "--embedded-config", config,
                                "--out-dir", self.out / "generated"], timeout=600,
                  env={"CARGO_BUILD_JOBS": os.environ.get("CARGO_BUILD_JOBS", "2")})
@@ -197,7 +206,11 @@ class TemperatureCase(probe.Case):
         includes = "\n".join("include @" + str(self.monitor / "models/peripherals" / name)
                              for name in probe.MODEL_FILES if not name.startswith("gpio/"))
         includes += "\ninclude @" + str(self.monitor / "local-models/EmelaESP32C3_GPIO.cs")
-        script = f'''using sysbus
+        # Separate asynchronous model logging from synchronous observation markers.
+        script = f'''logFile @{self.monitor / "out/model.log"}
+logLevel 1 file
+logLevel 3 console
+using sysbus
 {includes}
 mach create "emela-temperature-esp32c3"
 machine LoadPlatformDescription @{self.monitor / "out/machine.repl"}
@@ -210,23 +223,32 @@ sysbus WriteByte 0x20001007 0xff
 cpu PerformanceInMips {args.mips}
 sysbus.uart0 CreateFileBackend @{self.monitor / "out/uart.log"} true
 emulation RunFor "{duration}"
-sysbus InfoLog "EMELA_GPIO_OUT"
+echo "EMELA_GPIO_OUT"
 sysbus ReadDoubleWord 0x60004004
-sysbus InfoLog "EMELA_GPIO_OBSERVER_STATE"
+echo "EMELA_GPIO_OBSERVER_STATE"
 observer State
-sysbus InfoLog "EMELA_GPIO_OBSERVER_TRANSITIONS"
+echo "EMELA_GPIO_OBSERVER_TRANSITIONS"
 observer TransitionCount
-sysbus InfoLog "EMELA_HEATER_LED"
+echo "EMELA_HEATER_LED"
 heater State
-sysbus InfoLog "EMELA_COOLER_LED"
+echo "EMELA_COOLER_LED"
 cooler State
 '''
         for name in names:
-            script += f'sysbus InfoLog "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{symbols[name]["address"]:x}\n'
+            script += f'echo "EMELA_METRIC_{name}"\nsysbus ReadDoubleWord 0x{symbols[name]["address"]:x}\n'
         for label, symbol in histories.items():
             for index in range(history_count):
-                script += f'sysbus InfoLog "EMELA_HISTORY_{label}_{index}"\nsysbus ReadDoubleWord 0x{symbols[symbol]["address"] + index * 4:x}\n'
+                script += f'echo "EMELA_HISTORY_{label}_{index}"\nsysbus ReadDoubleWord 0x{symbols[symbol]["address"] + index * 4:x}\n'
         log, uart = self.emulate(script, seconds)
+        model_path = self.out / "model.log"
+        if not model_path.is_file():
+            raise ValueError("missing separate Renode model log")
+        model_log = model_path.read_text(encoding="utf-8-sig")
+        self.report["model_log_sha256"] = sha256(model_path)
+        warnings = [line for line in model_log.splitlines() if "[WARNING]" in line]
+        self.report["renode"]["warnings"] += warnings
+        if warnings or re.search(r"\[ERROR\]|Unhandled Exception", model_log):
+            raise ValueError("Renode model log reported a warning or error; see model.log")
         raw = {name: probe.metric(log, "EMELA_METRIC_" + name) for name in names}
         values = {"gpio_out": probe.metric(log, "EMELA_GPIO_OUT"),
                   "gpio_observer_state": probe.metric(log, "EMELA_GPIO_OBSERVER_STATE"),
@@ -258,7 +280,7 @@ cooler State
             expected_trace.append((0 if state == 1 else 1, 0))
             state = 0
         actual_trace = [(int(pin), int(level)) for pin, level in
-                        re.findall(r"EMELA_GPIO_PIN pin=([01]) level=([01])", log)]
+                        re.findall(r"EMELA_GPIO_PIN pin=([01]) level=([01])", model_log)]
         if actual_trace != expected_trace:
             raise ValueError(f"external GPIO transition trace disagrees with sample modes: {actual_trace} != {expected_trace}")
         observed_state = 0
@@ -336,6 +358,7 @@ def main():
     parser.add_argument("--models", type=Path)
     parser.add_argument("--toolchain", type=Path, default=os.environ.get("RISCV32_ESP_TOOLCHAIN"))
     parser.add_argument("--renode", default=os.environ.get("RENODE"))
+    parser.add_argument("--emela", type=Path, help="use an installed or copied CLI instead of cargo run")
     parser.add_argument("--optimization", choices=["O0", "O2"], default="O2")
     parser.add_argument("--continuous", action="store_true")
     parser.add_argument("--verify-scenario", action="store_true")
