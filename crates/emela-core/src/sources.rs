@@ -8,8 +8,8 @@
 /// The module name of the Prelude source. `prelude.emel` is reserved at the source root (spec 4.1).
 pub const PRELUDE: &str = "Prelude";
 
-/// The namespace for std modules (spec 15.2). std modules have two-segment names like
-/// `Std.Console` and are imported. `std.emel` and `std/` directly under the source root are
+/// The namespace for std modules (spec 15.2). std modules have names like
+/// `Std.Console` and `Std.Embedded.Gpio` and are imported. `std.emel` and `std/` directly under the source root are
 /// reserved (spec 4.1).
 pub const STD: &str = "Std";
 
@@ -40,6 +40,30 @@ const SOURCES: &[(&str, &str)] = &[
     ("Std.Cause", include_str!("../lib/std/cause.emel")),
     ("Std.Deferred", include_str!("../lib/std/deferred.emel")),
     ("Std.Fiber", include_str!("../lib/std/fiber.emel")),
+    (
+        "Std.Embedded.Peripheral",
+        include_str!("../lib/std/embedded/peripheral.emel"),
+    ),
+    (
+        "Std.Embedded.Gpio",
+        include_str!("../lib/std/embedded/gpio.emel"),
+    ),
+    (
+        "Std.Embedded.Uart",
+        include_str!("../lib/std/embedded/uart.emel"),
+    ),
+    (
+        "Std.Embedded.I2c",
+        include_str!("../lib/std/embedded/i2c.emel"),
+    ),
+    (
+        "Std.Embedded.Spi",
+        include_str!("../lib/std/embedded/spi.emel"),
+    ),
+    (
+        "Std.Embedded.Board",
+        include_str!("../lib/std/embedded/board.emel"),
+    ),
 ];
 
 /// Bundled host files as (path relative to `lib/`, contents) pairs. These are the files that
