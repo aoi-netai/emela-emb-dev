@@ -1,5 +1,7 @@
 # Renodeでのembedded backend smoke確認
 
+STM32以外の移植基盤は[ESP32-C3のRenode導入](esp32c3-renode.md)を参照する。こちらは外部modelを固定取得してRISC-Vの独立C probeを動かす段階であり、以下のEmela生成Cの確認とは分ける。
+
 利用者向けのアプリケーション例は[温度調節器](../examples/temperature-controller/README.md)を参照する。Emelaで運転状態を保持し、周期的な温度入力に応じて加熱・冷却GPIOを制御し、USART2へ表示する。C生成は[組み込み向けCLI](cli-embedded.md)の`emela build --target c-embedded`で行い、exampleの`renode/run.sh`はCLIによる生成からARMビルド、Renodeでの実行までをまとめて行う。利用者がRustの生成プログラムを書く必要はない。
 
 この手順では、現行の `emela-codegen-emb` が生成したCをSTM32F446向けにクロスビルドし、Renode上で実行する。const・同期非scalar ABI・generic/成長再帰型をまとめた新しい`completion` fixtureは統合確認を参照。生成Cのentry、整数演算、比較、`Let`、`If`の両分岐、内部関数呼び出し、ゼロ除算時のboard defect hook、外部C関数までを確認する。
