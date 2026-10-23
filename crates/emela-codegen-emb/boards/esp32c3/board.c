@@ -48,9 +48,9 @@ volatile uint32_t board_stack_used;
 volatile uint32_t board_stack_guard_ok;
 volatile uint32_t board_trap_cause;
 volatile uint32_t board_trap_pc;
-static uint32_t configured_outputs;
+static volatile uint32_t configured_outputs;
 #ifdef BOARD_GPIO
-static uint32_t configured_inputs;
+static volatile uint32_t configured_inputs;
 #endif
 static unsigned event_locked;
 static volatile unsigned in_trap;
@@ -192,64 +192,145 @@ void emela_board_console_print_error_line(const char *data, uint16_t length) {
 }
 
 #ifdef BOARD_GPIO
-static uint32_t pin_number(EmelaGpioPin pin) {
-    /* GPIO11 supplies flash power; GPIO12..17 are reserved for the SPI flash. */
-    if (pin.id < 0 || pin.id > 21 || (pin.id >= 11 && pin.id <= 17)) FAIL("unsupported GPIO pin");
-    return (uint32_t)pin.id;
-}
+volatile uint32_t board_gpio_events;
+static uint32_t bound_pins;
+static volatile uint32_t interrupt_pins;
+static int32_t gpio_priority;
+#define GPIO_STATUS REG(0x60004044)
+#define GPIO_STATUS_CLEAR REG(0x6000404c)
+#define GPIO_CPU_IRQ UINT32_C(2)
 
-void emela_gpio_configure(EmelaGpioPin pin, EmelaGpioMode mode, EmelaGpioPull pull) {
+static int32_t gpio_pin_status(EmelaGpioPin pin) {
+    if (pin.id < 0 || pin.id > 21) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    /* Flash power/data, USB Serial/JTAG and the Console retain their pins. */
+    if (pin.id >= 11) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+    return 0;
+}
+int32_t emela_gpio_configure(EmelaGpioPin pin, EmelaGpioMode mode, EmelaGpioPull pull, EmelaGpioPinState initial) {
     require_main();
-    uint32_t number = pin_number(pin);
-    if ((mode != EMELA_GPIO_MODE_INPUT && mode != EMELA_GPIO_MODE_OUTPUT_PUSH_PULL)
-        || pull < EMELA_GPIO_PULL_NO_PULL || pull > EMELA_GPIO_PULL_DOWN)
-        FAIL("unsupported GPIO mode or pull");
-    uint32_t bit = BIT(number);
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    if (mode < EMELA_GPIO_MODE_INPUT || mode > EMELA_GPIO_MODE_ANALOG
+        || pull < EMELA_GPIO_PULL_NO_PULL || pull > EMELA_GPIO_PULL_DOWN
+        || (initial != EMELA_GPIO_PIN_STATE_LOW && initial != EMELA_GPIO_PIN_STATE_HIGH)
+        || ((mode == EMELA_GPIO_MODE_INPUT || mode == EMELA_GPIO_MODE_ANALOG) && initial != EMELA_GPIO_PIN_STATE_LOW))
+        return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    uint32_t number = (uint32_t)pin.id, bit = BIT(number);
+    if (interrupt_pins & bit) return EMELA_PERIPHERAL_INVALID_STATE;
+    if (mode == EMELA_GPIO_MODE_ANALOG) return EMELA_PERIPHERAL_UNSUPPORTED;
+    uint32_t previous = irq_disable();
+    /* GPIO matrix output-enable comes from GPIO_ENABLE; input stays enabled for readback. */
     GPIO_ENABLE_CLEAR = bit;
-    GPIO_OUT_CLEAR = bit;
-    GPIO_PIN(number) = 0;
+    if (initial == EMELA_GPIO_PIN_STATE_HIGH) GPIO_OUT_SET = bit;
+    else GPIO_OUT_CLEAR = bit;
+    GPIO_PIN(number) = mode == EMELA_GPIO_MODE_OUTPUT_OPEN_DRAIN ? BIT(2) : 0;
     GPIO_OUT_SELECT(number) = UINT32_C(128) | BIT(9);
     IO_MUX(number) = (UINT32_C(1) << 12) | (UINT32_C(2) << 10) | BIT(9)
         | (pull == EMELA_GPIO_PULL_UP ? BIT(8) : 0)
         | (pull == EMELA_GPIO_PULL_DOWN ? BIT(7) : 0);
     configured_inputs |= bit;
     configured_outputs &= ~bit;
-    if (mode == EMELA_GPIO_MODE_OUTPUT_PUSH_PULL) {
-        configured_outputs |= bit;
-        GPIO_ENABLE_SET = bit;
-    }
+    if (mode != EMELA_GPIO_MODE_INPUT) { configured_outputs |= bit; GPIO_ENABLE_SET = bit; }
+    __asm volatile("fence iorw, iorw" ::: "memory");
+    irq_restore(previous);
+    return 0;
 }
-
-EmelaGpioPinState emela_gpio_read(EmelaGpioPin pin) {
-    require_main();
-    uint32_t bit = BIT(pin_number(pin));
-    if (!(configured_inputs & bit)) FAIL("GPIO input is not configured");
-    return GPIO_IN & bit ? EMELA_GPIO_PIN_STATE_HIGH : EMELA_GPIO_PIN_STATE_LOW;
+static int32_t gpio_read(EmelaGpioPin pin, EmelaGpioPinState *out) {
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    if (!out) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    uint32_t bit = BIT((uint32_t)pin.id);
+    if (!(configured_inputs & bit)) return EMELA_PERIPHERAL_NOT_CONFIGURED;
+    *out = GPIO_IN & bit ? EMELA_GPIO_PIN_STATE_HIGH : EMELA_GPIO_PIN_STATE_LOW;
+    return 0;
 }
-
-void emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state) {
-    require_main();
-    uint32_t bit = BIT(pin_number(pin));
-    if (!(configured_outputs & bit) || (state != EMELA_GPIO_PIN_STATE_LOW && state != EMELA_GPIO_PIN_STATE_HIGH))
-        FAIL("GPIO output is not configured or state is invalid");
+static int32_t gpio_write(EmelaGpioPin pin, EmelaGpioPinState state) {
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    if (state != EMELA_GPIO_PIN_STATE_LOW && state != EMELA_GPIO_PIN_STATE_HIGH) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    uint32_t bit = BIT((uint32_t)pin.id);
+    if (!(configured_inputs & bit)) return EMELA_PERIPHERAL_NOT_CONFIGURED;
+    if (!(configured_outputs & bit)) return EMELA_PERIPHERAL_INVALID_STATE;
     if (state == EMELA_GPIO_PIN_STATE_HIGH) GPIO_OUT_SET = bit;
     else GPIO_OUT_CLEAR = bit;
+    return 0;
 }
-
-void emela_gpio_toggle(EmelaGpioPin pin) {
+int32_t emela_gpio_read(EmelaGpioPin pin, EmelaGpioPinState *out) { require_main(); return gpio_read(pin, out); }
+int32_t emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state) { require_main(); return gpio_write(pin, state); }
+int32_t emela_gpio_isr_read(EmelaGpioPin pin, EmelaGpioPinState *out) {
+    if (!in_trap) return EMELA_PERIPHERAL_INVALID_STATE;
+    return gpio_read(pin, out);
+}
+int32_t emela_gpio_isr_write(EmelaGpioPin pin, EmelaGpioPinState state) {
+    if (!in_trap) return EMELA_PERIPHERAL_INVALID_STATE;
+    return gpio_write(pin, state);
+}
+int32_t emela_gpio_toggle(EmelaGpioPin pin) {
     require_main();
-    uint32_t bit = BIT(pin_number(pin));
-    emela_gpio_write(pin, GPIO_OUT & bit ? EMELA_GPIO_PIN_STATE_LOW : EMELA_GPIO_PIN_STATE_HIGH);
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    uint32_t bit = BIT((uint32_t)pin.id);
+    return gpio_write(pin, GPIO_OUT & bit ? EMELA_GPIO_PIN_STATE_LOW : EMELA_GPIO_PIN_STATE_HIGH);
 }
-
-void emela_gpio_enable_interrupt(EmelaGpioPin pin, EmelaGpioEdge edge) {
-    (void)pin; (void)edge;
-    FAIL("GPIO interrupts are not implemented by this board package");
+int32_t emela_gpio_bind_interrupt(EmelaGpioPin pin) {
+    require_main();
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    uint32_t bit = BIT((uint32_t)pin.id);
+    if (!(configured_inputs & bit)) return EMELA_PERIPHERAL_NOT_CONFIGURED;
+    if (interrupt_pins & bit) return EMELA_PERIPHERAL_INVALID_STATE;
+    if (!emela_gpio_has_binding(pin.id)) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    bound_pins |= bit;
+    return 0;
 }
-
-void emela_gpio_disable_interrupt(EmelaGpioPin pin) {
-    (void)pin;
-    FAIL("GPIO interrupts are not implemented by this board package");
+int32_t emela_gpio_enable_interrupt(EmelaGpioPin pin, EmelaGpioEdge edge, EmelaInterruptPriority priority) {
+    require_main();
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    if (edge < EMELA_GPIO_EDGE_RISING || edge > EMELA_GPIO_EDGE_BOTH || priority < 0 || priority > 2)
+        return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    uint32_t number = (uint32_t)pin.id, bit = BIT(number);
+    if (!(configured_inputs & bit)) return EMELA_PERIPHERAL_NOT_CONFIGURED;
+    if (!(bound_pins & bit) || (interrupt_pins & bit)) return EMELA_PERIPHERAL_INVALID_STATE;
+    if (interrupt_pins && gpio_priority != priority) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+    uint32_t previous = irq_disable();
+    GPIO_STATUS_CLEAR = bit;
+    gpio_priority = priority;
+    MATRIX(0x040u) = GPIO_CPU_IRQ; /* ETS_GPIO_INTR_SOURCE = 16. */
+    MATRIX(0x11cu) = (uint32_t)priority + 1u;
+    MATRIX(0x108u) &= ~BIT(GPIO_CPU_IRQ); /* level CPU interrupt */
+    GPIO_PIN(number) = (GPIO_PIN(number) & ~(UINT32_C(7) << 7)) | (((uint32_t)edge + 1u) << 7) | BIT(13);
+    interrupt_pins |= bit;
+    MATRIX(0x104u) |= BIT(GPIO_CPU_IRQ);
+    __asm volatile("fence iorw, iorw" ::: "memory");
+    irq_restore(previous);
+    return 0;
+}
+int32_t emela_gpio_disable_interrupt(EmelaGpioPin pin) {
+    require_main();
+    int32_t status = gpio_pin_status(pin);
+    if (status) return status;
+    uint32_t bit = BIT((uint32_t)pin.id);
+    if (!(configured_inputs & bit)) return EMELA_PERIPHERAL_NOT_CONFIGURED;
+    if (!(interrupt_pins & bit)) return 0;
+    uint32_t previous = irq_disable();
+    GPIO_PIN((uint32_t)pin.id) &= ~((UINT32_C(31) << 13) | (UINT32_C(7) << 7));
+    GPIO_STATUS_CLEAR = bit;
+    interrupt_pins &= ~bit;
+    if (!interrupt_pins) { MATRIX(0x104u) &= ~BIT(GPIO_CPU_IRQ); MATRIX(0x040u) = 0; }
+    __asm volatile("fence iorw, iorw" ::: "memory");
+    irq_restore(previous);
+    return 0;
+}
+static void gpio_interrupt(void) {
+    uint32_t pending = GPIO_STATUS & interrupt_pins;
+    for (uint32_t number = 0; number <= 10u; number++) {
+        uint32_t bit = BIT(number);
+        if (!(pending & bit)) continue;
+        GPIO_STATUS_CLEAR = bit;
+        board_gpio_events++;
+        emela_gpio_dispatch((int32_t)number, GPIO_IN & bit ? 1 : 0);
+    }
 }
 #endif
 
@@ -329,6 +410,14 @@ void board_trap(uint32_t cause, uint32_t pc, uintptr_t sp) {
     board_trap_pc = pc;
     uint32_t used = (uint32_t)((uintptr_t)_stack_top - sp);
     if (used > board_stack_used) board_stack_used = used;
+#ifdef BOARD_GPIO
+    if ((cause & UINT32_C(0x80000fff)) == (UINT32_C(0x80000000) | GPIO_CPU_IRQ)) {
+        gpio_interrupt();
+        __asm volatile("fence iorw, iorw" ::: "memory");
+        in_trap = 0;
+        return;
+    }
+#endif
 #if defined(BOARD_CLOCK) && defined(EMELA_HAS_TASK_RUNTIME)
     if ((cause & UINT32_C(0x80000fff)) != (UINT32_C(0x80000000) | CPU_IRQ)
         || !(TIMER(0x70u) & 1u) || !remaining_ms) FAIL("unexpected CPU trap");

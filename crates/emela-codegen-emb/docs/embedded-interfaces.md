@@ -29,30 +29,32 @@
 
 ## 利用できるeffect
 
-| importするモジュール | 主な操作 | ボード用handler |
-| --- | --- | --- |
-| `Std.Embedded.Gpio` | ピン設定、読み書き、反転、割り込み元の設定 | `BoardGpio` |
-| `Std.Embedded.Uart` | UART設定、データの送受信 | `BoardUart` |
-| `Std.Embedded.I2c` | 設定、master送受信、メモリアクセス、応答確認 | `BoardI2c` |
-| `Std.Embedded.Spi` | 設定、送信、受信、同時送受信 | `BoardSpi` |
-| `Std.Clock` | `sleep`、`now` | `BoardClock` |
-| `Std.Console` | 通常・エラーの行出力 | `BoardConsole` |
+| importするモジュール | 主な操作 | ボード用handler | 詳細仕様 |
+| --- | --- | --- | --- |
+| `Std.Embedded.Gpio` | ピン設定、読み書き、反転、割り込み元の設定 | `BoardGpio` | [GPIO](interface/gpio-interface.md) |
+| `Std.Embedded.Uart` | UART設定、データの送受信 | `BoardUart` | [UART](interface/uart-interface.md) |
+| `Std.Embedded.I2c` | 設定、master送受信、メモリアクセス、応答確認 | `BoardI2c` | [I²C](interface/i2c-interface.md) |
+| `Std.Embedded.Spi` | 設定、送信、受信、同時送受信 | `BoardSpi` | [SPI](interface/spi-interface.md) |
+| `Std.Clock` | `sleep`、`now` | `BoardClock` | — |
+| `Std.Console` | 通常・エラーの行出力 | `BoardConsole` | — |
 
-handlerは`Std.Embedded.Board`からimportし、`with`で適用する。GPIOの論理ピン番号とUART等のIDがどの物理機器に対応するかは、ボード実装が定める。GPIOの割り込み設定は割り込み元の設定までで、任意のEmela関数をISRで実行するAPIではない。
+[周辺機器インターフェース仕様](interface/README.md)に、確定した方針とBSP実装に向けた操作契約の案、現行実装の対応状況、今後の確認項目をまとめる。I²Cのデバイスアドレスは未シフトの7bit値に固定する。
 
-UART・I²C・SPIのエラーは`Std.Embedded.Peripheral.PeripheralError(code)`で扱う。C境界では0が成功、−1（不正な引数）と−2（転送buffer容量超過）が共有bridgeの予約codeである。その他の非0 codeの意味はボード実装が定める。GPIOの操作には回復可能な失敗型を定義していない。不正な機器指定等をどう診断するかは、ボード実装の契約に従う。
+handlerは`Std.Embedded.Board`からimportし、`with`で適用する。GPIOの論理ピン番号とUART等のIDがどの物理機器に対応するかは、ボード実装が定める。GPIOは`bind_interrupt`でpinと名前付き関数を静的に対応付け、ISR制約を検査した上でイベントを直接渡す。割り込みの有効化・停止は別のoperationで行う。
+
+UART・I²C・SPIのエラーは`Std.Embedded.Peripheral.PeripheralError(code)`で扱う。C境界では0が成功、−1（不正な引数）と−2（転送buffer容量超過）が共有bridgeの予約codeである。その他の非0 codeの意味はボード実装が定める。GPIOは専用の`GpioError(kind)`で不正引数・未設定・資源競合等を返す。初期出力値と静的ISR bindingは[GPIO仕様](interface/gpio-interface.md)を参照する。
 
 ## 最小の利用例
 
 ```emela
-import Std.Embedded.Gpio.{Gpio, GpioPin, OutputPushPull, NoPull, High}
+import Std.Embedded.Gpio.{Gpio, GpioPin, OutputPushPull, NoPull, High, GpioError}
 import Std.Embedded.Board.{BoardGpio}
 
-pub fn set_output() {
+pub fn set_output() -> () fails GpioError {
   with BoardGpio {
     pin = GpioPin(5)
     gpio = use Gpio
-    gpio.configure(pin, OutputPushPull, NoPull)
+    gpio.configure(pin, OutputPushPull(NoPull, High))
     gpio.write(pin, High)
   }
 }

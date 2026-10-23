@@ -62,6 +62,10 @@ error enum Std.Embedded.Peripheral.PeripheralError {
   PeripheralError(code: Int)
 }
 
+error enum Std.Embedded.Gpio.GpioError {
+  GpioError(kind: Std.Embedded.Gpio.GpioErrorKind)
+}
+
 export fn main() -> Int fails {
   let a%1: Int = {
     find(1)?

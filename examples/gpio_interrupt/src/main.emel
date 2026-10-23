@@ -1,0 +1,44 @@
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardGpio, BoardClock}
+import Std.Clock.{Clock}
+
+# PA6 = ボタン, PD12 = LED.
+const INPUT = Gpio.GpioPin(6)
+const LED = Gpio.GpioPin(60)
+
+# GPIOを監視して状態が変わったらLEDの状態を反転させる
+fn on_rising(event: Gpio.GpioEvent) -> () fails {} use {Gpio.Gpio} {
+
+  gpio = use Gpio.Gpio
+  {
+    next = gpio.read(LED) match {
+      Gpio.Low -> Gpio.High
+      Gpio.High -> Gpio.Low
+    }
+
+    gpio.write(LED, next)
+  } escape { Gpio.GpioError(_) -> () }
+}
+
+pub fn main() -> Int use Async {
+
+  with BoardGpio, BoardClock {
+    clock = use Clock
+    gpio = use Gpio.Gpio
+
+    # GPIOの初期化
+    gpio.configure(LED, Gpio.OutputPushPull(Gpio.NoPull, Gpio.Low))
+    gpio.configure(INPUT, Gpio.Input(Gpio.Down))
+
+    # GPIOの割り込みを有効化
+    Gpio.bind_interrupt(INPUT, on_rising)
+    gpio.enable_interrupt(INPUT, Gpio.Rising, Interrupt.Normal)
+
+    # 60秒間待機してから終了する
+    clock.sleep(60000)
+    gpio.disable_interrupt(INPUT)
+    gpio.write(LED, Gpio.Low)
+    0
+  } escape { Gpio.GpioError(_) -> -1 }
+}

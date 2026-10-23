@@ -48,6 +48,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../lib/std/embedded/peripheral.emel"),
     ),
     (
+        "Std.Embedded.Interrupt",
+        include_str!("../lib/std/embedded/interrupt.emel"),
+    ),
+    (
         "Std.Embedded.Gpio",
         include_str!("../lib/std/embedded/gpio.emel"),
     ),

@@ -1,0 +1,58 @@
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardGpio}
+
+const INPUT = Gpio.GpioPin(6)
+const CALLBACK = on_edge
+pub error MessageError(message: String)
+
+fn write_level(level: Gpio.PinState) -> () fails {} use {Gpio.Gpio} {
+  (use Gpio.Gpio).write(Gpio.GpioPin(5), level) escape { Gpio.GpioError(_) -> () }
+}
+
+fn on_edge(event: Gpio.GpioEvent) -> () fails {} use {Gpio.Gpio} {
+  if event.pin.id == 6 || event.pin.id == 7 {
+    event.level match {
+      Gpio.High -> {
+        level = (use Gpio.Gpio).read(Gpio.GpioPin(9)) escape { Gpio.GpioError(_) -> Gpio.Low }
+        write_level(level)
+      }
+      Gpio.Low -> write_level(Gpio.Low)
+    }
+  }
+}
+
+pub fn initialize() -> Int {
+  with BoardGpio {
+    gpio = use Gpio.Gpio
+    gpio.configure(Gpio.GpioPin(5), Gpio.OutputPushPull(Gpio.Up, Gpio.High))
+    gpio.configure(INPUT, Gpio.Input(Gpio.Down))
+    gpio.configure(Gpio.GpioPin(7), Gpio.OutputOpenDrain(Gpio.NoPull, Gpio.Low))
+    gpio.configure(Gpio.GpioPin(8), Gpio.Analog(Gpio.NoPull))
+    callback = CALLBACK
+    Gpio.bind_interrupt(INPUT, callback)
+    Gpio.bind_interrupt(Gpio.GpioPin(7), on_edge)
+    gpio.enable_interrupt(INPUT, Gpio.Both, Interrupt.Normal)
+    gpio.disable_interrupt(INPUT)
+    words = [1, 2, 3]
+    text = String.append("main: ", Int.to_string(List.length(words)))
+    (fail MessageError(text)) escape { MessageError(message) -> String.byte_size(message) }
+  } escape { Gpio.GpioError(_) -> -1 }
+}
+
+pub fn classify(status: Int) -> Int {
+  {
+    Gpio.check_status(status)
+    0
+  } escape {
+    Gpio.GpioError(kind) -> kind match {
+      Gpio.InvalidArgument -> 1
+      Gpio.NotConfigured -> 2
+      Gpio.Unsupported -> 3
+      Gpio.Busy -> 4
+      Gpio.ResourceConflict -> 5
+      Gpio.InvalidState -> 6
+      Gpio.Other -> 7
+    }
+  }
+}

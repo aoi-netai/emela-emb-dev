@@ -45,24 +45,24 @@ void emela_board_idle(void) {}
 uint32_t emela_board_event_lock(void) { return 0; }
 void emela_board_event_unlock(uint32_t previous_state) { assert(previous_state == 0); }
 
-void emela_gpio_configure(EmelaGpioPin pin, EmelaGpioMode mode, EmelaGpioPull pull) {
-  assert(pin.id == 5 && mode == EMELA_GPIO_MODE_OUTPUT_PUSH_PULL && pull == EMELA_GPIO_PULL_NO_PULL);
-  (void)record(0);
+int32_t emela_gpio_configure(EmelaGpioPin pin, EmelaGpioMode mode, EmelaGpioPull pull, EmelaGpioPinState initial) {
+  assert(pin.id == 5 && mode == EMELA_GPIO_MODE_OUTPUT_PUSH_PULL && pull == EMELA_GPIO_PULL_NO_PULL && initial == EMELA_GPIO_PIN_STATE_HIGH);
+  return record(0);
 }
-void emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state) {
+int32_t emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state) {
   assert(pin.id == 5 && state == EMELA_GPIO_PIN_STATE_HIGH);
-  (void)record(1);
+  return record(1);
 }
-void emela_gpio_toggle(EmelaGpioPin pin) { assert(pin.id == 5); (void)record(2); }
-void emela_gpio_enable_interrupt(EmelaGpioPin pin, EmelaGpioEdge edge) {
-  assert(pin.id == 5 && edge == EMELA_GPIO_EDGE_BOTH);
-  (void)record(3);
+int32_t emela_gpio_toggle(EmelaGpioPin pin) { assert(pin.id == 5); return record(2); }
+int32_t emela_gpio_enable_interrupt(EmelaGpioPin pin, EmelaGpioEdge edge, EmelaInterruptPriority priority) {
+  assert(pin.id == 5 && edge == EMELA_GPIO_EDGE_BOTH && priority == EMELA_INTERRUPT_PRIORITY_NORMAL);
+  return record(3);
 }
-void emela_gpio_disable_interrupt(EmelaGpioPin pin) { assert(pin.id == 5); (void)record(4); }
-EmelaGpioPinState emela_gpio_read(EmelaGpioPin pin) {
+int32_t emela_gpio_disable_interrupt(EmelaGpioPin pin) { assert(pin.id == 5); return record(4); }
+int32_t emela_gpio_read(EmelaGpioPin pin, EmelaGpioPinState *out) {
   assert(pin.id == 5);
-  (void)record(5);
-  return EMELA_GPIO_PIN_STATE_HIGH;
+  *out = EMELA_GPIO_PIN_STATE_HIGH;
+  return record(5);
 }
 
 static void check_input(const uint16_t *data, uint16_t length, const uint16_t *expected, uint16_t count) {
@@ -111,7 +111,7 @@ int32_t emela_uart_receive(EmelaUartId id, int32_t size, int64_t timeout, uint16
 
 int32_t emela_i2c_configure(EmelaI2cId id, EmelaI2cConfig config) {
   assert(id == EMELA_I2C_ID_I2C1 && config.clock_speed_hz == 100000);
-  assert(config.addressing == EMELA_I2C_ADDRESSING_SEVEN_BIT && config.duty_cycle == EMELA_I2C_DUTY_CYCLE_STANDARD);
+  assert(config.duty_cycle == EMELA_I2C_DUTY_CYCLE_STANDARD);
   return record(9);
 }
 int32_t emela_i2c_master_transmit(EmelaI2cId id, int32_t address, const uint16_t *data, uint16_t length, int64_t timeout) {
@@ -245,7 +245,7 @@ int main(void) {
     strict_sequence = 1;
     trace_count = 0;
     assert(run_all() == 73 && trace_count == 22);
-    for (int op = 6; op <= 18; ++op) {
+    for (int op = 0; op <= 18; ++op) {
       trace_count = 0;
       error_op = op;
       assert(run_all() == 71 && trace_count == (unsigned)op + 1);

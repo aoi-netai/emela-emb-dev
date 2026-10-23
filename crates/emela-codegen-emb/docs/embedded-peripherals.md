@@ -2,6 +2,8 @@
 
 利用者向けの構成・Emelaでの利用方法は[組み込みインターフェース](embedded-interfaces.md)、Rust APIと入力契約は[実装範囲と対応状況](implementation.md)を参照する。この文書は `Std.Embedded.Board` とC実装の境界を記録する。STM32F4・ESP32-C3のBSPとstandalone build・Flash起動確認は[ボードpackage](boards.md)、projectの設定・build・flashは[CLIの開発手順](cli-embedded.md)へ分ける。
 
+GPIO・UART・I²C・SPI固有の操作契約は[周辺機器インターフェース仕様](interface/README.md)を参照する。各文書は現行API・ABI、確定した方針、BSP実装に向けた操作契約の案を区別する。この文書は共通bridgeの実装済みの契約を扱う。
+
 ## 接続と検査
 
 `Std.Embedded.Board` は `BoardGpio`・`BoardUart`・`BoardI2c`・`BoardSpi`・`BoardClock`・`BoardConsole` を提供する。アプリは通常の `with` でhandlerを選択する。アプリごとの `@external`、`external_adapters`、`task_adapters` の登録は不要である。独自のセンサや既存Cライブラリには従来の汎用FFIも使える。
@@ -10,10 +12,10 @@
 
 - 完全修飾名 `Std.Embedded.Board.gpio_write` などと、専用C binding `__emela_peripheral_gpio_write` などが一致すること。
 - 引数と戻り値が対応する標準effectのoperationの型と一致すること。
-- GPIOは元の戻り値、失敗可能なoperationは `(Int, 元の戻り値)` を返し、外部関数自体は非failsであること。
+- GPIOを含む失敗可能なoperationは `(Int, 元の戻り値)` を返し、外部関数自体は非failsであること。
 - Clock・Consoleはそれぞれの固定署名に一致し、Clock.sleepだけがsuspendすること。
 
-失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を `PeripheralError(code)` に変換する。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
+失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を失敗に変換する。GPIOは生成された共通statusの対応表を通して`GpioError(kind)`へ変換し、UART/I²C/SPIは現在も`PeripheralError(code)`を使う。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
 
 ## 生成ファイルと値型
 
@@ -34,17 +36,17 @@
 
 ## 同期operation
 
-GPIOは元の値を返す。UART/I²C/SPIはstatusを返し、値がある場合は出力先へ書く。
+GPIO/UART/I²C/SPIはstatusを返し、値がある場合は出力先へ書く。
 
 ```c
-void emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state);
+int32_t emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state);
 int32_t emela_uart_configure(EmelaUartId id, EmelaUartConfig config);
 int32_t emela_i2c_is_device_ready(
     EmelaI2cId id, int32_t address, int32_t trials,
     int64_t timeout_ms, int32_t *out);
 ```
 
-status `0` は成功、それ以外は `PeripheralError(code)` になる。失敗時は出力値を利用しない。GPIOには失敗チャネルがないので、無効なボード設定の扱いはボード実装で定める。
+status `0` は成功。GPIOの非0は`GpioError(kind)`、UART/I²C/SPIの非0は`PeripheralError(code)`になる。失敗時は出力値を利用しない。GPIOのreadもstatusを返し、入力レベルは出力pointerへ書く。
 
 operationは同期呼び出しであり、長いHAL待機を短くするschedulerへの変換は行わない。UART/I²C/SPIをISRで呼ばず、応答時間はtimeoutとボード実装で管理する。
 
@@ -63,7 +65,7 @@ int32_t emela_uart_receive(
 
 Rustの `Options::with_peripheral_buffer_capacity` はword数で、既定256、範囲1〜65,535である。1方向あたり最大 `2 × capacity` byteのCスタック領域を使う。SPI.transferは入力と出力の2方向分を同じC frame上で使う。既定値では配列だけで通常512 byte、transferは1024 byteとなる。容量65,535ではそれぞれ131,070 / 262,140 byteになるため、固定上限の設定だけで小さいstackへの適合は保証しない。実際の最大stackはほかのローカル変数や呼び出し先を含むため、生成Cの `.su` や実行時の観測と合わせて評価する。
 
-入力を黙って切り詰めない。次の2つはbridgeが予約するcodeであり、ボード独自のエラーcodeには使わない。
+入力を黙って切り詰めない。次の2つは共通statusであり、ボードも同じ意味で返せる。残りの共通割当とGPIO分類は[単一定義表](../src/peripheral_status.rs)を使う。
 
 | 定数 | code | 条件 |
 | --- | --- | --- |
@@ -116,3 +118,7 @@ cargo test -p emela-codegen-emb --test emit embedded_peripherals:: --locked
 ```
 
 この文書は実行結果・成功件数を記録するものではない。C mockは共通word範囲と値の移送を観測するもので、機器設定に応じた7/8/9/16bitの物理driverを実装するものではない。回帰試験は共通ABIと代表入力の契約を確認し、MCUごとのGPIOレジスタ、UART/I²C/SPIの物理動作、実割込みtiming、C stackの最大値を保証しない。CLIの回帰試験とBSPのFlash起動観測は、それぞれ[CLI](cli-embedded.md#検証の範囲)と[ボード確認](boards.md)へ分ける。
+
+## GPIOの設定とISR
+
+`GpioConfig`はmode・pull・initialへ分解し、C headerへpayload付きenumを公開しない。必要なC境界の型だけを生成する。`bind_interrupt`の静的なpinと名前付き関数を解決し、生成入口`emela_gpio_dispatch(int32_t pin, int32_t level)`がイベントを構築してprivate callbackをISR内で直接呼ぶ。read/writeだけをISR用driverへ特殊化し、heap・再帰・動的handler・他operationへの到達を拒否する。一般のFFIは拡張しない。詳細は[GPIO仕様](interface/gpio-interface.md)、試験方法は[Renode確認](gpio-validation.md)を参照する。

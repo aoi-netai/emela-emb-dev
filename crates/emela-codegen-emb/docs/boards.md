@@ -18,7 +18,7 @@ Flow IRコンパイラーと標準組み込みhandlerに、ボードpackage、C/
 generated/runtimeの所有権・ISR・defect契約は[実装状況](implementation.md)と[標準C bridge](embedded-peripherals.md)を参照する。BSPはGPIO/UART/I²C/SPIの全operationを実装するものではない。
 
 - GPIOの通常の入出力と、起動時に固定設定するConsole UARTを提供する。
-- GPIO interrupt操作は、Emela callbackを登録するAPIではなく、このBSPではdefectにする。
+- GPIOは初期値付き設定・専用エラー・静的callback bindingとISR専用read/writeを実装する。[GPIO仕様](interface/gpio-interface.md)と[CLI/Renode確認](gpio-validation.md)を参照する。
 - UARTの設定には各BSPの対応する固定構成があり、汎用のtimed transmit/receiveは未実装のエラーを返す。
 - I²C/SPIのC driverは含まない。到達する場合は利用者が生成headerに従う実装を追加する必要がある。
 - Clockはmain側で開始した1つの物理sleepをIRQによる1 ms刻みの通知へ接続する。同時に複数の物理sleepを要求する構成はBSPの容量契約を超える。

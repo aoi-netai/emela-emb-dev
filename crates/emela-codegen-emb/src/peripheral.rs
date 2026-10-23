@@ -15,10 +15,11 @@ pub(super) struct Operation {
 }
 
 pub(super) fn is_binding(function: &Function) -> bool {
-    function.name.starts_with(MODULE)
+    (function.name.starts_with(MODULE)
+        || function.name.split('[').next().is_some_and(|name| matches!(name, "Std.Embedded.Gpio.register_interrupt" | "Std.Embedded.Gpio.error_kind")))
         && function.external.as_ref().is_some_and(|external| {
             external.binding("c").is_some_and(|binding| {
-                matches!(&binding.host, emela_core::HostRef::Global(symbol) if symbol.starts_with(SYMBOL))
+                matches!(&binding.host, emela_core::HostRef::Global(symbol) if symbol.starts_with(SYMBOL) || symbol.starts_with("__emela_gpio_"))
             })
         })
 }
@@ -29,6 +30,54 @@ pub(super) fn resolve(
 ) -> Result<Option<Operation>, Vec<Error>> {
     if !is_binding(function) {
         return Ok(None);
+    }
+    if let Some(item) = function.name.strip_prefix("Std.Embedded.Gpio.") {
+        let item = item.split('[').next().unwrap();
+        let binding = function.external.as_ref().unwrap().binding("c").unwrap();
+        if !matches!(&binding.host, emela_core::HostRef::Global(symbol) if symbol == &format!("__emela_gpio_{item}"))
+            || function.fails
+            || function.suspends
+        {
+            return Err(unsupported(
+                &function.name,
+                "invalid standard GPIO binding identity",
+            ));
+        }
+        let params: Vec<_> = function
+            .params
+            .iter()
+            .map(|p| function.vars[*p].ty)
+            .collect();
+        let is_enum = |ty: TypeId, name: &str| matches!(flow.core.types[ty], Type::Enum(id, ref args) if args.is_empty() && flow.core.enums[id].name == name);
+        let valid = match item {
+            "register_interrupt" => {
+                params.len() == 2
+                    && function.ret == TypeId::INT
+                    && is_enum(params[0], "Std.Embedded.Gpio.GpioPin")
+                    && matches!(&flow.core.types[params[1]], Type::Fn(f) if f.params.len() == 1 && is_enum(f.params[0], "Std.Embedded.Gpio.GpioEvent") && f.ret == TypeId::UNIT && !f.fails && !f.suspends)
+            }
+            "error_kind" => {
+                params == [TypeId::INT] && is_enum(function.ret, "Std.Embedded.Gpio.GpioErrorKind")
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(unsupported(
+                &function.name,
+                "invalid standard GPIO binding signature",
+            ));
+        }
+        return Ok(Some(Operation {
+            peripheral: "gpio".into(),
+            name: item.into(),
+            params: function
+                .params
+                .iter()
+                .map(|p| function.vars[*p].ty)
+                .collect(),
+            ret: function.ret,
+            fails: false,
+        }));
     }
     let item = function.name.strip_prefix(MODULE).unwrap();
     let binding = function.external.as_ref().unwrap().binding("c").unwrap();
@@ -89,7 +138,8 @@ pub(super) fn resolve(
                     "missing standard peripheral effect",
                 ));
             };
-            let Some(op) = effect.ops.iter().find(|op| op.name == name) else {
+            let operation_name = name.strip_prefix("isr_").unwrap_or(name);
+            let Some(op) = effect.ops.iter().find(|op| op.name == operation_name) else {
                 return Err(unsupported(
                     &function.name,
                     "unknown standard peripheral operation",
@@ -299,7 +349,18 @@ pub(super) fn headers(
         .iter()
         .any(|name| matches!(name.as_str(), "gpio" | "uart" | "i2c" | "spi"))
     {
-        files.push(GeneratedFile { path: "emela_peripheral.h".into(), contents: "#ifndef EMELA_PERIPHERAL_H\n#define EMELA_PERIPHERAL_H\n#include <stdint.h>\n/* Reserved bridge errors; board implementations must use different nonzero codes. */\n#define EMELA_PERIPHERAL_INVALID_ARGUMENT (-INT32_C(1))\n#define EMELA_PERIPHERAL_CAPACITY_EXCEEDED (-INT32_C(2))\n#endif\n".into() });
+        let mut contents = "#ifndef EMELA_PERIPHERAL_H\n#define EMELA_PERIPHERAL_H\n#include <stdint.h>\n/* Shared BSP status ABI. Zero means success; unknown nonzero values map to Other. */\n#define EMELA_PERIPHERAL_OK INT32_C(0)\n".to_owned();
+        for &(name, value, _) in peripheral_status::STATUSES {
+            contents.push_str(&format!(
+                "#define EMELA_PERIPHERAL_{name} (-INT32_C({}))\n",
+                -value
+            ));
+        }
+        contents.push_str("#endif\n");
+        files.push(GeneratedFile {
+            path: "emela_peripheral.h".into(),
+            contents,
+        });
     }
     for peripheral in used {
         let mut writer = Writer::new();
@@ -329,26 +390,60 @@ pub(super) fn headers(
                     "void emela_board_console_print_error_line(const char *data, uint16_t length);",
                 );
             }
+            "gpio" => {
+                writer.line("#include \"emela_peripheral.h\"");
+                let mut written = HashSet::new();
+                for item in ["GpioPin", "PinState", "Pull", "Edge"] {
+                    let name = format!("Std.Embedded.Gpio.{item}");
+                    let id = flow
+                        .core
+                        .enums
+                        .iter()
+                        .find(|(_, def)| def.name == name)
+                        .map(|(id, _)| id)
+                        .ok_or_else(|| unsupported(&name, "missing GPIO ABI type"))?;
+                    emit_enum(&flow.core, id, &mut written, &mut writer)?;
+                }
+                let priority = flow
+                    .core
+                    .enums
+                    .iter()
+                    .find(|(_, def)| def.name == "Std.Embedded.Interrupt.InterruptPriority")
+                    .map(|(id, _)| id)
+                    .ok_or_else(|| unsupported("GPIO", "missing interrupt priority type"))?;
+                emit_enum(&flow.core, priority, &mut written, &mut writer)?;
+                writer.line("/* GpioConfig stays internal; non-output initial is Low (0). Status zero means success. */");
+                writer.line("typedef int32_t EmelaGpioMode;");
+                writer.line("enum { EMELA_GPIO_MODE_INPUT, EMELA_GPIO_MODE_OUTPUT_PUSH_PULL, EMELA_GPIO_MODE_OUTPUT_OPEN_DRAIN, EMELA_GPIO_MODE_ANALOG };");
+                writer.line("int32_t emela_gpio_configure(EmelaGpioPin pin, EmelaGpioMode mode, EmelaGpioPull pull, EmelaGpioPinState initial);");
+                writer.line("int32_t emela_gpio_read(EmelaGpioPin pin, EmelaGpioPinState *out);");
+                writer.line("int32_t emela_gpio_write(EmelaGpioPin pin, EmelaGpioPinState state);");
+                writer.line("int32_t emela_gpio_toggle(EmelaGpioPin pin);");
+                writer.line("int32_t emela_gpio_enable_interrupt(EmelaGpioPin pin, EmelaGpioEdge edge, EmelaInterruptPriority priority);");
+                writer.line("int32_t emela_gpio_disable_interrupt(EmelaGpioPin pin);");
+                writer.line("int32_t emela_gpio_bind_interrupt(EmelaGpioPin pin);");
+                writer.line("/* ISR-only driver operations. */");
+                writer
+                    .line("int32_t emela_gpio_isr_read(EmelaGpioPin pin, EmelaGpioPinState *out);");
+                writer.line(
+                    "int32_t emela_gpio_isr_write(EmelaGpioPin pin, EmelaGpioPinState state);",
+                );
+                writer.line("/* Generated dispatch receives only scalar pin/level values, in the same ISR. */");
+                writer.line("int32_t emela_gpio_has_binding(int32_t pin);");
+                writer.line("void emela_gpio_dispatch(int32_t pin, int32_t level);");
+            }
             _ => {
                 writer.line("#include \"emela_peripheral.h\"");
                 writer.line("/* Synchronous, main-context operations. Arrays are borrowed only during the call. */");
                 writer.line("/* Return 0 on success. On failure output values are ignored. Never exceed capacity. */");
                 writer.line("/* Words preserve 0..65535. The board must reject values outside its configured 7/8/9/16-bit width, never truncate. */");
                 let module = match peripheral.as_str() {
-                    "gpio" => "Gpio",
                     "uart" => "Uart",
                     "i2c" => "I2c",
                     _ => "Spi",
                 };
                 let prefix = format!("Std.Embedded.{module}.");
                 let mut written = HashSet::new();
-                for (id, _) in
-                    flow.core.enums.iter().filter(|(_, def)| {
-                        def.name.starts_with(&prefix) && !def.error && !def.external
-                    })
-                {
-                    emit_enum(&flow.core, id, &mut written, &mut writer)?;
-                }
                 let effect_name = format!("{prefix}{module}");
                 if let Some((_, effect)) = flow
                     .core
@@ -357,6 +452,11 @@ pub(super) fn headers(
                     .find(|(_, effect)| effect.name == effect_name)
                 {
                     for op in &effect.ops {
+                        for &ty in op.params.iter().chain(std::iter::once(&op.ret)) {
+                            if let Type::Enum(id, _) = flow.core.types[ty] {
+                                emit_enum(&flow.core, id, &mut written, &mut writer)?;
+                            }
+                        }
                         writer.line(&prototype(&flow.core, &peripheral, op)?);
                     }
                 }
@@ -415,7 +515,33 @@ pub(super) fn emit_adapter(
     };
     writer.begin_block(&signature(layouts, function, name, true, false, false));
     let variables: Vec<_> = function.params.iter().map(|&p| variable_name(p)).collect();
-    if op.peripheral == "clock" {
+    if op.peripheral == "gpio" && op.name == "register_interrupt" {
+        for variable in &variables {
+            writer.line(&format!("(void){variable};"));
+        }
+        writer.ret(Some(&format!(
+            "emela_gpio_bind_interrupt({})",
+            to_board(layouts, op.params[0], &variables[0])?
+        )));
+    } else if op.peripheral == "gpio" && op.name == "error_kind" {
+        let Type::Enum(id, _) = flow.core.types[function.ret] else {
+            unreachable!()
+        };
+        let variants = &flow.core.enums[id].variants;
+        writer.begin_block(&format!("switch ({})", variables[0]));
+        for &(status, _, kind) in peripheral_status::STATUSES {
+            let index = variants
+                .iter()
+                .position(|v| v.name == kind)
+                .expect("GPIO error kind");
+            writer.line(&format!(
+                "case EMELA_PERIPHERAL_{status}: return INT32_C({index});"
+            ));
+        }
+        let other = variants.iter().position(|v| v.name == "Other").unwrap();
+        writer.line(&format!("default: return INT32_C({other});"));
+        writer.end_block();
+    } else if op.peripheral == "clock" {
         writer.ret(Some("emela_board_clock_now()"));
     } else if op.peripheral == "console" {
         writer.line(&format!(
@@ -440,6 +566,23 @@ pub(super) fn emit_adapter(
                 ));
                 writer.end_block();
                 args.extend([format!("input_{index}"), format!("length_{index}")]);
+            } else if op.peripheral == "gpio" && op.name == "configure" && index == 1 {
+                writer.line(&format!("int32_t mode = {variable}.tag;"));
+                writer.line("int32_t pull = 0, initial = 0;");
+                writer.begin_block("switch (mode)");
+                for variant in 0..4 {
+                    writer.line(&format!(
+                        "case {variant}: pull = {variable}.payload.v{variant}.f0;"
+                    ));
+                    if variant == 1 || variant == 2 {
+                        writer.line(&format!("initial = {variable}.payload.v{variant}.f1;"));
+                    }
+                    writer.line("break;");
+                }
+                writer
+                    .line("default: result.f0 = EMELA_PERIPHERAL_INVALID_ARGUMENT; return result;");
+                writer.end_block();
+                args.extend(["mode".into(), "pull".into(), "initial".into()]);
             } else {
                 args.push(to_board(layouts, ty, variable)?);
             }

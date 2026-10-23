@@ -1,0 +1,114 @@
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardGpio, BoardClock, BoardConsole}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+
+const OUTPUT = Gpio.GpioPin(__OUTPUT__)
+const FIRST = Gpio.GpioPin(6)
+const SECOND = Gpio.GpioPin(7)
+pub error MessageError(message: String)
+
+# One private named function is shared by two bindings. No main handler is captured.
+fn on_edge(event: Gpio.GpioEvent) -> () fails {} use {Gpio.Gpio} {
+  gpio = use Gpio.Gpio
+  level = event.level match {
+    Gpio.High -> gpio.read(event.pin) escape { Gpio.GpioError(_) -> Gpio.Low }
+    Gpio.Low -> Gpio.Low
+  }
+  gpio.write(OUTPUT, level) escape { Gpio.GpioError(_) -> () }
+  # A recoverable fixed error is caught in ISR while main uses a String error.
+  gpio.write(Gpio.GpioPin(8), Gpio.High) escape { Gpio.GpioError(_) -> () }
+}
+
+fn prepare() -> Bool fails Gpio.GpioError use {Gpio.Gpio} {
+  gpio = use Gpio.Gpio
+  gpio.configure(OUTPUT, Gpio.OutputPushPull(Gpio.NoPull, Gpio.High))
+  gpio.configure(FIRST, Gpio.Input(Gpio.Down))
+  gpio.configure(SECOND, Gpio.Input(Gpio.Down))
+  invalid = { gpio.configure(Gpio.GpioPin(-1), Gpio.Input(Gpio.NoPull))
+    False } escape { Gpio.GpioError(Gpio.InvalidArgument) -> True }
+  unconfigured = { gpio.read(Gpio.GpioPin(8))
+    False } escape { Gpio.GpioError(Gpio.NotConfigured) -> True }
+  reserved = { gpio.configure(Gpio.GpioPin(__RESERVED__), Gpio.Input(Gpio.NoPull))
+    False } escape { Gpio.GpioError(Gpio.ResourceConflict) -> True }
+  unbound = { gpio.enable_interrupt(FIRST, Gpio.Both, Interrupt.Normal)
+    False } escape { Gpio.GpioError(Gpio.InvalidState) -> True }
+  Gpio.bind_interrupt(FIRST, on_edge)
+  Gpio.bind_interrupt(SECOND, on_edge)
+  gpio.enable_interrupt(FIRST, Gpio.Both, Interrupt.Normal)
+  exti_conflict = if __ANALOG__ {
+    gpio.configure(Gpio.GpioPin(22), Gpio.Input(Gpio.NoPull))
+    Gpio.bind_interrupt(Gpio.GpioPin(22), on_edge)
+    { gpio.enable_interrupt(Gpio.GpioPin(22), Gpio.Rising, Interrupt.Normal)
+      False } escape { Gpio.GpioError(Gpio.ResourceConflict) -> True }
+  } else { True }
+  priority_conflict = { gpio.enable_interrupt(SECOND, Gpio.Both, Interrupt.High)
+    False } escape { Gpio.GpioError(Gpio.ResourceConflict) -> True }
+  gpio.enable_interrupt(SECOND, Gpio.Both, Interrupt.Normal)
+  active = { gpio.configure(FIRST, Gpio.Input(Gpio.Up))
+    False } escape { Gpio.GpioError(Gpio.InvalidState) -> True }
+  active_analog = { gpio.configure(FIRST, Gpio.Analog(Gpio.NoPull))
+    False } escape { Gpio.GpioError(Gpio.InvalidState) -> True }
+  invalid && unconfigured && reserved && unbound && priority_conflict && active && active_analog && exti_conflict
+}
+
+fn managed_main_values() -> Int {
+  text = String.append("GPIO ", Int.to_string(List.length([1, 2, 3])))
+  length = (fail MessageError(text)) escape { MessageError(message) -> String.byte_size(message) }
+  length
+}
+
+fn check_modes() -> Bool fails Gpio.GpioError use {Gpio.Gpio} {
+  gpio = use Gpio.Gpio
+  gpio.configure(Gpio.GpioPin(8), Gpio.Input(Gpio.NoPull))
+  analog = if __ANALOG__ {
+    gpio.configure(Gpio.GpioPin(8), Gpio.Analog(Gpio.NoPull))
+    { gpio.read(Gpio.GpioPin(8))
+      False } escape { Gpio.GpioError(Gpio.InvalidState) -> True }
+  } else {
+    { gpio.configure(Gpio.GpioPin(8), Gpio.Analog(Gpio.NoPull))
+      False } escape { Gpio.GpioError(Gpio.Unsupported) -> {
+        # Rejected configuration preserved the previous digital input.
+        gpio.read(Gpio.GpioPin(8))
+        True
+      } }
+  }
+  gpio.configure(Gpio.GpioPin(8), Gpio.Input(Gpio.NoPull))
+  input_write = { gpio.write(Gpio.GpioPin(8), Gpio.High)
+    False } escape { Gpio.GpioError(Gpio.InvalidState) -> True }
+  analog && input_write
+}
+
+pub fn main() -> Int use Async {
+  with BoardGpio, BoardClock, BoardConsole {
+    gpio = use Gpio.Gpio
+    clock = use Clock
+    console = use Console
+    ready = prepare()
+    length = managed_main_values()
+    console.print_line("gpio: both enabled")
+    clock.sleep(20)
+    gpio.disable_interrupt(FIRST)
+    gpio.disable_interrupt(FIRST)
+    console.print_line("gpio: first stopped")
+    clock.sleep(20)
+    gpio.disable_interrupt(SECOND)
+    gpio.enable_interrupt(FIRST, Gpio.Rising, Interrupt.High)
+    console.print_line("gpio: rising enabled")
+    clock.sleep(20)
+    gpio.disable_interrupt(FIRST)
+    gpio.enable_interrupt(FIRST, Gpio.Falling, Interrupt.Low)
+    console.print_line("gpio: falling enabled")
+    clock.sleep(20)
+    gpio.disable_interrupt(FIRST)
+    gpio.configure(FIRST, Gpio.Input(Gpio.Up))
+    modes = check_modes()
+    gpio.configure(OUTPUT, Gpio.OutputOpenDrain(Gpio.Up, Gpio.High))
+    gpio.write(OUTPUT, Gpio.Low)
+    gpio.toggle(OUTPUT)
+    gpio.write(OUTPUT, Gpio.Low)
+    console.print_line("gpio: complete")
+    if length == 6 && ready && modes { 42 } else { -2 }
+  } escape { Gpio.GpioError(_) -> -1 }
+}

@@ -1,4 +1,5 @@
 import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
 import Std.Embedded.Uart
 import Std.Embedded.I2c
 import Std.Embedded.Spi
@@ -12,10 +13,10 @@ pub fn all() -> Int {
   with BoardGpio, BoardUart, BoardI2c, BoardSpi, BoardClock, BoardConsole {
     gpio = use Gpio.Gpio
     pin = Gpio.GpioPin(5)
-    gpio.configure(pin, Gpio.OutputPushPull, Gpio.NoPull)
+    gpio.configure(pin, Gpio.OutputPushPull(Gpio.NoPull, Gpio.High))
     gpio.write(pin, Gpio.High)
     gpio.toggle(pin)
-    gpio.enable_interrupt(pin, Gpio.Both)
+    gpio.enable_interrupt(pin, Gpio.Both, Interrupt.Normal)
     gpio.disable_interrupt(pin)
     high = gpio.read(pin) match {
       Gpio.High -> True
@@ -26,7 +27,7 @@ pub fn all() -> Int {
     uart.transmit(Uart.Uart2, [0, 255, 65535], Int64.from_int(9))
     urx = uart.receive(Uart.Uart2, 2, Int64.from_int(9))
     i2c = use I2c.I2c
-    i2c.configure(I2c.I2c1, I2c.I2cConfig(100000, I2c.SevenBit, I2c.Standard))
+    i2c.configure(I2c.I2c1, I2c.I2cConfig(100000, I2c.Standard))
     i2c.master_transmit(I2c.I2c1, 64, [0, 255, 65535], Int64.from_int(9))
     irx = i2c.master_receive(I2c.I2c1, 64, 2, Int64.from_int(9))
     i2c.memory_write(I2c.I2c1, 64, 7, I2c.Bits16, irx, Int64.from_int(9))
@@ -41,7 +42,8 @@ pub fn all() -> Int {
     (use Console).print_line("ok")
     (use Console).print_error_line("error")
     if high && ready && urx == [10, 11] && irx == [20, 21] && memory == [30, 31] && srx == [40, 41] && transferred == [50, 51] && now == Int64.from_int(123456) { 73 } else { -1000 }
-  } escape { PeripheralError(code) -> code }
+  } escape { PeripheralError(code) -> code
+    Gpio.GpioError(_) -> 71 }
 }
 
 pub fn bounded(kind: Int, arg: Int) -> Int {

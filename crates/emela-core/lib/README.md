@@ -468,22 +468,30 @@ UART・I²C・SPI の転送は同期 API。`List[Int]` の各要素は転送単�
 
 ### Std.Embedded.Gpio（`std/embedded/gpio.emel`）
 
-`GpioPin(id: Int)` は論理ピン番号を保持する型で、物理ピンとの対応はボード定義が持つ。`PinState` は `Low / High`、`Pull` は `NoPull / Up / Down`、`GpioMode` は `Input / OutputPushPull / OutputOpenDrain / Analog`、`Edge` は `Rising / Falling / Both`。`GpioEvent(pin: GpioPin, level: PinState)` は入力イベントを表す。
+`GpioPin(id: Int)`はボードの論理pin。`PinState`は`Low / High`、`Pull`は`NoPull / Up / Down`、`Edge`は`Rising / Falling / Both`である。`GpioConfig`は`Input(pull)`、`OutputPushPull(pull, initial)`、`OutputOpenDrain(pull, initial)`、`Analog(pull)`を持つ。出力初期値を設定してから駆動を有効にする。
 
-| `Gpio` の操作 | シグネチャ | 説明 |
-|---|---|---|
-| `configure` | `(pin: GpioPin, mode: GpioMode, pull: Pull) -> ()` | ピンのモードとプル抵抗を設定 |
-| `read` | `(pin: GpioPin) -> PinState` | 入力レベルを読む |
-| `write` | `(pin: GpioPin, state: PinState) -> ()` | 出力レベルを設定 |
-| `toggle` | `(pin: GpioPin) -> ()` | 出力レベルを反転 |
-| `enable_interrupt` | `(pin: GpioPin, edge: Edge) -> ()` | ボード側でピンの割り込み元と検出エッジを設定・有効化 |
-| `disable_interrupt` | `(pin: GpioPin) -> ()` | 割り込み元を無効化 |
+全operationは`fails GpioError`。`GpioError(kind: GpioErrorKind)`の分類はInvalidArgument、NotConfigured、Unsupported、Busy、ResourceConflict、InvalidState、Other。ボードの数値codeをアプリへ公開しない。
 
-GPIO の操作は `PeripheralError` を返さない。`enable_interrupt` は Emela の callback 登録やビルド時のハンドラー指定を提供する操作ではなく、割り込み元をボード側で設定する。割り込みを有効にする操作と、割り込み内で Emela の処理を実行することは別の契約である。
+| `Gpio`の操作 | シグネチャ | 説明 |
+| --- | --- | --- |
+| configure | `(pin: GpioPin, config: GpioConfig) -> ()` | 設定と出力初期値 |
+| read | `(pin: GpioPin) -> PinState` | 実際の入力レベル |
+| write | `(pin: GpioPin, state: PinState) -> ()` | 出力latchを設定 |
+| toggle | `(pin: GpioPin) -> ()` | 出力latchを反転 |
+| enable_interrupt | `(pin: GpioPin, edge: Edge, priority: InterruptPriority) -> ()` | binding成功後に有効化 |
+| disable_interrupt | `(pin: GpioPin) -> ()` | 対象だけを停止しpendingをclear |
+
+`bind_interrupt[R: Immediate](pin, callback: fn(GpioEvent) -> () fails {} use R) -> () fails GpioError`は専用の静的binding関数。pinとcaptureのない名前付き関数をビルド時に解決する。private callbackもISRとして保持し、`GpioEvent(pin, level)`を直接渡す。embedded backendはread/writeだけをISR専用driverへ接続し、禁止operation・heap・再帰等を検査する。mainの通常handlerや可変状態を持ち込まない。
+
+### Std.Embedded.Interrupt（`std/embedded/interrupt.emel`）
+
+`InterruptPriority`は`Low / Normal / High`。`import Std.Embedded.Interrupt`を使い、GPIOのPinStateと区別して`Interrupt.Normal`のように指定する。STM32F4とESP32-C3の対応pin・状態契約・共有IRQの制約は[GPIO仕様](../../emela-codegen-emb/docs/interface/gpio-interface.md)、確認方法は[Renode試験](../../emela-codegen-emb/docs/gpio-validation.md)を参照する。
 
 ### Std.Embedded.Uart（`std/embedded/uart.emel`）
 
 `UartId` は `Uart0`〜`Uart7`。`UartConfig` は `baud_rate: Int`、`data_bits: UartDataBits`、`stop_bits: UartStopBits`、`parity: Parity`、`direction: UartDirection`、`flow_control: FlowControl`、`oversampling: Oversampling` を保持する。列挙値はそれぞれ `Bits7 / Bits8 / Bits9`、`Half / One / OneAndHalf / Two`、`NoParity / Even / Odd`、`Receive / Transmit / Both`、`NoFlowControl / Rts / Cts / RtsCts`、`By8 / By16`。データ幅にはパリティビットを含めない。
+
+BSP向けの操作契約案と現在の対応範囲は[UARTインターフェース仕様](../../emela-codegen-emb/docs/interface/uart-interface.md)を参照する。
 
 以下の操作はすべて `fails PeripheralError`。
 
@@ -495,7 +503,7 @@ GPIO の操作は `PeripheralError` を返さない。`enable_interrupt` は Eme
 
 ### Std.Embedded.I2c（`std/embedded/i2c.emel`）
 
-マスター操作を提供する。`I2cId` は `I2c1 / I2c2 / I2c3`。`I2cConfig` は `clock_speed_hz: Int`、`addressing: I2cAddressing`、`duty_cycle: I2cDutyCycle` を保持する。`I2cAddressing` は `SevenBit / TenBit`、`I2cDutyCycle` は `Standard / Fast16To9`、`MemoryAddressSize` は `Bits8 / Bits16`。
+マスター操作を提供する。デバイスアドレスはR/W bitを含まない未シフトの7bit値に固定する。`I2cId` は `I2c1 / I2c2 / I2c3`。`I2cConfig` は `clock_speed_hz: Int`、`duty_cycle: I2cDutyCycle` を保持する。`I2cDutyCycle` は `Standard / Fast16To9`、内部のレジスタ・メモリアドレス幅を表す `MemoryAddressSize` は `Bits8 / Bits16`。10bitデバイスアドレスへの対応は、必要な部品が出てきた時点で追加する。[I²Cインターフェース仕様](../../emela-codegen-emb/docs/interface/i2c-interface.md)に確定したアドレス方針と、BSP実装に向けた操作契約の案をまとめる。
 
 以下の操作はすべて `fails PeripheralError`。
 
@@ -511,6 +519,8 @@ GPIO の操作は `PeripheralError` を返さない。`enable_interrupt` は Eme
 ### Std.Embedded.Spi（`std/embedded/spi.emel`）
 
 チップセレクトは GPIO で操作する。`SpiId` は `Spi1`〜`Spi6`。`SpiConfig` は `mode: SpiMode`、`direction: SpiDirection`、`data_size: SpiDataSize`、`polarity: ClockPolarity`、`phase: ClockPhase`、`prescaler: SpiPrescaler`、`bit_order: BitOrder` を保持する。列挙値はそれぞれ `Master / Slave`、`TwoLine / TwoLineReceiveOnly / OneLine`、`Bits8 / Bits16`、`IdleLow / IdleHigh`、`FirstEdge / SecondEdge`、`Div2 / Div4 / Div8 / Div16 / Div32 / Div64 / Div128 / Div256`、`MostSignificantFirst / LeastSignificantFirst`。
+
+BSP向けの操作契約案と現在の対応範囲は[SPIインターフェース仕様](../../emela-codegen-emb/docs/interface/spi-interface.md)を参照する。
 
 以下の操作はすべて `fails PeripheralError`。
 

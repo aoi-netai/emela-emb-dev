@@ -24,10 +24,14 @@ mod derive_runtime;
 mod error_runtime;
 #[path = "external.rs"]
 mod external;
+#[path = "gpio_irq.rs"]
+mod gpio_irq;
 #[path = "owned.rs"]
 mod owned;
 #[path = "peripheral.rs"]
 mod peripheral;
+#[path = "peripheral_status.rs"]
+mod peripheral_status;
 #[path = "suspend.rs"]
 mod suspend;
 #[path = "task_values.rs"]
@@ -59,6 +63,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let const_groups = crate::const_origins::groups(flow)?;
     crate::const_origins::function_groups(flow)?;
     let mut prepared_flow = flow.clone();
+    let gpio_bindings = gpio_irq::collect(&prepared_flow)?;
     external::normalize_exports(&mut prepared_flow);
     const_bridge::prepare(&mut prepared_flow, &const_groups);
     let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
@@ -86,6 +91,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }]);
     }
     crate::static_handler::lower(&mut lowered_flow);
+    let gpio_irqs = gpio_irq::prepare(&mut lowered_flow, gpio_bindings)?;
     let discarded_results = crate::discarded::normalize(&mut lowered_flow);
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
@@ -151,6 +157,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .filter_map(|(id, function)| {
             (emitted_functions.contains(&id)
                 && (function_needs_heap(
+                    flow,
                     id,
                     function,
                     &layouts,
@@ -247,6 +254,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         &names,
         options,
     )?;
+    gpio_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -1130,6 +1138,9 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         source.blank();
     }
 
+    if peripheral_headers.iter().any(|f| f.path == "emela_gpio.h") {
+        gpio_irqs.emit(flow, &layouts, &names, &mut source);
+    }
     Ok(Output {
         exports: flow
             .functions
@@ -2259,7 +2270,9 @@ pub(crate) fn runtime_reachable(flow: &emela_lir::Module) -> HashSet<FnId> {
     let mut pending: Vec<FnId> = flow
         .functions
         .iter()
-        .filter_map(|(id, function)| function.exported.then_some(id))
+        .filter_map(|(id, function)| {
+            (function.exported || function.name.starts_with("$emb_gpio_isr$v1$")).then_some(id)
+        })
         .collect();
     if pending.is_empty() {
         pending.extend(
@@ -2398,10 +2411,14 @@ fn validate_isr_function(
             &format!("suspending function reachable from ISR entry `{entry_name}`"),
         ));
     }
+    let fixed_errors = fixed_failure_graph(flow, id, layouts, &mut HashSet::new());
     if heap_functions.contains(&id)
         || std::iter::once(function.ret)
             .chain(function.vars.iter().map(|(_, variable)| variable.ty))
-            .any(|ty| layouts.contains_heap_ref(ty, &mut HashSet::new()))
+            .any(|ty| {
+                !(fixed_errors && matches!(layouts.types[ty], Type::Any))
+                    && layouts.contains_heap_ref(ty, &mut HashSet::new())
+            })
     {
         return Err(unsupported(
             &function.name,
@@ -2458,6 +2475,12 @@ fn validate_isr_function(
                     ));
                 }
                 if callee.external.is_some() {
+                    if peripheral::resolve(flow, callee)?.is_some_and(|op| {
+                        op.peripheral == "gpio"
+                            && matches!(op.name.as_str(), "isr_read" | "isr_write" | "error_kind")
+                    }) {
+                        continue;
+                    }
                     let symbol =
                         external::isr_symbol(flow, callee, &names[callee_id], options, entry_name)?;
                     if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
@@ -2497,7 +2520,69 @@ fn validate_isr_function(
     Ok(())
 }
 
+// A fixed error can coexist with managed error variants used only by main. Follow
+// failure edges instead of assuming every fallible function can construct every tag.
+fn fixed_failure_graph(
+    flow: &emela_lir::Module,
+    id: FnId,
+    layouts: &TypeLayouts<'_>,
+    active: &mut HashSet<FnId>,
+) -> bool {
+    if !active.insert(id) {
+        return false;
+    }
+    let f = &flow.functions[id];
+    if f.external.is_some() && f.fails {
+        active.remove(&id);
+        return false;
+    }
+    let mut fixed = true;
+    if f.vars.iter().any(|(_, data)| matches!(layouts.types[data.ty], Type::Enum(error, _) if layouts.core.enums[error].error && layouts.is_managed_value(data.ty))) {
+        fixed = false;
+    }
+    // Any is heap-free here only as a caught failure from the checked graph.
+    // An Any parameter, returned box, or unrelated dynamic value is not such a proof.
+    for (var, data) in f.vars.iter() {
+        if matches!(layouts.types[data.ty], Type::Any)
+            && !f
+                .stmts
+                .iter()
+                .any(|(_, stmt)| matches!(stmt, Stmt::Block { dst: Some(dst), .. } if *dst == var))
+        {
+            fixed = false;
+        }
+    }
+    for (_, sequence) in f.seqs.iter() {
+        if let Term::Fail(Operand::Var(var)) = &sequence.term {
+            let ty = f.vars[*var].ty;
+            if !matches!(layouts.types[ty], Type::Any) && layouts.is_managed_value(ty) {
+                fixed = false;
+            }
+        }
+    }
+    for (_, statement) in f.stmts.iter() {
+        if let Stmt::Let {
+            value:
+                Value::Call {
+                    callee,
+                    on_fail: Some(_),
+                    ..
+                },
+            ..
+        } = statement
+        {
+            fixed &= match callee {
+                Callee::Direct(target) => fixed_failure_graph(flow, *target, layouts, active),
+                _ => false,
+            };
+        }
+    }
+    active.remove(&id);
+    fixed
+}
+
 fn function_needs_heap(
+    flow: &emela_lir::Module,
     function_id: FnId,
     function: &Function,
     layouts: &TypeLayouts<'_>,
@@ -2505,6 +2590,7 @@ fn function_needs_heap(
     string_output_functions: &HashSet<FnId>,
     empty_list_functions: &HashSet<FnId>,
 ) -> bool {
+    let fixed_errors = fixed_failure_graph(flow, function_id, layouts, &mut HashSet::new());
     let mut known_empty = HashSet::new();
     for (_, statement) in function.stmts.iter() {
         if let Stmt::Let {
@@ -2618,13 +2704,15 @@ fn function_needs_heap(
         });
     let local_managed_value = function.vars.iter().any(|(variable, data)| {
         !function.params.contains(&variable)
-            && layouts.contains_heap_ref(data.ty, &mut HashSet::new())
+            && !(fixed_errors && matches!(layouts.types[data.ty], Type::Any))
+            && (layouts.contains_heap_ref(data.ty, &mut HashSet::new())
+                || matches!(layouts.types[data.ty], Type::Enum(error, _) if layouts.core.enums[error].error && layouts.is_managed_value(data.ty)))
             && !matches!(layouts.types[data.ty], Type::Handler(_) | Type::Evidence)
             && !known_empty.contains(&variable)
     });
     let returns_managed_aggregate = !matches!(layouts.types[function.ret], Type::List(_))
         && layouts.contains_heap_ref(function.ret, &mut HashSet::new());
-    (function.fails && layouts.managed_error_payloads)
+    (function.fails && layouts.managed_error_payloads && !fixed_errors)
         || layouts.owned_aggregate_returns.contains(&function.name)
         || (layouts.runtime_consts.contains(&function_id)
             && layouts.owned_string_returns.contains(&function.name))

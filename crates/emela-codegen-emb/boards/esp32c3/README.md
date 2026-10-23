@@ -43,10 +43,10 @@ startup自身がgp・sp・bss・guardを初期化し、256byte整列した32entr
 
 ## 標準APIの範囲
 
-- GPIO番号は物理GPIO番号。0〜10と18〜21でInput・OutputPushPull、NoPull・Up・Downを実装する。11〜17はFlash電源・SPI Flash用として拒否する。GPIO interrupt・OpenDrain・Analogは明示的なdefectになる。
+- GPIO番号は物理GPIO番号。0〜10でInput・OutputPushPull・OutputOpenDrain、NoPull・Up・Down、出力初期Low/Highを実装する。11〜17はFlash、18/19はUSB Serial/JTAG、20/21はConsoleの予約として`GpioError(ResourceConflict)`で拒否する。Analogは`Unsupported`。静的binding、Rising/Falling/Both、ISR専用read/writeにも対応し、GPIO全pinで共有するCPU IRQ2の優先度競合を検査する。
 - ConsoleはUART0 TX=GPIO21、115200 baud/8N1で、RX=GPIO20も設定する。`Uart.configure`はUart0／115200／Bits8／One／NoParity／Transmit／NoFlowControl／By16を受け入れ、それ以外は`PeripheralError(1)`になる。標準UARTのtimed transmit/receiveは`PeripheralError(2)`を返す。
 - `Clock.now`は起動からの単調増加millisecondを仮想Unix epochへ対応させる。実日時のRTCではない。`Clock.sleep`は同時1件をSysTimer割り込みで完了する。
-- I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を使う場合、USB用途との競合をアプリ側で避ける。
+- I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を解放するprofileは現在提供しない。
 
 Emela heapは設定された固定領域の中だけを使う。`resources.json`の静的RAMには固定heap・poolが含まれる。stack予約量と実行で観測した使用量は区別する。
 
@@ -77,3 +77,5 @@ python3 /tmp/emela-board-esp32c3/bsp/build.py flash \
 この版の[QEMU GPIO model](https://github.com/espressif/qemu/blob/esp-develop-9.2.2-20260417/hw/gpio/esp32_gpio.c)はstrap以外のreadを0にし、writeを無視する。このためQEMUはGPIO3の物理出力遷移を検証する根拠にはしない。実機の配線・serial転送は別の確認範囲である。
 
 レジスタの根拠は[ESP-IDF v5.4.1 ESP32-C3 headers](https://github.com/espressif/esp-idf/tree/v5.4.1/components/soc/esp32c3/register/soc)、[起動処理](https://docs.espressif.com/projects/esp-idf/en/v5.4.1/esp32c3/api-guides/startup.html)。Flash imageのchecksum・SHA-256・chip ID・entry・load範囲はbuild時に独立に検査し、公式`esptool image_info`でも確認する。
+
+GPIOの新API・status ABI・ISR制約は[GPIO仕様](../../docs/interface/gpio-interface.md)、native BSPを使う限定Renodeモデルでの試験は[確認手順](../../docs/gpio-validation.md)を参照する。Renode試験はSRAMから開始し、この文書のQEMUによるROM/Flash確認とは別の範囲を扱う。

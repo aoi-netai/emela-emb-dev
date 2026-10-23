@@ -76,13 +76,13 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py flash \
 | F412ZG／F429ZI | PA〜PGの各0〜15、PH0/PH1 |
 | F446RE | PA0〜15、PB0〜10/PB12〜15、PC0〜15、PD2、PH0/PH1 |
 
-存在しないpinとConsoleのTX/RX pinはboard defectで拒否する。SWD/JTAGや実装済み水晶等の基板上の用途はpackage pinの存在とは別に扱い、アプリの基板設計に従って予約する。PA13/PA14をGPIOへ変更すると実機のSWD接続へ影響する。
+存在しないpinは`GpioError(InvalidArgument)`、ConsoleのTX/RX pinは`GpioError(ResourceConflict)`で拒否する。SWD/JTAGや実装済み水晶等の基板上の用途はpackage pinの存在とは別に扱い、アプリの基板設計に従って予約する。PA13/PA14をGPIOへ変更すると実機のSWD接続へ影響する。
 
-- `configure`はInput／OutputPushPull／OutputOpenDrain／Analog、NoPull／Up／Downを受け入れ、該当portのRCCを有効化する。
+- `configure`は`GpioConfig`のInput／OutputPushPull／OutputOpenDrain／Analog、NoPull／Up／Downを受け入れ、該当portのRCCを有効化する。出力を解放してから指定初期値・出力型を設定し、出力を有効にする。
 - `write`は設定済みoutputに限定しBSRRへ書く。`read`はIDRのpin level、`toggle`はODR latchを使う。
 - ConsoleはprofileのUSARTを115200 baud、8N1へ初期化する。AFRL・AFRHをpinごとに設定し、APB1／APB2の選択を反映する。全profileはHSI・APBのreset値16 MHzを維持する。
 - `Uart.configure`はConsoleに選択したUart ID／115200／Bits8／One／NoParity／Transmit／NoFlowControl／By16を受け入れる。それ以外は`PeripheralError(1)`、timeout付き`transmit`／`receive`は`PeripheralError(2)`になる。
-- GPIO割り込みの有効化・無効化はboard defectで停止する。
+- GPIOは静的bindingとEXTIのRising/Falling/Bothを実装する。共有IRQの優先度、port間のEXTI入力競合、未bindingでの有効化を検査する。read/writeは生成されたISR専用経路でも使える。
 - I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC等のdriverも対象外である。
 
 USART pinのAF・RCC操作、GPIO register配置はF4共通である。別シリーズへ同じregister offsetやclock設定を流用しない。
@@ -113,3 +113,5 @@ stackは16 KiB、low guardは別に256 byteを予約する。固定heap・fiber�
 - [STM32F446RE datasheet、DS10693](https://www.st.com/resource/en/datasheet/stm32f446re.pdf)：LQFP64 pinout。PB11はこのpackageには無い。
 - [ST公式CMSIS device F4](https://github.com/STMicroelectronics/cmsis-device-f4)：MCU別IRQ番号と`Source/Templates/gcc/startup_stm32f*.s`の標準handler名。手元ではSTM32CubeF4 1.28.3の同じ定義で照合した。metadataにはslot番号・識別子という事実データを収録し、HAL/CMSISのコードを同梱しない。
 - [STM32F4 reference manual RM0090](https://www.st.com/resource/en/reference_manual/dm00031020.pdf)、[F412 RM0402](https://www.st.com/resource/en/reference_manual/rm0402-stm32f412-advanced-armbased-32bit-mcus-stmicroelectronics.pdf)、[F446 RM0390](https://www.st.com/resource/en/reference_manual/dm00135183.pdf)：GPIO/RCC/USART、reset clock、SRAM配置。
+
+GPIOの新API・status ABI・ISR制約は[GPIO仕様](../../../docs/interface/gpio-interface.md)、CLIからのRenode試験は[確認手順](../../../docs/gpio-validation.md)を参照する。

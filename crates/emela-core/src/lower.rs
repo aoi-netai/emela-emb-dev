@@ -795,8 +795,9 @@ impl<'a> Lowerer<'a> {
         let sets = (0..params.len())
             .filter(|&i| matches!(params[i].kind, emela_types::ParamKind::Set))
             .collect();
+        let is_const = matches!(self.hir.item(def), Some(Item::Const(_)));
         let ret = match &sig.scheme.ty {
-            Ty::Fn(f) => self.ty(&f.ret),
+            Ty::Fn(f) if !is_const => self.ty(&f.ret),
             ty => self.ty(ty),
         };
         (ret, params.len(), sets)
@@ -1214,6 +1215,9 @@ impl<'a> Lowerer<'a> {
     /// also need it, to pass it on to function arguments. Async is provided by the runtime
     /// (spec 8.3, 13.3) and has no handler value, so it needs no table.
     fn takes_ev(&self, def: DefId) -> bool {
+        if matches!(self.hir.item(def), Some(Item::Const(_))) {
+            return false;
+        }
         matches!(self.types.sigs.get(def).map(|s| &s.scheme.ty), Some(Ty::Fn(f)) if self.row_needs_ev(&f.uses))
     }
 

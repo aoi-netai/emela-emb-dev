@@ -66,6 +66,9 @@ impl Lowerer<'_> {
     /// Whether copy `spec` of definition `def` may suspend (becomes a generator). Decided by the R
     /// of the declared type.
     pub(super) fn fn_suspends(&self, def: DefId, spec: Specialization) -> bool {
+        if matches!(self.hir.item(def), Some(emela_resolve::hir::Item::Const(_))) {
+            return false;
+        }
         let Some(Ty::Fn(f)) = self.types.sigs.get(def).map(|s| &s.scheme.ty) else {
             return false;
         };

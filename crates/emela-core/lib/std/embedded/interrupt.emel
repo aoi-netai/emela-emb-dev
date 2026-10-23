@@ -1,0 +1,3 @@
+# Shared logical priorities for BSP-managed peripheral interrupts.
+# Their hardware encoding is defined by the selected board.
+pub enum InterruptPriority { Low, Normal, High }

@@ -6,37 +6,44 @@ import Std.Clock.{Clock}
 import Std.Console.{Console}
 import Std.Instant.{Instant}
 import Std.Embedded.Peripheral.{PeripheralError}
-import Std.Embedded.Gpio.{Gpio, GpioPin, PinState, Pull, GpioMode, Edge}
+import Std.Embedded.Gpio.{Gpio, GpioPin, PinState, GpioConfig, Edge, GpioError, check_status}
+import Std.Embedded.Interrupt.{InterruptPriority}
 import Std.Embedded.Uart.{Uart, UartId, UartConfig}
 import Std.Embedded.I2c.{I2c, I2cId, I2cConfig, MemoryAddressSize}
 import Std.Embedded.Spi.{Spi, SpiId, SpiConfig}
 
 @external(c, "__emela_peripheral_gpio_configure")
-fn gpio_configure(pin: GpioPin, mode: GpioMode, pull: Pull) -> ()
+fn gpio_configure(pin: GpioPin, config: GpioConfig) -> (Int, ())
 
 @external(c, "__emela_peripheral_gpio_read")
-fn gpio_read(pin: GpioPin) -> PinState
+fn gpio_read(pin: GpioPin) -> (Int, PinState)
 
 @external(c, "__emela_peripheral_gpio_write")
-fn gpio_write(pin: GpioPin, state: PinState) -> ()
+fn gpio_write(pin: GpioPin, state: PinState) -> (Int, ())
 
 @external(c, "__emela_peripheral_gpio_toggle")
-fn gpio_toggle(pin: GpioPin) -> ()
+fn gpio_toggle(pin: GpioPin) -> (Int, ())
 
 @external(c, "__emela_peripheral_gpio_enable_interrupt")
-fn gpio_enable_interrupt(pin: GpioPin, edge: Edge) -> ()
+fn gpio_enable_interrupt(pin: GpioPin, edge: Edge, priority: InterruptPriority) -> (Int, ())
 
 @external(c, "__emela_peripheral_gpio_disable_interrupt")
-fn gpio_disable_interrupt(pin: GpioPin) -> ()
+fn gpio_disable_interrupt(pin: GpioPin) -> (Int, ())
 
 ## GPIO operations on the selected board. Pin IDs are logical board IDs.
 pub handler BoardGpio: Gpio {
-  fn configure(pin, mode, pull) { gpio_configure(pin, mode, pull) }
-  fn read(pin) { gpio_read(pin) }
-  fn write(pin, state) { gpio_write(pin, state) }
-  fn toggle(pin) { gpio_toggle(pin) }
-  fn enable_interrupt(pin, edge) { gpio_enable_interrupt(pin, edge) }
-  fn disable_interrupt(pin) { gpio_disable_interrupt(pin) }
+  fn configure(pin, config) { checked_gpio(gpio_configure(pin, config)) }
+  fn read(pin) { checked_gpio(gpio_read(pin)) }
+  fn write(pin, state) { checked_gpio(gpio_write(pin, state)) }
+  fn toggle(pin) { checked_gpio(gpio_toggle(pin)) }
+  fn enable_interrupt(pin, edge, priority) { checked_gpio(gpio_enable_interrupt(pin, edge, priority)) }
+  fn disable_interrupt(pin) { checked_gpio(gpio_disable_interrupt(pin)) }
+}
+
+fn checked_gpio[A](outcome: (Int, A)) -> A fails GpioError {
+  (status, value) = outcome
+  check_status(status)
+  value
 }
 
 @external(c, "__emela_peripheral_uart_configure")

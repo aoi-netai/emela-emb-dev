@@ -2,6 +2,7 @@ use super::*;
 
 mod clock;
 mod diagnostics;
+mod gpio;
 
 fn source_output(source: &str) -> Output {
     let core = support::try_lower(&[("main.emel", source)], Roots::Exported)

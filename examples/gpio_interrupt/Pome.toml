@@ -1,0 +1,7 @@
+[build]
+target = "c-embedded"
+
+[embedded]
+board = "stm32f4-discovery"
+config = "embedded.toml"
+optimization = "O2"

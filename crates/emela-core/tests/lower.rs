@@ -5,6 +5,32 @@ mod support;
 use emela_core::{EnumDef, Expr, Module, Roots, Type, TypeId, VariantFields, dump};
 use support::{lower_files, try_lower, try_lower_with};
 
+#[test]
+fn const_function_values_return_the_function_and_do_not_take_its_evidence() {
+    let module = lower_files(&[(
+        "main.emel",
+        r#"
+effect Output { fn put(value: Int) -> () }
+fn callback(value: Int) -> () use Output { (use Output).put(value) }
+const CALLBACK = callback
+fn task() -> Int use Async { 7 }
+const TASK = task
+pub fn run() -> () use Output { CALLBACK(1) }
+pub fn run_task() -> Int use Async { TASK() }
+"#,
+    )]);
+    for name in ["CALLBACK", "TASK"] {
+        let function = module
+            .functions
+            .iter()
+            .find(|(_, f)| f.name == name)
+            .unwrap()
+            .1;
+        assert!(function.constant && function.params.is_empty() && !function.suspends);
+        assert!(matches!(module.types[function.ret], Type::Fn(_)));
+    }
+}
+
 /// Renders an enum definition as `Name[2] { Ctor(first: A, second: B), Unit }`, with type
 /// parameters as `A`, `B`, ….
 fn render_enum(m: &Module, def: &EnumDef) -> String {

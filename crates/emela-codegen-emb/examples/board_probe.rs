@@ -9,18 +9,21 @@ use emela_core::Roots;
 #[path = "../../emela-core/tests/support/mod.rs"]
 mod support;
 
-const USAGE: &str = "Usage: board_probe --board BOARD --out-dir DIRECTORY";
+const USAGE: &str = "Usage: board_probe --board BOARD --out-dir DIRECTORY [--gpio]";
 
 struct Arguments {
     board: String,
     output: PathBuf,
+    gpio: bool,
 }
 
 fn arguments(mut args: impl Iterator<Item = OsString>) -> Result<Option<Arguments>, String> {
     let mut board = None;
     let mut output = None;
+    let mut gpio = false;
     while let Some(argument) = args.next() {
         match argument.to_str() {
+            Some("--gpio") if !gpio => gpio = true,
             Some("--help" | "-h") => {
                 println!("{USAGE}\nBoards: {}", boards::BOARD_NAMES.join(", "));
                 return Ok(None);
@@ -48,6 +51,7 @@ fn arguments(mut args: impl Iterator<Item = OsString>) -> Result<Option<Argument
     Ok(Some(Arguments {
         board: board.ok_or(USAGE)?,
         output: output.ok_or(USAGE)?,
+        gpio,
     }))
 }
 
@@ -58,7 +62,7 @@ fn source(board: &str) -> String {
         _ => 60,
     };
     format!(
-        r#"import Std.Embedded.Gpio.{{Gpio, GpioPin, OutputPushPull, NoPull, High, Low}}
+        r#"import Std.Embedded.Gpio.{{Gpio, GpioPin, OutputPushPull, NoPull, High, Low, GpioError}}
 import Std.Embedded.Board.{{BoardGpio, BoardConsole, BoardClock}}
 import Std.Console.{{Console}}
 import Std.Clock.{{Clock}}
@@ -67,14 +71,14 @@ pub fn main() -> Int use Async {{
   with BoardGpio, BoardConsole, BoardClock {{
     gpio = use Gpio
     pin = GpioPin({pin})
-    gpio.configure(pin, OutputPushPull, NoPull)
+    gpio.configure(pin, OutputPushPull(NoPull, Low))
     gpio.write(pin, High)
     (use Console).print_line("board probe: high")
     (use Clock).sleep(10)
     gpio.write(pin, Low)
     (use Console).print_line("board probe: low")
     42
-  }}
+  }} escape {{ GpioError(_) -> -1 }}
 }}
 "#
     )
@@ -136,16 +140,48 @@ fn run() -> Result<(), String> {
         )
     })?;
     require_absent(&arguments.output)?;
-    let source = source(package.id);
+    let source = if arguments.gpio {
+        include_str!("support/gpio_interrupt.emel")
+            .replace(
+                "__OUTPUT__",
+                if package.id == "esp32c3" {
+                    "3"
+                } else if matches!(package.id, "stm32f446" | "stm32f446re" | "nucleo-f446re") {
+                    "5"
+                } else {
+                    "60"
+                },
+            )
+            .replace(
+                "__RESERVED__",
+                if package.id == "esp32c3" {
+                    "20"
+                } else if matches!(package.id, "stm32f412zg" | "stm32f429zi") {
+                    "9"
+                } else {
+                    "2"
+                },
+            )
+            .replace(
+                "__ANALOG__",
+                if package.id == "esp32c3" {
+                    "False"
+                } else {
+                    "True"
+                },
+            )
+    } else {
+        source(package.id)
+    };
     let core = support::try_lower(&[("main.emel", &source)], Roots::Exported)
         .map_err(|errors| errors.join("\n"))?;
     let options = Options::default()
-        .with_heap_bytes(2048)
+        .with_heap_bytes(if arguments.gpio { 4096 } else { 2048 })
         .with_string_capacity(64)
         .with_peripheral_buffer_capacity(16)
-        .with_fiber_capacity(2)
-        .with_frame_capacity(8)
-        .with_frame_bytes(512)
+        .with_fiber_capacity(if arguments.gpio { 4 } else { 2 })
+        .with_frame_capacity(if arguments.gpio { 12 } else { 8 })
+        .with_frame_bytes(if arguments.gpio { 1536 } else { 512 })
         .with_task_capacity(2)
         .with_event_capacity(2)
         .with_deferred_capacity(1);
