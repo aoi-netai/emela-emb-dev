@@ -446,7 +446,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
             }
             !function.constant
                 && (function.seqs.iter().any(|(_, sequence)| {
-                    matches!(&sequence.term, Term::Defect(_) | Term::Unreachable)
+                    matches!(&sequence.term, Term::Defect(_, _) | Term::Unreachable)
                 }) || function.stmts.iter().any(|(_, statement)| {
                     matches!(
                         statement,
@@ -1442,7 +1442,7 @@ impl StringBufferPlan {
                 Term::Yield(Some(operand))
                 | Term::Return(Some(operand))
                 | Term::Fail(operand)
-                | Term::Defect(operand) => count_operand(operand, &mut count),
+                | Term::Defect(operand, _) => count_operand(operand, &mut count),
                 Term::Yield(None) | Term::Return(None) => {}
                 Term::Break { value, .. } => {
                     if let Some(value) = value {
@@ -1457,7 +1457,6 @@ impl StringBufferPlan {
                 Term::Unreachable | Term::Unwind => {}
             }
         }
-        drop(count);
 
         let mut last_uses = HashMap::new();
         let mut non_reusable_variables = HashSet::new();
@@ -1557,7 +1556,7 @@ impl StringBufferPlan {
                 Term::Yield(Some(operand))
                 | Term::Return(Some(operand))
                 | Term::Fail(operand)
-                | Term::Defect(operand) => count_operand(operand, &mut mark_use),
+                | Term::Defect(operand, _) => count_operand(operand, &mut mark_use),
                 Term::Yield(None) | Term::Return(None) => {}
                 Term::Break { value, .. } => {
                     if let Some(value) = value {
@@ -2195,7 +2194,10 @@ fn runtime_statements(function: &Function) -> HashSet<StmtId> {
                 Stmt::Protect { body, cleanup, .. } => {
                     visit(f, *body, visited, result, suspends);
                     let body = &f.seqs[*body];
-                    if suspends || !body.stmts.is_empty() || !matches!(body.term, Term::Defect(_)) {
+                    if suspends
+                        || !body.stmts.is_empty()
+                        || !matches!(body.term, Term::Defect(_, _))
+                    {
                         visit(f, *cleanup, visited, result, suspends);
                     }
                 }
@@ -6494,7 +6496,7 @@ fn emit_compound_sequence(
             )?;
             emit_failure_return(layouts, function, writer);
         }
-        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
+        Term::Defect(message, _) => emit_defect(layouts, function, message, writer)?,
         Term::Unreachable => writer
             .line("emela_board_defect(EMELA_DEFECT_ASSERT, \"unreachable code\", UINT16_C(16));"),
         other => return Err(unsupported(&function.name, term_name(other))),
@@ -6771,7 +6773,7 @@ fn has_dynamic_defect(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool
             && function.seqs.iter().any(|(_, sequence)| {
                 matches!(
                     &sequence.term,
-                    Term::Defect(Operand::Var(variable))
+                    Term::Defect(Operand::Var(variable), _)
                         if matches!(flow.core.ty(function.vars[*variable].ty), Type::String)
                 )
             })
@@ -8101,7 +8103,7 @@ fn emit_return(
             emit_error_assignment(layouts, function, error, "*emela_error_out", writer)?;
             emit_failure_return(layouts, function, writer);
         }
-        Term::Defect(message) => emit_defect(layouts, function, message, writer)?,
+        Term::Defect(message, _) => emit_defect(layouts, function, message, writer)?,
         Term::Unreachable => writer
             .line("emela_board_defect(EMELA_DEFECT_ASSERT, \"unreachable code\", UINT16_C(16));"),
         other => return Err(unsupported(&function.name, term_name(other))),
@@ -10711,7 +10713,7 @@ fn term_name(term: &Term) -> &'static str {
         Term::Fail(_) => "Term::Fail",
         Term::Break { .. } => "Term::Break",
         Term::Recur(_) => "Term::Recur",
-        Term::Defect(_) => "Term::Defect",
+        Term::Defect(_, _) => "Term::Defect",
         Term::Unwind => "Term::Unwind",
         Term::Unreachable => "Term::Unreachable",
     }

@@ -325,6 +325,7 @@ pub(super) fn fixture(shape: Shape) -> (Module, TypeId, u32, u32) {
                         );
                         b.term(Term::Defect(
                             Const::String("expected failure".into()).into(),
+                            None,
                         ));
                     });
                     if matches!(shape, Shape::AnyTuple) {

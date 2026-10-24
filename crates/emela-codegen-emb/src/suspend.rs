@@ -446,7 +446,7 @@ impl Graph {
                 let returned = self.add(Node::Return(value.clone()));
                 self.leave(0, returned)
             }
-            Term::Defect(value) => self.add(Node::Defect(value.clone())),
+            Term::Defect(value, _) => self.add(Node::Defect(value.clone())),
             Term::Fail(error) => {
                 let fail = self.failure(function, OnFail::Propagate)?;
                 self.add(Node::SetError(error.clone(), fail, self.error_depth))
@@ -1297,7 +1297,7 @@ pub(super) fn emit_function(
                 emit_return(
                     layouts,
                     function,
-                    &Term::Defect(value.clone()),
+                    &Term::Defect(value.clone(), None),
                     &strings,
                     writer,
                 )?;
@@ -1467,7 +1467,7 @@ fn discard_unused_child_handles(layouts: &TypeLayouts<'_>, function: &mut Functi
                     count_operand(value, &mut add);
                 }
             }
-            Term::Fail(value) | Term::Defect(value) => count_operand(value, &mut add),
+            Term::Fail(value) | Term::Defect(value, _) => count_operand(value, &mut add),
             Term::Recur(values) => {
                 for value in values {
                     count_operand(value, &mut add);

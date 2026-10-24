@@ -4138,6 +4138,7 @@ fn defers_a_statically_known_const_defect_until_reference() {
         .set_constant();
     constant.term(Term::Defect(
         Const::String("division by zero".to_owned()).into(),
+        None,
     ));
     let constant = constant.finish();
     let mut flow = Module::new(core);
@@ -4342,7 +4343,7 @@ fn sends_dynamic_defect_string_views_to_the_board_hook() {
     let mut builder = FnBuilder::new(&core, "panic_message");
     let message = builder.param("message", TypeId::STRING);
     builder.set_ret(TypeId::NEVER).set_exported();
-    builder.term(Term::Defect(Operand::Var(message)));
+    builder.term(Term::Defect(Operand::Var(message), None));
     let function = builder.finish();
     let mut flow = Module::new(core);
     flow.add(function);
@@ -4370,9 +4371,10 @@ fn classifies_a_static_todo_defect() {
     builder.protect(
         None,
         |builder| {
-            builder.term(Term::Defect(Operand::Const(Const::String(
-                "not yet implemented".to_owned(),
-            ))));
+            builder.term(Term::Defect(
+                Operand::Const(Const::String("not yet implemented".to_owned())),
+                None,
+            ));
         },
         |builder| {
             builder.let_(

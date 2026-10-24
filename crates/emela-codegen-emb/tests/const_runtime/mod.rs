@@ -565,7 +565,7 @@ fn unit_and_never_const_cache_states_do_not_require_a_represented_return_value()
         b.term(if ret == TypeId::UNIT {
             Term::Return(None)
         } else {
-            Term::Defect(Const::String("boom".into()).into())
+            Term::Defect(Const::String("boom".into()).into(), None)
         });
         flow.add(b.finish());
     }
