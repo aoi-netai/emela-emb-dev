@@ -5324,7 +5324,7 @@ fn emit_statement_inner(
                     }
                 }
                 Value::Fiber {
-                    op: emela_core::FiberOp::CauseRaise,
+                    op: emela_core::FiberOp::CauseRaise { .. },
                     args,
                     on_fail: Some(edge),
                 } => {
@@ -8757,7 +8757,7 @@ impl<'a> TypeLayouts<'a> {
                                     s,
                                     Stmt::Let {
                                         value: Value::Fiber {
-                                            op: emela_core::FiberOp::CauseRaise,
+                                            op: emela_core::FiberOp::CauseRaise { .. },
                                             ..
                                         },
                                         ..
@@ -8785,7 +8785,7 @@ impl<'a> TypeLayouts<'a> {
                                         | emela_core::FiberOp::Await { .. }
                                         | emela_core::FiberOp::CauseKind { .. }
                                         | emela_core::FiberOp::CauseToString
-                                        | emela_core::FiberOp::CauseRaise,
+                                        | emela_core::FiberOp::CauseRaise { .. },
                                     ..
                                 },
                                 ..
@@ -8800,7 +8800,7 @@ impl<'a> TypeLayouts<'a> {
                             s,
                             Stmt::Let {
                                 value: Value::Fiber {
-                                    op: emela_core::FiberOp::CauseRaise,
+                                    op: emela_core::FiberOp::CauseRaise { .. },
                                     ..
                                 },
                                 ..

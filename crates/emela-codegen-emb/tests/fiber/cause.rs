@@ -223,7 +223,7 @@ fn compile_flow_keeps_rejecting_a_cause_failure_without_a_channel() {
     b.let_(
         None,
         Value::Fiber {
-            op: emela_core::FiberOp::CauseRaise,
+            op: emela_core::FiberOp::CauseRaise { fails: true },
             args: vec![c.into()],
             on_fail: Some(OnFail::Propagate),
         },

@@ -48,7 +48,7 @@ pub(super) fn validate(
                         ..
                     } => {}
                     Value::Fiber {
-                        op: emela_core::FiberOp::CauseRaise,
+                        op: emela_core::FiberOp::CauseRaise { .. },
                         on_fail: Some(_),
                         ..
                     } => {}
