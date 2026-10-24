@@ -414,13 +414,38 @@ pub enum ExprKind {
 pub struct WithItem {
     pub res: Res,
     pub span: Span,
+    /// The arguments written after `res` (`WorkerKv(binding: "KV")`). With `by`, they follow the
+    /// label, which takes none.
+    pub args: Option<SupplyArgs>,
     pub by: Option<(Res, Span)>,
     /// Type arguments of an effect right of `by` (`Counter by State[Int]`).
     pub by_args: Vec<TypeId>,
+    /// The arguments written after the right of `by` (`AuditLog by FileLog(path: "a.log")`).
+    pub by_init_args: Option<SupplyArgs>,
 }
 
-/// A call argument. Named arguments (with `label`) are not resolved; only the name and position
-/// are kept. The shorthand `NotFound(id:)` makes `value` a reference to the local `id` and sets
+impl WithItem {
+    /// The handler or layer that supplies the item (the right of `by`, else `res`), with the
+    /// arguments written after it.
+    pub fn supplier(&self) -> (Res, Option<&SupplyArgs>) {
+        match self.by {
+            Some((by, _)) => (by, self.by_init_args.as_ref()),
+            None => (self.res, self.args.as_ref()),
+        }
+    }
+}
+
+/// The arguments of a handler's init written on an item of `with` or `layer`, or on the right of
+/// `by` (`WorkerKv(binding: "KV")`, `[effect.handler]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupplyArgs {
+    pub args: Vec<Arg>,
+    /// The parenthesized list.
+    pub span: Span,
+}
+
+/// A call argument. Named arguments (with `label`) are not resolved, since that needs the callee's
+/// signature; only the name and position are kept. The shorthand `NotFound(id:)` makes `value` a reference to the local `id` and sets
 /// `punned`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arg {
@@ -597,6 +622,8 @@ pub struct HandlerItem {
     /// The constructor when there are fields, used in `init`.
     pub ctor: Option<DefId>,
     pub init: Option<ExprId>,
+    /// The parameters of init (`init(binding: String)`). Empty without them.
+    pub init_params: Vec<Param>,
     /// `release` and its implicit `self`.
     pub release: Option<(LocalId, ExprId)>,
     pub ops: Vec<HandlerOp>,
@@ -618,7 +645,15 @@ pub struct HandlerOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayerItem {
     /// Handlers or layers.
-    pub members: Vec<(Res, Span)>,
+    pub members: Vec<LayerMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerMember {
+    pub res: Res,
+    pub span: Span,
+    /// The arguments of the handler's init (`WorkerKv(binding: "KV")`).
+    pub args: Option<SupplyArgs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -645,7 +680,8 @@ pub struct ImplItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplFn {
     /// A [`DefKind::ImplFn`] whose parent is the impl. Not in any namespace: it is called through
-    /// the trait function (`Show.show`), and monomorphization picks it (spec 10.3).
+    /// the trait function (`Show.show`), and monomorphization picks it (spec 10.3). It is still a
+    /// definition so that type checking and lowering handle it per definition, like an fn.
     pub def: DefId,
     pub name: Label,
     /// The trait function implemented.

@@ -21,8 +21,8 @@ branch.
 | 0.20.0         | Postfix `match`, `const` evaluated once on first use, E0208 for a directory outside the source root, English diagnostics   |
 | 0.21 and later | `trait`, `impl`, `derive`, `Map` / `Set` / `Array`, JSON, `Semaphore`, `Queue`, an `Http` server, WebAssembly output       |
 
-The 0.20 language specification is
-[`docs/spec/emela-0.20.md`](docs/spec/emela-0.20.md) (in Japanese). The
+The 0.20 language specification is in [`spec/`](spec/README.md).
+Changes to it are proposed in [`proposals/`](proposals/README.md). The
 [`emela-lang/specification`](https://github.com/emela-lang/specification)
 repository describes the 0.1x language, not 0.20.
 
@@ -31,11 +31,11 @@ repository describes the 0.1x language, not 0.20.
 Prebuilt binaries are published for macOS (Apple Silicon) and Linux (x86_64).
 Running the generated JavaScript (`emela run`, `emela test`) needs Node.js 18
 or later. The C target (`--target c`) needs a C11 compiler as `cc` (or set
-`EMELA_CC`). The WASM target (`--target wasm`) needs WebAssembly run as a WASI
-command with `wasmtime` (or set `EMELA_WASMTIME`).
+`EMELA_CC`). The WASM target (`--target wasm`) needs Wasmtime 49 or later, run as a
+WASI 0.3 component with `-S p3=y` (or set `EMELA_WASMTIME`).
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/emela-lang/emela/main/install.sh | sh
+curl -fsSL https://emela.dev/install.sh | sh
 emela --version
 ```
 
@@ -148,10 +148,10 @@ Todo(id: 1, title: "Write docs", done: True)
 Some("alice@example.com")
 None
 $ emela test
-running 1 test
-test fizzbuzz_of_15 ... ok
+   ✓ fizzbuzz_of_15  0ms
 
-test result: ok. 1 passed; 0 failed; 0 filtered out
+ Tests  1 passed (1)
+ Duration  48ms
 ```
 
 ## Commands
@@ -159,17 +159,18 @@ test result: ok. 1 passed; 0 failed; 0 filtered out
 Each command takes a project directory or an entry file, and defaults to `.`.
 `run`, `build` and `test` take `--target js` (the default), `--target c`, which
 compiles to C and builds a native executable with `cc`, or `--target wasm`, which
-writes a WASI `main.wasm` (`target/emela/wasm`) and runs it with `wasmtime`;
+writes a WASI 0.3 component `main.wasm` (`target/emela/wasm`) and runs it with `wasmtime`;
 `[build] target = "..."` in `Pome.toml` changes the default. The C target does
 not run suspending code, fibers or `String.length` yet; the WASM target does not
-run those, `Float` operations or host callbacks either.
+run suspending code, fibers, `Float` operations or host callbacks either.
 
 | Command       | Does                                                    |
 | ------------- | ------------------------------------------------------- |
+| `emela new`   | Creates a new Pome in a new directory; `--lib` creates a library |
 | `emela check` | Reports diagnostics without compiling                   |
 | `emela run`   | Compiles and runs: JavaScript on Node.js, a native executable, or WASM with `wasmtime` |
 | `emela build` | Compiles under `target/emela/js` (JS), a native executable (C), or `main.wasm` (WASM) |
-| `emela test`  | Runs the functions marked `@test`                       |
+| `emela test`  | Runs the functions marked `@test`; `--reporter pretty\|plain\|agent` picks the output |
 | `emela fmt`   | Formats the sources in place; `--check` only lists them |
 | `emela lsp`   | Starts the language server over stdio                   |
 

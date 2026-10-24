@@ -6,6 +6,9 @@
 //! taken that is not there, a borrowed use of a variable without a reference, references left when
 //! leaving the function or a scope, and edges into a join point (the end of a compound statement,
 //! a loop head) that bring different references.
+//!
+//! The ownership rules are shared with the pass, so a mistake in the rules themselves is not
+//! caught here.
 
 use rustc_hash::FxHashMap;
 
@@ -200,7 +203,7 @@ impl Check<'_> {
                         self.deliver(head, &tokens);
                     }
                 }
-                Term::Return(_) | Term::Fail(_) | Term::Unwind | Term::Defect(_) => {
+                Term::Return(_) | Term::Fail(_) | Term::Unwind | Term::Defect(..) => {
                     self.deliver(None, &tokens)
                 }
                 Term::Unreachable => {}

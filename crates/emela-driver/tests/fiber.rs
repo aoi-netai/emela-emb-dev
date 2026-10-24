@@ -66,14 +66,14 @@ fn run_main_on(name: &str, main: &str, target: Target) -> (i32, String, String) 
     };
     let mut frontend = Lower::default().with_target(target);
     let (analysis, output) = match target {
-        Target::Js => run(&fs, &input, &mut frontend, &mut CoreJs, &options, |_| {}),
+        Target::Js => run(&fs, &input, &mut frontend, &mut CoreJs, &options, |_, _| {}),
         Target::C => run(
             &fs,
             &input,
             &mut frontend,
             &mut c_backend().expect("checked by the caller"),
             &options,
-            |_| {},
+            |_, _| {},
         ),
         Target::Wasm => unreachable!("the fiber tests run js and c"),
     };
@@ -119,6 +119,8 @@ fn run_tests_on(name: &str, main: &str, target: Target) -> Vec<(String, TestOutc
         node: PathBuf::from("node"),
         filter: None,
         output: Output::Capture,
+        reporter: emela_driver::Reporter::Plain,
+        color: false,
     };
     let mut out = Vec::new();
     let mut frontend = LowerTests::default().with_target(target);

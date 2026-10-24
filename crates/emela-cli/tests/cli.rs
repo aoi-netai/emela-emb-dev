@@ -27,17 +27,41 @@ impl Project {
         Project { dir }
     }
 
+    /// Runs emela. For `run`, the line naming the command that started the program is taken out
+    /// of `stderr` into `command`, so `stderr` holds the diagnostics and the program's own output.
     fn emela(&self, args: &[&str]) -> Run {
-        let output = Command::new(env!("CARGO_BIN_EXE_emela"))
+        // `emela test` prints in the `plain` format outside a coding agent ([cmd.test.reporter]).
+        let mut command = Command::new(env!("CARGO_BIN_EXE_emela"));
+        for var in emela_driver::AGENT_ENV_VARS {
+            command.env_remove(var);
+        }
+        let output = command
             .args(args)
             .current_dir(&self.dir)
             .env("NO_COLOR", "1")
             .output()
             .unwrap();
+        let mut stderr = String::from_utf8(output.stderr).unwrap();
+        let mut command = None;
+        if args.first() == Some(&"run") {
+            let start = stderr
+                .split_inclusive('\n')
+                .scan(0, |at, line| {
+                    let start = *at;
+                    *at += line.len();
+                    Some((start, line))
+                })
+                .find(|(_, line)| line.starts_with("running `"));
+            if let Some((start, line)) = start {
+                command = Some(line.trim_end().to_string());
+                stderr.replace_range(start..start + line.len(), "");
+            }
+        }
         Run {
             code: output.status.code(),
             stdout: String::from_utf8(output.stdout).unwrap(),
-            stderr: String::from_utf8(output.stderr).unwrap(),
+            stderr,
+            command,
         }
     }
 
@@ -57,6 +81,8 @@ struct Run {
     code: Option<i32>,
     stdout: String,
     stderr: String,
+    /// The `running ...` line of `emela run`.
+    command: Option<String>,
 }
 
 const BROKEN: &[(&str, &str)] = &[
@@ -70,7 +96,7 @@ const BROKEN: &[(&str, &str)] = &[
 #[test]
 fn help_is_english() {
     let project = Project::new("help", &[]);
-    for command in ["", "check", "build", "run", "test", "fmt", "lsp"] {
+    for command in ["", "new", "check", "build", "run", "test", "fmt", "lsp"] {
         let args: Vec<&str> = [command, "--help"]
             .into_iter()
             .filter(|a| !a.is_empty())
@@ -79,6 +105,89 @@ fn help_is_english() {
         assert_eq!(run.code, Some(0), "{command}: {run:?}");
         assert!(run.stdout.is_ascii(), "{command}: {}", run.stdout);
     }
+}
+
+/// A new application passes check, run, test and fmt as created.
+#[test]
+fn new_application_runs() {
+    let project = Project::new("new-app", &[]);
+    let run = project.emela(&["new", "hello"]);
+    assert_eq!(run.code, Some(0), "{run:?}");
+    assert_eq!(run.stderr, "created application `hello`\n");
+    for args in [
+        &["check", "hello"][..],
+        &["test", "hello"],
+        &["fmt", "--check", "hello"],
+    ] {
+        let run = project.emela(args);
+        assert_eq!(run.code, Some(0), "{args:?}: {run:?}");
+    }
+    let run = project.emela(&["run", "hello"]);
+    assert_eq!(
+        (run.code, run.stdout.as_str()),
+        (Some(0), "Hello, world!\n")
+    );
+    let command = run.command.unwrap_or_default();
+    assert!(
+        command.starts_with("running `node --input-type=module -e <launcher> -- ")
+            && command.ends_with("main.mjs`"),
+        "{command}"
+    );
+}
+
+/// A new library has one passing test.
+#[test]
+fn new_library_tests() {
+    let project = Project::new("new-lib", &[]);
+    let run = project.emela(&["new", "github:alice/json-codec", "--lib"]);
+    assert_eq!(run.code, Some(0), "{run:?}");
+    assert_eq!(run.stderr, "created library `json-codec`\n");
+    for args in [
+        &["check", "json-codec"][..],
+        &["fmt", "--check", "json-codec"],
+    ] {
+        let run = project.emela(args);
+        assert_eq!(run.code, Some(0), "{args:?}: {run:?}");
+    }
+    let run = project.emela(&["test", "json-codec"]);
+    assert_eq!(run.code, Some(0), "{run:?}");
+    assert!(run.stdout.contains("1 passed"), "{}", run.stdout);
+}
+
+/// An existing directory, even an empty one, is left as it is.
+#[test]
+fn new_keeps_existing_directory() {
+    let project = Project::new("new-exists", &[("hello/keep.txt", "kept\n")]);
+    let run = project.emela(&["new", "hello"]);
+    assert_eq!(run.code, Some(1), "{run:?}");
+    let entries: Vec<_> = std::fs::read_dir(project.path().join("hello"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, ["keep.txt"]);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("hello/keep.txt")).unwrap(),
+        "kept\n"
+    );
+
+    std::fs::create_dir(project.path().join("empty")).unwrap();
+    let run = project.emela(&["new", "empty"]);
+    assert_eq!(run.code, Some(1), "{run:?}");
+    assert_eq!(
+        std::fs::read_dir(project.path().join("empty"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+/// A rejected name creates nothing.
+#[test]
+fn new_rejects_name() {
+    let project = Project::new("new-bad", &[]);
+    let run = project.emela(&["new", "emela-json"]);
+    assert_eq!(run.code, Some(1), "{run:?}");
+    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 0);
 }
 
 #[test]

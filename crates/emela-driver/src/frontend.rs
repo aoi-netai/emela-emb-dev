@@ -187,8 +187,7 @@ pub struct Typecheck<B = NoBuiltins> {
     entry_main: Option<bool>,
 }
 
-/// Name resolution and type checking results, which lowering reads (see emela-types'
-/// NOTES.md).
+/// Name resolution and type checking results, which lowering reads (see [`ProgramTypes`]).
 pub struct TypedProgram {
     pub hir: Program,
     pub types: ProgramTypes,
@@ -491,6 +490,9 @@ impl<B: BuiltinModules> Frontend for Lower<B> {
 ///
 /// External functions are checked (spec 12.1) for `target`. Only build, run and test call
 /// lowering (check and the LSP do not).
+///
+/// Lowering also gets each module's source path (`LowerInput::paths`), so that the file an
+/// `@external` names is resolved next to its source.
 pub(crate) fn lower_typed(
     analysis: &Analysis,
     typed: &TypedProgram,
@@ -507,9 +509,19 @@ pub(crate) fn lower_typed(
     }
     let mut sources = ArenaMap::default();
     let mut paths = ArenaMap::default();
+    let mut shown_paths = ArenaMap::default();
     for (module, &file) in analysis.files.iter() {
-        sources.insert(module, analysis.sources[file].text());
-        paths.insert(module, analysis.sources[file].path());
+        let source = &analysis.sources[file];
+        sources.insert(module, source.text());
+        paths.insert(module, source.path());
+        shown_paths.insert(
+            module,
+            analysis
+                .sources
+                .display_path(source.path())
+                .display()
+                .to_string(),
+        );
     }
     let input = emela_core::LowerInput {
         hir: &typed.hir,
@@ -519,6 +531,7 @@ pub(crate) fn lower_typed(
         entry,
         tests: typed.tests.iter().map(|t| t.def).collect(),
         paths,
+        shown_paths,
         bundled_files: emela_core::bundled_files(),
         target: Some(target.name()),
     };

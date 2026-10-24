@@ -3,7 +3,7 @@
  * The generated `main.c` includes only this header, so that the prototypes it writes for host
  * functions (`@external(c, ...)`, spec 12.4) do not clash with the C library headers.
  *
- * Values (see crates/emela-codegen-c/NOTES.md):
+ * Values:
  *
  * - Int and Bool are `int32_t`, Int64 is `int64_t`, Float is `double`, and the tag of an enum
  *   whose constructors take no arguments is an `int32_t`.
@@ -12,11 +12,15 @@
  * Every heap object starts with a 16-byte header:
  *
  *     offset 0: uint32_t rc     reference count; 0 marks static data, which is never counted
- *     offset 4: uint32_t aux    unused (padding)
+ *     offset 4: uint32_t aux    on a defect: bit 0 marks a const's self-reference defect, and
+ *                               the bits above it number the location of a failed assert
+ *                               (`em_raise_at`); 0 otherwise
  *     offset 8: em_desc *desc   what the object is: its kind, constructor tag, slot count and
  *                               which slots hold references
  *
- * followed by 8-byte slots (`em_word`). While an object is being freed, its first 8 bytes hold
+ * followed by 8-byte slots (`em_word`). Static data is marked by a count of 0 (as in Roc), so
+ * string literals, constructors without fields and closures without captures cost neither an
+ * allocation nor counting, and `em_dup` / `em_drop` need no other test. While an object is being freed, its first 8 bytes hold
  * the link of the free stack, so freeing never recurses (long lists and deep enums).
  *
  * Strings are UTF-8 with their length in slot 0 and the bytes (with a terminating NUL that is
@@ -59,7 +63,9 @@ enum {
   /* An evidence table (spec 16.5): slot 0 the binding count n, then n pairs of an effect index
    * and a handler. */
   EM_KIND_EVIDENCE = 2,
-  /* A host value of an `@external type` (spec 12.3) in slot 0. Never freed by Emela. */
+  /* A host value of an `@external type` (spec 12.3) in slot 0. Never freed by Emela. Boxed
+   * because the Heap IR dups and drops it as a reference: a raw host pointer would get its first
+   * bytes written as a count. */
   EM_KIND_HOST = 3,
   /* An object of the runtime (a fiber, a scope, a Deferred, a resume): `fin` releases what it
    * holds before it is freed. */
@@ -100,7 +106,9 @@ struct em_obj {
 };
 
 /* The static header of a constant object (string literals, constructors without fields,
- * closures without captures). */
+ * closures without captures). The emitter declares each static object as a struct of its own
+ * shape and the runtime reads it as an `em_obj`, which is why the C is compiled with
+ * -fno-strict-aliasing (`[target.c.cc]`). */
 #define EM_STATIC_HDR(desc) {{{0, 0}}, (desc)}
 
 /* ---- Reference counting ---- */
@@ -127,6 +135,9 @@ extern em_ref em_failure;
 /* RuntimeOp::Defect: makes the message (borrowed) the pending defect. */
 void em_raise(em_ref msg);
 void em_raise_cstr(const char *msg);
+/* RuntimeOp::DefectAt: em_raise for a failed assert, whose defect carries the location `at` (a
+ * static String) outside its message (spec 13.2). */
+void em_raise_at(em_ref msg, em_ref at);
 /* RuntimeOp::DefectTake and DefectResume. */
 em_ref em_defect_take(void);
 void em_defect_resume(em_ref d);
@@ -305,7 +316,8 @@ typedef em_word (*em_resume_fn)(em_ref frame, em_word in);
 em_ref em_frame_new(const em_desc *desc, em_resume_fn resume, int32_t state, size_t nsaved);
 /* Pushes the frame onto the continuation being captured (as the outermost so far). */
 void em_frame_push(em_ref frame);
-/* Frees a frame whose saved variables were moved out. */
+/* Frees a frame whose saved variables were moved out: only the shell, since only the
+ * continuation points to a frame. A frame dropped without being resumed goes through `em_drop`. */
 void em_frame_free(em_ref frame);
 
 /* A suspending call in a non-suspending function (spec 8.7). If it comes back suspended, the

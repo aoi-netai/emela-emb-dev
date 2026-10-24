@@ -1,6 +1,6 @@
 //! Declarations (spec 17.3).
 
-use super::expressions::{block, expr};
+use super::expressions::{block, expr, supply};
 use super::param_list;
 use super::types::{effect_type_args, effects_and_errors, path, ret_type, type_};
 use crate::SyntaxKind::*;
@@ -535,6 +535,8 @@ fn effect_decl(p: &mut Parser<'_>, m: Marker) {
 /// `[ "suspend" ] "fn" lower_name [ type_params ] "(" [ params ] ")" "->" type [ "fails" error_set ]`
 ///
 /// Type parameters are only allowed on built-in effects (spec 8.1); the type checker reports E0426.
+/// A `use` clause is read too, and validation reports it over the clause (E0137, like E0136 for
+/// impl fns), so that the `{` or newline after it does not pile up syntax errors.
 fn op_sig(p: &mut Parser<'_>, m: Marker) {
     p.eat(SUSPEND_KW);
     p.expect(FN_KW);
@@ -559,7 +561,7 @@ fn op_sig(p: &mut Parser<'_>, m: Marker) {
 /// `"handler" type_name [ "(" [ fields ] ")" ] ":" type_ref [ "[" type { "," type } "]" ]
 /// "{" { handler_item NL } "}"`
 ///
-/// `handler_item = "init" block | "release" block
+/// `handler_item = "init" [ "(" [ params ] ")" ] block | "release" block
 ///               | [ "suspend" ] "fn" lower_name "(" [ lower_name { "," lower_name } ] ")" block`
 fn handler_decl(p: &mut Parser<'_>, m: Marker) {
     p.bump_kind(HANDLER_KW);
@@ -587,7 +589,7 @@ fn handler_decl(p: &mut Parser<'_>, m: Marker) {
         p.error(DiagnosticCode::ExpectedToken, "expected `:`");
     }
     item_list(p, |p, m| {
-        let kind = if p.at_contextual_kw("init") && p.nth(1) == L_BRACE {
+        let kind = if p.at_contextual_kw("init") && matches!(p.nth(1), L_BRACE | L_PAREN) {
             HANDLER_INIT
         } else if p.at_contextual_kw("release") && p.nth(1) == L_BRACE {
             HANDLER_RELEASE
@@ -599,13 +601,16 @@ fn handler_decl(p: &mut Parser<'_>, m: Marker) {
             return;
         };
         p.bump();
+        if p.at(L_PAREN) {
+            param_list(p);
+        }
         block(p);
         m.complete(p, kind);
     });
     m.complete(p, HANDLER_DECL);
 }
 
-/// `"layer" type_name "{" type_ref { sep type_ref } "}"`
+/// `"layer" type_name "{" supply { sep supply } "}"`
 fn layer_decl(p: &mut Parser<'_>, m: Marker) {
     p.bump_kind(LAYER_KW);
     decl_name(p, TYPE_NAME);
@@ -614,7 +619,7 @@ fn layer_decl(p: &mut Parser<'_>, m: Marker) {
         separated_items(p, "handlers", |p, m| {
             m.abandon(p);
             if p.at(TYPE_NAME) {
-                path(p);
+                supply(p);
             } else {
                 p.err_recover(
                     DiagnosticCode::ExpectedToken,
@@ -670,7 +675,13 @@ fn trait_decl(p: &mut Parser<'_>, m: Marker) {
 /// `impl_item = "fn" lower_name "(" [ params ] ")" block`
 ///
 /// The type and its type parameters (`Map[K: Eq, V: Eq]`) become an IMPL_TYPE; the trait is the
-/// PATH after `:`.
+/// PATH after `:`. The type parameters are read as those of an fn, so `List[Int]` and
+/// `Pair[A, A]` parse; name resolution checks the head (E0328).
+///
+/// The old forms (`impl Show for User`, `impl[A: Eq] Box[A]: Eq`) are read without a diagnostic
+/// into the tree the rewritten head would give (the leading type parameters as a TYPE_PARAM_LIST
+/// directly under IMPL_DECL), so name resolution and type checking go on as after the rewrite;
+/// validation reports E0144.
 fn impl_decl(p: &mut Parser<'_>, m: Marker) {
     p.bump_kind(IMPL_KW);
     // The old `impl[A: Eq] Box[A]: Eq` puts the type parameters first (E0144, reported by

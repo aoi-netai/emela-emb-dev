@@ -153,6 +153,8 @@ struct Emitter<'m> {
     host_files: Vec<String>,
     /// The const functions, for the cleanup at exit.
     consts: Vec<FnId>,
+    /// The `show` of each error enum's descriptor (`emela_lir::Module::error_shows`), which shows a
+    /// failure that reaches the entry.
     error_shows: FxHashMap<EnumId, FnId>,
     errors: Vec<CError>,
 }
@@ -663,7 +665,7 @@ impl<'m> Emitter<'m> {
             }
             Term::Unwind => cx.dummy_return(),
             Term::Unreachable => cx.w.stmt("em_unreachable()"),
-            Term::Defect(_) => self.internal(format!("defect left in {}", cx.f.name)),
+            Term::Defect(..) => self.internal(format!("defect left in {}", cx.f.name)),
         }
     }
 
@@ -898,6 +900,8 @@ impl<'m> Emitter<'m> {
         }
     }
 
+    /// Which slots of an object made from `args` hold references. Taken from the arguments'
+    /// representations: after monomorphisation they are fixed per type.
     fn refs_of(f: &Function, args: &[Operand]) -> Vec<bool> {
         args.iter()
             .map(|a| Self::operand_repr(f, a) == Repr::Ref)
@@ -1083,6 +1087,7 @@ impl<'m> Emitter<'m> {
                     RuntimeOp::DebugPrint => call("em_debug_print", &a[..1]),
                     RuntimeOp::Retire => call("em_retire", &a[..2]),
                     RuntimeOp::Defect => call("em_raise", &a[..1]),
+                    RuntimeOp::DefectAt => call("em_raise_at", &a[..2]),
                     RuntimeOp::DefectTake => call("em_defect_take", [""; 0]),
                     RuntimeOp::DefectResume => call("em_defect_resume", &a[..1]),
                     RuntimeOp::Hold => call("em_hold", [""; 0]),
@@ -1383,6 +1388,7 @@ impl<'m> Emitter<'m> {
             | Builtin::StringChars
             | Builtin::Panic
             | Builtin::Todo
+            | Builtin::AssertFail
             | Builtin::Dbg
             | Builtin::Inspect
             | Builtin::ShowNested

@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      spec: ${{ steps.filter.outputs.spec }}
+      grammar: ${{ steps.filter.outputs.grammar }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,15 +44,30 @@ jobs:
               ;;
             *)
               echo "code=true" >> "$GITHUB_OUTPUT"
+              echo "spec=true" >> "$GITHUB_OUTPUT"
+              echo "grammar=true" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
           esac
+          changed="$(git diff --name-only "$base" HEAD)"
           # No build or test reads these files.
-          docs='(\.md$|^docs/|^editors/|^LICENSE$|^\.github/ISSUE_TEMPLATE/)'
-          if git diff --name-only "$base" HEAD | grep -qvE "$docs"; then
+          docs='(\.md$|^docs/|^editors/|^LICENSE$|^\.github/ISSUE_TEMPLATE/|^\.github/CODEOWNERS$|^\.claude/skills/)'
+          if echo "$changed" | grep -qvE "$docs"; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The specification, the proposals and the script that checks them.
+          if echo "$changed" | grep -qE '^(spec/|proposals/|scripts/spec\.py$)'; then
+            echo "spec=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "spec=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The tree-sitter grammar, its editor queries, and the Emela files it must parse.
+          if echo "$changed" | grep -qE '^editors/(tree-sitter-emela|zed|nvim)/|\.emel$'; then
+            echo "grammar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "grammar=false" >> "$GITHUB_OUTPUT"
           fi
 
   lint:
@@ -62,6 +79,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
+      - name: Unicode tables
+        run: python3 scripts/gen-unicode-tables.py --check
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -91,8 +110,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # The WASM backend tests execute the generated modules with wasmtime.
+      # The WASM backend tests execute the generated WASI 0.3 components with
+      # wasmtime. p3 support needs 49 or newer.
       - uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: 49.0.3
       # nextest splits the tests over the shards. It does not run doctests, and
       # the workspace has none: add `cargo test --doc` when one appears.
       - uses: taiki-e/install-action@v2
@@ -154,9 +176,85 @@ jobs:
 
   # The one check branch protection requires. A skipped job (documentation only)
   # counts as passed; a failed or cancelled one does not.
+  spec:
+    needs: changes
+    if: needs.changes.outputs.spec == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check section names and proposals
+        # Pushes run every job, including before the specification is in the branch.
+        run: |
+          if [ ! -f scripts/spec.py ]; then exit 0; fi
+          python3 scripts/spec.py check
+
+  # Not part of `ci-ok`: the grammar is an editor aid, so a change to the syntax is not held back
+  # until the grammar follows it. A failure here shows the drift on the pull request.
+  tree-sitter:
+    needs: changes
+    if: needs.changes.outputs.grammar == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pushes run every job, including before the grammar is in the branch.
+      - name: Check the tree-sitter grammar
+        run: |
+          if [ ! -f editors/tree-sitter-emela/scripts/check.sh ]; then exit 0; fi
+          # The version that generated src/; a different one writes a different parser.c.
+          npm install --global tree-sitter-cli@0.26.11
+          editors/tree-sitter-emela/scripts/check.sh
+
+  # Merging a pull request that adds a proposal adopts it, and only the language's author adopts a
+  # proposal (proposals/README.md, "Decision"). A pull request cannot be approved by its own author,
+  # so instead this job fails until the author has commented `/accept`. The `Proposal decision`
+  # workflow then pushes `status: accepted`, which runs this job again. The merge queue skips the
+  # job: a pull request enters the queue only after it passed here.
+  proposal-adopted:
+    needs: changes
+    if: needs.changes.outputs.spec == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Require the author's /accept for a proposal being adopted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: Allianaab2m
+        run: |
+          status() { sed -n 's/^status:[[:space:]]*\([a-z]*\).*/\1/p' | head -n1; }
+          # The checkout is the merge commit: its first parent is the base branch.
+          adopting=""
+          for f in $(git diff --name-only --diff-filter=AM HEAD^1 HEAD -- 'proposals/*.md'); do
+            case "$f" in proposals/README.md | proposals/TEMPLATE.md | proposals/*/*) continue ;; esac
+            before="$(git show "HEAD^1:$f" 2>/dev/null | status)"
+            # A proposal that was already adopted is only being edited (a typo, `implemented`).
+            case "$before" in accepted | implemented) continue ;; esac
+            after="$(status < "$f")"
+            if [ "$after" != accepted ]; then
+              echo "::error file=$f::not adopted yet (status: $after); the author adopts it by commenting /accept"
+              exit 1
+            fi
+            adopting="$adopting $f"
+          done
+          if [ -z "$adopting" ]; then exit 0; fi
+          # `status: accepted` can be written by anyone; the comment can be written only by the author.
+          accepted="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"$AUTHOR\") | .body | split(\"\n\")[0] | gsub(\"^\\\\s+|\\\\s+$\"; \"\")" \
+            | grep -cx '/accept' || true)"
+          if [ "$accepted" = 0 ]; then
+            echo "::error::$adopting is accepted, but $AUTHOR has not commented /accept on this pull request"
+            exit 1
+          fi
+
   ci-ok:
     if: always()
-    needs: [changes, lint, test, examples, laws]
+    needs: [changes, lint, test, examples, laws, spec, proposal-adopted]
     runs-on: ubuntu-latest
     steps:
       - name: Sum up the jobs
