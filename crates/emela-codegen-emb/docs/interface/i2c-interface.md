@@ -1,6 +1,6 @@
 # I²Cインターフェース仕様
 
-状態：BSP実装に向けた操作契約と採用した実装計画。7bit固定のデバイスアドレス方針を維持し、[I²C専用エラーへの移行](#i²c専用エラーへの移行方針)と[転送単位の割り込みハンドラーバインド](#割り込みとハンドラーバインドの採用方針)を初版に含める。これらの改訂は未実装である。以下の「〜する」「〜しない」は、この仕様に準拠するhandlerとBSPへの要求である。現行実装の対応状況は末尾に記載する。
+状態：同期master操作、I²C専用エラー、静的割り込みbindingをstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。検証は[host・レジスタモデル検証](../i2c-validation.md)を参照する。実機の電気特性と通信timingの確認は未実施。以下の「〜する」「〜しない」はhandlerとBSPの操作契約である。
 
 共通の型変換・所有権・容量検査は[標準周辺機器bridge](../embedded-peripherals.md)、アプリとボードの責務は[組み込みインターフェース](../embedded-interfaces.md)に従う。[仕様一覧と共通の操作契約案](README.md)も参照する。この文書はI²C固有の契約を追加するものであり、UART・SPIの意味を変更しない。
 
@@ -17,14 +17,14 @@
 - controller（API名ではmaster）による同期送受信、8/16bitのレジスタアドレスを使うアクセス、接続先の応答確認を扱う。
 - Standard-modeとFast-modeを対象にする。target/slave動作、非同期・DMA API、任意のメッセージ列、一般コール等の予約アドレス用途は対象外とする。
 - デバイスアドレスは7bitのみとする。BSPが対応するバス、速度、duty cycleの組合せを文書化し、非対応の設定をエラーにする。
-- 既存の同期operationはmain contextから呼び出す。呼び出し中にEmelaの別fiberへ制御を渡さず、ISRから呼び出さない。改訂では、BSPのISRからユーザー関数を直接呼ぶ、転送完了・通信異常の通知を追加する。
+- 既存の同期operationはmain contextから呼び出す。呼び出し中にEmelaの別fiberへ制御を渡さず、ISRから呼び出さない。BSPのsoftware IRQからユーザー関数を直接呼ぶ、転送完了・通信異常の通知を提供する。
 
 ## Emela API
 
-宣言元は[`Std.Embedded.I2c`](../../../emela-core/lib/std/embedded/i2c.emel)、共有handlerは[`Std.Embedded.Board.BoardI2c`](../../../emela-core/lib/std/embedded/board.emel)である。以下は現行の宣言であり、I²C専用エラーと割り込みbindingへの改訂はまだ含まない。
+宣言元は[`Std.Embedded.I2c`](../../../emela-core/lib/std/embedded/i2c.emel)、共有handlerは[`Std.Embedded.Board.BoardI2c`](../../../emela-core/lib/std/embedded/board.emel)である。同期転送6operationに加え、`enable_interrupt(id, priority)`と`disable_interrupt(id)`を提供する。bindingとエラー型は後述する。
 
 ```emela
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Interrupt.{InterruptPriority}
 
 pub enum I2cId { I2c1, I2c2, I2c3 }
 pub enum I2cDutyCycle { Standard, Fast16To9 }
@@ -32,24 +32,26 @@ pub enum MemoryAddressSize { Bits8, Bits16 }
 pub type I2cConfig(clock_speed_hz: Int, duty_cycle: I2cDutyCycle)
 
 pub effect I2c {
-  fn configure(id: I2cId, config: I2cConfig) -> () fails PeripheralError
+  fn configure(id: I2cId, config: I2cConfig) -> () fails I2cError
   fn master_transmit(
     id: I2cId, address: Int, data: List[Int], timeout_ms: Int64
-  ) -> () fails PeripheralError
+  ) -> () fails I2cError
   fn master_receive(
     id: I2cId, address: Int, size: Int, timeout_ms: Int64
-  ) -> List[Int] fails PeripheralError
+  ) -> List[Int] fails I2cError
   fn memory_write(
     id: I2cId, address: Int, memory_address: Int,
     address_size: MemoryAddressSize, data: List[Int], timeout_ms: Int64
-  ) -> () fails PeripheralError
+  ) -> () fails I2cError
   fn memory_read(
     id: I2cId, address: Int, memory_address: Int,
     address_size: MemoryAddressSize, size: Int, timeout_ms: Int64
-  ) -> List[Int] fails PeripheralError
+  ) -> List[Int] fails I2cError
   fn is_device_ready(
     id: I2cId, address: Int, trials: Int, timeout_ms: Int64
-  ) -> Bool fails PeripheralError
+  ) -> Bool fails I2cError
+  fn enable_interrupt(id: I2cId, priority: InterruptPriority) -> () fails I2cError
+  fn disable_interrupt(id: I2cId) -> () fails I2cError
 }
 ```
 
@@ -57,7 +59,7 @@ pub effect I2c {
 
 `I2cId`は論理バスIDであり、MCUの周辺機器番号やC enumの整数値を直接表さない。BSPが各IDから物理controller、SCL/SDA pin、alternate function、clock sourceへの対応を定める。例えば、物理的にI2C0という名前のcontrollerを`I2c1`へ対応させてもよい。
 
-`configure`は指定バスを初期化し、以降の操作に適用する設定を保持する。未設定のバスへの転送・応答確認、存在しないバス、予約pinとの競合は`PeripheralError`とする。再設定は許可する。引数検証で失敗した場合は既存設定を変更せず、ハードウェアの再設定途中で失敗した場合は未設定として扱う。
+`configure`は指定バスを初期化し、以降の操作に適用する設定を保持する。未設定のバスへの転送・応答確認、存在しないバス、予約pinとの競合は`I2cError`とする。再設定は許可する。引数検証で失敗した場合は既存設定を変更せず、ハードウェアの再設定途中で失敗した場合は未設定として扱う。
 
 | 設定 | 契約 |
 | --- | --- |
@@ -65,7 +67,7 @@ pub effect I2c {
 | `Standard` | 現行名を維持するための互換定義。Standard-modeではそのモードのtimingを使用し、Fast-modeではSCLのLow:Highを2:1とする。100 kHz以下に限定する値ではない。 |
 | `Fast16To9` | Fast-modeでSCLのLow:Highを16:9とする。Standard-modeとの組合せや、この設定を実現できないBSPでは拒否する。 |
 
-`Standard`の名称は速度モードと紛らわしいため、将来のAPI変更候補とする。この仕様案ではenumの名前・順序を変更せず、上の意味を明示する。SCL/SDAの配線、外付けpull-up等の条件はBSPごとに記載する。
+`Standard`の名称は速度モードと紛らわしいため、将来のAPI変更候補とする。この仕様ではenumの名前・順序を変更せず、上の意味を明示する。SCL/SDAの配線、外付けpull-up等の条件はBSPごとに記載する。
 
 ### デバイスアドレス
 
@@ -108,7 +110,7 @@ pub effect I2c {
 S Addr(W) A data[0] A ... data[n-1] A P
 ```
 
-全byteの送信・ACK確認とSTOP生成まで成功して`()`を返す。接続先からのaddress/data NACKは`PeripheralError`とし、自動再送しない。
+全byteの送信・ACK確認とSTOP生成まで成功して`()`を返す。接続先からのaddress/data NACKは`I2cError`とし、自動再送しない。
 
 ### master_receive
 
@@ -149,30 +151,31 @@ NACK時: S Addr(W) N P
 | --- | --- | --- |
 | いずれかの試行でACK | `True` | status 0、`*out = 1` |
 | 全`trials`回でaddress NACKを確認 | `False` | status 0、`*out = 0` |
-| 試行完了前の期限切れ、バス異常、不正な引数、非対応設定 | `PeripheralError(code)` | 非0 status。`*out`は使わない |
+| 試行完了前の期限切れ、バス異常、不正な引数、非対応設定 | `I2cError(kind)` | 非0 status。`*out`は使わない |
 
 無応答の原因をNACKとして確認できないtimeoutやbus busyを、`False`へまとめない。0以下の`trials`は試行前に拒否する。
 
 ## エラーと終了時の状態
 
-現行の全operationは`PeripheralError(code)`で失敗を返す。C status 0は成功、非0は失敗であり、現行の共有handlerはcodeを変更しない。以下のcode契約は改訂前のものであり、I²C専用エラーへの移行時に更新する。
+全operationとbindingは`I2cError(kind)`で回復可能な失敗を返す。C status 0は成功、非0は失敗であり、共有handlerが次の共通分類へ変換する。未知の非0は`Other`になる。
 
-| 分類 | 契約 |
+| C status | 分類 |
 | --- | --- |
-| 共有bridgeの不正引数 | code -1。負の受信size、共通word範囲外の要素等。BSPを呼び出さない。 |
-| 共有bridgeの容量超過 | code -2。入力List・受信sizeの容量超過、返却lengthの超過。入力検証で検出した場合はBSPを呼び出さない。 |
-| I²C固有の不正引数・非対応・未設定 | BSPが定める非0 code。バス操作前に検証する。 |
-| 転送中のNACK・timeout・bus error・arbitration lost | BSPが定める非0 code。`is_device_ready`の確認済みaddress NACKだけは上のBool契約に従う。 |
+| -1 / -2 | `InvalidArgument` / `CapacityExceeded` |
+| -3 / -4 / -5 | `NotConfigured` / `Unsupported` / `Timeout` |
+| -6 / -7 / -8 | `Busy` / `ResourceConflict` / `InvalidState` |
+| -9 | `Other` |
+| -13 / -14 / -15 | `Nack` / `BusError` / `ArbitrationLost` |
 
-BSPは現行契約の-1/-2を独自エラーcodeとして使わず、それ以外のcodeと原因の対応表を公開する。改訂後の共通分類とstatus対応は、次の移行方針に従って定める。
+数値・C定数・Emela分類は[単一定義表](../../src/peripheral_status.rs)から生成する。GPIO/UART固有のstatus -10〜-12はI²Cでは`Other`となる。共有bridgeで負のsize・共通word範囲外・容量超過を検出した場合はBSPを呼び出さない。I²C固有の不正引数・非対応・未設定もバス操作前に拒否する。
 
 通信途中の失敗で、それまでに接続先へ送ったbyteや副作用は取り消せない。BSPと共有handlerは通常の転送を自動再送しない。BSPはバスの所有状態に応じてSTOP・controller停止・ライン解放を行う。arbitration lost時には他のcontrollerの通信を妨げるSTOPを発行しない。バスが回復しない場合は、次の操作も期限内にエラーを返す。独自のbus recoveryが必要なら、その手順をBSPに記載する。
 
-### I²C専用エラーへの移行方針
+### I²C専用エラー
 
-2026-10-23時点の決定として、UART・GPIOと同様に、`Std.Embedded.I2c`で定義する専用の`I2cError`へ移行する。ボード間で分類の意味を揃え、細かい機種固有エラーは`Other`へまとめる。HAL固有のcodeをそのまま利用者へ公開しない。
+UART・GPIOと同様に、`Std.Embedded.I2c`で定義する専用の`I2cError`を使う。ボード間で分類の意味を揃え、細かい機種固有エラーは`Other`へまとめる。HAL固有のcodeをそのまま利用者へ公開しない。
 
-既存の6operationと追加するbinding・割り込み制御の回復可能な失敗を、次の型で表す。これは改訂後の型であり、未実装である。
+同期転送6operation、設定・binding・割り込み制御の回復可能な失敗を、次の型で表す。
 
 ```emela
 pub enum I2cErrorKind {
@@ -194,13 +197,13 @@ pub error I2cError(kind: I2cErrorKind)
 
 共通分類は[エラー定義の共通化](README.md#エラー定義の共通化)に従う。`Nack`は転送中に接続先から受けたaddress/data NACK、`BusError`は不正なバス状態・通信手順の異常、`ArbitrationLost`はバス調停の喪失を表す。正常な最終受信byteへのNACKは含めない。`is_device_ready`で全試行のaddress NACKを確認した場合に`False`を返す契約は維持する。
 
-共通statusの単一の定義表からC定数とEmela側の変換を生成し、stdlib・共有handler・生成C ABI・BSPを合わせて更新する。0は成功、-1は`InvalidArgument`、-2は`CapacityExceeded`とし、改訂後はBSPも-1/-2を返せる。未知の非0 statusは`Other`へ変換する。
+共通statusの単一の定義表からC定数とEmela側の変換を生成し、stdlib・共有handler・生成C ABI・BSPを合わせて更新する。0は成功、-1は`InvalidArgument`、-2は`CapacityExceeded`とし、BSPも-1/-2を返せる。未知の非0 statusは`Other`へ変換する。
 
 controller・pin・IRQの予約と状態は[共通の固定資源表と状態遷移](README.md#状態遷移と通知の確定)に従う。割り込み有効中の再設定は`InvalidState`、進行中の操作との競合は`Busy`、予約資源との競合は`ResourceConflict`とする。設定、binding、割り込み有効化の順に初期化し、再設定前には停止して実行中callbackとbuffer参照の終了を確認する。
 
-## 割り込みとハンドラーバインドの採用方針
+## 割り込みとハンドラーバインド
 
-2026-10-23時点の決定として、初版は既存の同期APIを維持し、転送全体の完了・通信異常を通知する静的bindingを追加する。[UARTのハンドラーバインド](uart-interface.md#割り込みとハンドラーバインド)と同じ方式で、BSPのドライバーのISRから、bindingしたユーザーのEmela関数を直接呼ぶ。mainへのqueue配送やfiberの起動・再開を経由しない。
+同期APIを維持し、転送全体の完了・通信異常を静的binding先へ通知する。[UARTのハンドラーバインド](uart-interface.md#割り込みとハンドラーバインド)と同じ方式で、BSPのドライバーのISRから、bindingしたユーザーのEmela関数を直接呼ぶ。mainへのqueue配送やfiberの起動・再開を経由しない。
 
 ### 転送手順の隠蔽と通知単位
 
@@ -216,7 +219,7 @@ controller・pin・IRQの予約と状態は[共通の固定資源表と状態遷
 
 ### イベントと最終結果
 
-改訂後のイベントとbindingは次の形を採用する。`configure`は転送結果の通知対象に含めない。
+イベントとbindingは次の形を使う。`configure`は転送結果の通知対象に含めない。
 
 ```emela
 pub enum I2cOperationKind {
@@ -232,7 +235,7 @@ pub enum I2cEvent {
   DeviceReady(ready: Bool)
 }
 
-fn bind_interrupt[R: IsrSafe](
+pub fn bind_interrupt[R: Immediate](
   id: I2cId,
   handler: fn(I2cId, I2cEvent) -> () fails {} use R
 ) -> () fails I2cError
@@ -270,9 +273,9 @@ GPIO等のユーザーISRから既存の同期I²C転送を呼ぶことは、待
 - ユーザー関数には`fails {}`と`IsrSafe`に相当する制約を適用する。heap・参照管理・再帰・suspend・Clock系effect・待機等を禁止し、BSPが提供するISR用操作だけを静的に接続する。
 - 優先度はUART・GPIOと共通の`Low`・`Normal`・`High`の方針に従う。同じバスへの同期呼び出しや再設定をISRから再入させない。
 
-[静的bindingのコンパイラー実装計画](uart-interface.md#静的bindingのコンパイラー実装計画)をI²Cにも適用する。型検査後に指定を収集し、定数・不変な別名を辿って論理バスIDを解決する。プログラム全体で同じバスへの重複を検出し、通常コードから呼ばれないprivateなユーザー関数も保持してISR検査を自動適用する。BSP向けの生成入口は転送全体の通知契約に合わせて具体化する。
+[UARTと共通の静的binding](uart-interface.md#割り込みとハンドラーバインド)をI²Cにも適用する。型検査後に指定を収集し、定数・不変な別名を辿って論理バスIDを解決する。プログラム全体で同じバスへの重複を検出し、通常コードから呼ばれないprivateなユーザー関数も保持してISR検査を自動適用する。BSP向けの生成入口は転送全体の通知契約に合わせて具体化する。
 
-bindingの実行時検証が成功する前には通知を有効化しない。停止後はcallbackや借用buffer参照が残らず、既に停止している場合の停止は成功する。優先度指定・開始停止の正式な関数名とC symbolはABI実装段階で定め、上記の通知条件と共通の状態遷移を維持する。
+bindingの実行時検証が成功する前には通知を有効化しない。停止後はcallbackや借用buffer参照が残らず、既に停止している場合の停止は成功する。`enable_interrupt(id, priority)`と`disable_interrupt(id)`を使う。優先度は`Std.Embedded.Interrupt.InterruptPriority`の`Low`・`Normal`・`High`。`Immediate`は公開署名の制約であり、ISR安全性はbackendの到達検査で検証する。
 
 ## C ABI
 
@@ -297,53 +300,50 @@ int32_t emela_i2c_memory_read(
 int32_t emela_i2c_is_device_ready(
     EmelaI2cId id, int32_t address, int32_t trials,
     int64_t timeout_ms, int32_t *out);
+int32_t emela_i2c_bind_interrupt(int32_t id);
+int32_t emela_i2c_enable_interrupt(EmelaI2cId id, EmelaInterruptPriority priority);
+int32_t emela_i2c_disable_interrupt(EmelaI2cId id);
+int32_t emela_i2c_has_binding(int32_t id);
+void emela_i2c_transfer_complete(int32_t id, int32_t operation);
+void emela_i2c_transfer_error(int32_t id, int32_t operation, int32_t status);
+void emela_i2c_device_ready(int32_t id, int32_t ready);
 ```
+
+operationの公開C定数は`EMELA_I2C_OPERATION_MASTER_TRANSMIT`=1、`MASTER_RECEIVE`=2、`MEMORY_WRITE`=3、`MEMORY_READ`=4、`IS_DEVICE_READY`=5。Emela enumの内部tagから独立して変換する。`TransferComplete`は1〜4、`TransferError`は1〜5と非0 status、`DeviceReady`は0/1だけを受け入れる。未binding IDへの配送は行わない。
 
 - `length`・`size`・`capacity`は配列のword数であり、このI²C仕様では転送byte数と一致する。レジスタアドレスのprefixは転送Listやその容量に含めない。
 - 配列は呼び出し中だけ借用する。BSPはpointerを保存せず、返却時には割り込み・DMAを含め配列を参照する処理を終了する。
 - 受信成功時は`size <= capacity`を満たし、`out[0..size]`を初期化し、`*length = size`を設定する。各要素を0〜255にする。失敗時に出力をList化しない。
 - Listの構築・固定heapでの所有権管理は共有bridgeが行う。BSPがEmelaのList nodeを確保・解放しない。List用heapの容量不足は共通runtimeのdefect契約に従う。
 
-追加する通知入口はUARTと同じくイベント別に生成し、転送種別・共通エラーstatus・応答確認のBoolを基本型引数で渡す。生成bridgeが論理`I2cId`を補い、固定サイズの`I2cEvent`を構築する。受信ListやEmela enumの内部レイアウトは公開C ABIへ渡さない。転送種別のC定数は生成headerで定義し、Emela enumの内部値を流用しない。
+通知入口はUARTと同じくイベント別に生成し、転送種別・共通エラーstatus・応答確認のBoolを基本型引数で渡す。生成bridgeが論理`I2cId`を補い、固定サイズの`I2cEvent`を構築する。受信ListやEmela enumの内部レイアウトは公開C ABIへ渡さない。転送種別のC定数は生成headerで定義し、Emela enumの内部値を流用しない。
 
-## 現在の実装と必要な確認
+## 初期対応BSP
 
-I²C専用エラー・静的binding・ユーザー関数のISR内直接呼び出しは未実装である。以下は改訂前の実装状況を示す。
+| BSP | 論理ID / controller | SCL / SDA | clock・対応設定 | 通知IRQ |
+| --- | --- | --- | --- | --- |
+| STM32F407VG/F412ZG/F429ZI/F446REとそのboard alias | `I2c1` / I2C1 | PB6 / PB7、AF4 open drain | APB1 16 MHz。Standard/Fast、2:1/16:9 | I2C1_EV（IRQ31）のsoftware pending |
+| ESP32-C3 | `I2c1` / I2C0 | GPIO6 / GPIO7、GPIO matrix、open drain | XTAL 40 MHz。Standard/Fast、2:1/16:9 | FROM_CPU_INTR0（source 50）→CPU IRQ4 |
 
-| 部分 | 現在の状態 |
-| --- | --- |
-| Emelaの型・6operation・BoardI2c | 宣言と接続がある。7bit固定の方針を反映し、`I2cAddressing`と`I2cConfig.addressing`を削除した。`I2cConfig`と生成Cの`EmelaI2cConfig`は周波数・duty cycleの2 fieldになる。 |
-| C bridge | word配列への変換、共通範囲・容量検査、status伝播、受信Listの所有権管理がある。I²C固有の入力検証はBSPへ委ねる。 |
-| STM32F4・ESP32-C3の同梱BSP | I²CのC driverは未実装。本仕様への準拠を確認した状態ではない。 |
-| 既存host C mock | 6operationの値・エラー伝播、容量・返却長、List解放を確認する。65535を保持する共通word試験もあり、I²Cの8bit制約や通信波形を検証するものではない。 |
+両BSPとも`I2c2`・`I2c3`は`Unsupported`。SCL/SDAには外付けpull-upと共通GNDが必要。配線容量・抵抗・接続先の速度制約はアプリの基板設計で確認する。pinは初期化後に予約し、GPIOで先に設定されている場合も後からGPIOへ変更する場合も`ResourceConflict`で拒否する。未復旧でもpin予約を維持する。
 
-共有bridgeは返却lengthが要求size以下であることを検査するが、短い受信を拒否せず、返却wordの8bit範囲も検査しない。本仕様の「成功は要求byte数全て」「受信要素は0〜255」はBSPが保証する。timeoutの扱いをボードごとに定めていた共通説明に対し、本仕様に準拠するI²C BSPは上の期限契約を満たす。
+STM32F4はCCRを`ceil(16 MHz / (要求Hz × factor))`で選ぶ。factorはStandard-mode=2、Fast 2:1=3、Fast 16:9=25。CCRが12bitへ収まらない低速設定等は`Unsupported`。TRISEはStandard=17、Fast=5。ESP32-C3はXTALの整数分周（1〜256）とSCL Low/High期間を切り上げ、2:1または16:9を保つ。各registerに収まらない設定は`Unsupported`。どちらも名目速度は要求Hzを超えない。実際の立上り・glitch filter・配線・clock誤差による速度は別途実測が必要。
 
-BSP実装時には次を確認する。既存bridge試験の成功を、これらの検証の代わりにしない。
+転送段階はmainでpollし、同じ期限でバス待機・address・全data・Repeated STARTを処理する。STM32F4は最終1/2/3 byteでACK/POS/STOPの手順を分ける。ESP32-C3は32byte FIFO単位のcommand batchを`END`で接続し、最後だけNACKとSTOPを生成する。HALへのtimeout幅変換を行わず、非負の`Int64`をそのまま扱う。
 
-| 対象 | 確認内容 |
-| --- | --- |
-| 設定 | 未設定・非対応ID・速度・duty cycle、再設定、設定失敗後の状態。 |
-| アドレス | 未シフトの値、7bitの予約範囲と範囲外の拒否、値によって10bit形式へ切り替えないこと。 |
-| データ | 0/255の保存、-1/256/65535の拒否、全要素を検証してから開始すること。 |
-| レジスタ | Bits8/Bits16の境界、Bits16の上位byte先行、Repeated START、途中にSTOPがないこと。 |
-| 受信 | 1/2/3 byteと容量境界、最終byteのNACK、途中失敗と短い受信を成功にしないこと。 |
-| ゼロ長 | 検証は行うが、STARTもレジスタprefixも送らないこと。 |
-| 応答確認 | 初回ACK、NACK後のACK、全試行NACK、bus busy、timeout、0以下のtrials。 |
-| 期限と失敗 | 負値・0・表現上限、phaseや試行ごとに期限を延長しないこと、失敗後の次の操作、エラーcodeの対応。 |
-| 資源 | bufferの借用期間、成功・失敗後のheap解放、stack・転送容量。 |
-| 専用エラー | 共通分類への変換、未知の機種固有エラーの`Other`への変換、`is_device_ready`の`False`と失敗の区別。 |
-| 静的bindingと通知 | IDと関数の静的解決、重複bindingの拒否、ISR内の直接呼び出し、転送全体の通知、中間phase・正常なNACKを通信異常として通知しないこと。 |
-| ISR安全性 | 禁止操作の拒否、BSP専用handlerへの接続、資源の寿命、同期転送・再設定への再入の拒否、復帰後にbufferを参照しないこと。 |
-| 最終結果 | 検証失敗・空転送・timeout 0の無通知、応答確認の全試行で1通知、timeoutと完了IRQの競合、後処理失敗、callback終了後の同期返却。 |
-| 通知経路と停止 | timer/software IRQ経由のtimeout通知、停止後の旧pending排除、buffer再利用と復旧が必要な状態の維持。 |
-| 言語機能の統合 | Emelaソースからeffect/handlerをmockと実BSPへ切り替え、`fails`でNACK・timeoutを処理し、次の通信へ回復すること。 |
+STOP・controller停止は追加2msの期限（ms量子化により実時間では3ms未満、IRQによる遅延を除く）で終了させる。既存の通信失敗があればその分類を保持し、後処理だけの失敗はその分類を返す。再利用できなければ`InvalidState`とし、通知停止後の`configure`で復旧を試みる。外部機器がラインを保持している場合にclock pulseを強制送出するbus recoveryは行わない。arbitration lostではSTOPを出さない。
 
-host試験で引数・status・所有権を、周辺機器モデルまたは実機でaddress/data byte列・ACK/NACK・START/STOP・SCL timingを確認する。実施した確認範囲をBSPの文書に記録する。
+通知には固定サイズのscalar recordを1個使い、buffer pointerを保存しない。後処理と同期結果の確定後にsoftware IRQをpendし、callback終了までmainで待つ。通知停止時にはIRQと旧pendingを消去する。main APIはISR内・IRQ mask中・event lock中の実行を禁止する。通知IRQを有効にし、上位IRQが継続してCPUを占有しないことが進行条件である。通知の追加時間はIRQ latencyとcallbackの実行時間であり、転送timeoutには含めない。ユーザーISRは有界に実行し、独自の`isr_safe_externals`もこの条件を守る。
+
+## 現在の実装と確認
+
+stdlib、BoardI2c、生成C ABI、静的binding、共通状態機械、両BSPのdriverを実装した。[検証範囲と再現手順](../i2c-validation.md)に、host生成C、ASan/UBSan、実BSPソースを使うレジスタモデル、C構文検査を記録する。5 MCU × O0/O2のcross build/linkとimage生成も確認した。実機通信、SCL波形、割り込みlatency・最大stackは未確認であり、hostモデルの成功をその代わりにはしない。
+
+共有bridgeは共通word範囲と返却lengthの上限を検査する。要求数すべての成功、8bitの送受信範囲はBSPが保証する。prefixだけの空転送や短いListの成功は返さない。
 
 ## 後続のAPI検討
 
-[I²C専用エラー](#i²c専用エラーへの移行方針)と[転送単位の静的binding](#割り込みとハンドラーバインドの採用方針)は初版の実装計画に含める。両BSPの代表profileで、7bit master・8/16bitレジスタアクセス・応答確認・最終結果の通知を確認する。以下は、それ以外の拡張候補である。
+専用エラーと転送単位の静的bindingは初版に含む。以下は追加の拡張候補である。
 
 - 10bitデバイスアドレス。具体的に必要な部品が出てきた時点で、公開API・C ABI・BSPへの追加を検討する。
 - 任意長のコマンド列を書いてRepeated STARTで読む`write_read`。現行`memory_read`が扱うprefixは8/16bitのレジスタアドレスに限定する。

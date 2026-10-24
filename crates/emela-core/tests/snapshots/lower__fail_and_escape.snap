@@ -70,6 +70,10 @@ error enum Std.Embedded.Uart.UartError {
   UartError(kind: Std.Embedded.Uart.UartErrorKind)
 }
 
+error enum Std.Embedded.I2c.I2cError {
+  I2cError(kind: Std.Embedded.I2c.I2cErrorKind)
+}
+
 export fn main() -> Int fails {
   let a%1: Int = {
     find(1)?

@@ -42,7 +42,7 @@
 
 handlerは`Std.Embedded.Board`からimportし、`with`で適用する。GPIOの論理ピン番号とUART等のIDがどの物理機器に対応するかは、ボード実装が定める。GPIOは`bind_interrupt`でpinと名前付き関数を静的に対応付け、ISR制約を検査した上でイベントを直接渡す。割り込みの有効化・停止は別のoperationで行う。
 
-UART・I²C・SPIのエラーは`Std.Embedded.Peripheral.PeripheralError(code)`で扱う。C境界では0が成功、−1（不正な引数）と−2（転送buffer容量超過）が共有bridgeの予約codeである。その他の非0 codeの意味はボード実装が定める。GPIOは専用の`GpioError(kind)`で不正引数・未設定・資源競合等を返す。初期出力値と静的ISR bindingは[GPIO仕様](interface/gpio-interface.md)を参照する。
+GPIO・UART・I²Cの失敗は、それぞれ`GpioError(kind)`・`UartError(kind)`・`I2cError(kind)`で扱う。共通C statusを機器ごとの分類へ変換し、未知の非0は`Other`になる。SPIは`Std.Embedded.Peripheral.PeripheralError(code)`を使う。C境界では0が成功、−1が不正な引数、−2が転送buffer容量超過である。設定・静的ISR binding・状態遷移は各機器の仕様を参照する。
 
 ## 最小の利用例
 

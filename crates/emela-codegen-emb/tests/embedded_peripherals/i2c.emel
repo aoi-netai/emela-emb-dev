@@ -1,0 +1,53 @@
+import Std.Embedded.I2c
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardI2c}
+
+const ID = I2c.I2c1
+const CALLBACK = on_i2c
+fn on_i2c(id: I2c.I2cId, event: I2c.I2cEvent) -> () fails {} use Gpio.Gpio {
+  state = event match {
+    I2c.TransferComplete(operation) -> operation match {
+      I2c.MasterTransmit -> Gpio.High
+      I2c.MemoryRead -> Gpio.High
+      _ -> Gpio.Low
+    }
+    I2c.TransferError(operation, kind) -> operation match { I2c.IsDeviceReady -> kind match { I2c.Nack -> Gpio.High
+      _ -> Gpio.Low }
+      _ -> Gpio.Low }
+    I2c.DeviceReady(ready) -> if ready { Gpio.High } else { Gpio.Low }
+  }
+  pin = id match { I2c.I2c1 -> Gpio.GpioPin(1)
+    _ -> Gpio.GpioPin(2) }
+  (use Gpio.Gpio).write(pin, state) escape { Gpio.GpioError(_) -> () }
+}
+pub fn initialize() -> Int {
+  with BoardI2c {
+    bus = use I2c.I2c
+    bus.configure(ID, I2c.I2cConfig(400000, I2c.Fast16To9))
+    cb = CALLBACK
+    I2c.bind_interrupt(ID, cb)
+    bind = I2c.bind_interrupt
+    bind(I2c.I2c2, on_i2c)
+    bus.enable_interrupt(ID, Interrupt.High)
+    bus.disable_interrupt(ID)
+    42
+  } escape { I2c.I2cError(_) -> -1 }
+}
+pub fn classify(status: Int) -> Int {
+  { I2c.check_status(status)
+    0 } escape { I2c.I2cError(kind) -> kind match {
+      I2c.InvalidArgument -> 1
+      I2c.CapacityExceeded -> 2
+      I2c.NotConfigured -> 3
+      I2c.Unsupported -> 4
+      I2c.Timeout -> 5
+      I2c.Busy -> 6
+      I2c.ResourceConflict -> 7
+      I2c.InvalidState -> 8
+      I2c.Nack -> 13
+      I2c.BusError -> 14
+      I2c.ArbitrationLost -> 15
+      I2c.Other -> 9
+    } }
+}

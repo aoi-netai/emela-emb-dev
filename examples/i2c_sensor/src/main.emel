@@ -1,0 +1,51 @@
+import Std.Embedded.I2c
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardI2c, BoardGpio, BoardClock, BoardConsole}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+
+const LED = Gpio.GpioPin(60)
+const BUS = I2c.I2c1
+const ADDRESS = 64
+
+# 完了通知はISRで動く。ListやConsoleは通常の呼び出し側で扱う。
+fn completed(id: I2c.I2cId, event: I2c.I2cEvent) -> () fails {} use Gpio.Gpio {
+  state = event match {
+    I2c.TransferComplete(_) -> Gpio.High
+    I2c.DeviceReady(ready) -> if ready { Gpio.High } else { Gpio.Low }
+    I2c.TransferError(_, _) -> Gpio.Low
+  }
+  (use Gpio.Gpio).write(LED, state) escape { Gpio.GpioError(_) -> () }
+}
+
+pub fn main() -> Int use Async {
+  with BoardI2c, BoardGpio, BoardClock, BoardConsole {
+    gpio = use Gpio.Gpio
+    bus = use I2c.I2c
+    console = use Console
+    gpio.configure(LED, Gpio.OutputPushPull(Gpio.NoPull, Gpio.Low))
+    bus.configure(BUS, I2c.I2cConfig(100000, I2c.Standard))
+    I2c.bind_interrupt(BUS, completed)
+    bus.enable_interrupt(BUS, Interrupt.Normal)
+    ready = bus.is_device_ready(BUS, ADDRESS, 3, Int64.from_int(100))
+    result = if ready {
+      # 接続先の8bitレジスタ0から2 byteをRepeated STARTで読む。
+      data = bus.memory_read(BUS, ADDRESS, 0, I2c.Bits8, 2, Int64.from_int(100))
+      console.print_line(String.append(String.append("I2C: ", Int.to_string(List.length(data))), " bytes"))
+      0
+    } else {
+      console.print_line("I2C: device did not ACK")
+      1
+    }
+    bus.disable_interrupt(BUS)
+    (use Clock).sleep(10)
+    result
+  } escape {
+    I2c.I2cError(kind) -> {
+      with BoardConsole { (use Console).print_error_line("I2C transfer failed") }
+      -1
+    }
+    Gpio.GpioError(_) -> -2
+  }
+}

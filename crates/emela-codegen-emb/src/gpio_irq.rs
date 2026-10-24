@@ -176,16 +176,23 @@ fn scalar_enum_id(
 
 /// Collect before closure lifting so lambdas cannot masquerade as named callbacks.
 pub(super) fn collect(module: &Module) -> Result<Vec<(i32, FnId)>, Vec<Error>> {
-    collect_bindings(module, false)
+    collect_bindings(module, "Gpio")
 }
 
 pub(super) fn collect_uart(module: &Module) -> Result<Vec<(i32, FnId)>, Vec<Error>> {
-    collect_bindings(module, true)
+    collect_bindings(module, "Uart")
 }
 
-fn collect_bindings(module: &Module, uart: bool) -> Result<Vec<(i32, FnId)>, Vec<Error>> {
-    let label = if uart { "UART" } else { "GPIO" };
-    let namespace = if uart { "Uart" } else { "Gpio" };
+pub(super) fn collect_bindings(
+    module: &Module,
+    namespace: &str,
+) -> Result<Vec<(i32, FnId)>, Vec<Error>> {
+    let scalar_id = namespace != "Gpio";
+    let label = match namespace {
+        "Uart" => "UART",
+        "I2c" => "I2C",
+        _ => "GPIO",
+    };
     let binding_name = format!("Std.Embedded.{namespace}.bind_interrupt");
     let event_name = format!("Std.Embedded.{namespace}.{namespace}Event");
     let reachable = runtime_reachable(module);
@@ -262,8 +269,14 @@ fn collect_bindings(module: &Module, uart: bool) -> Result<Vec<(i32, FnId)>, Vec
             let pin = args
                 .first()
                 .and_then(|arg| {
-                    if uart {
-                        scalar_enum_id(module, function, arg, "Std.Embedded.Uart.UartId", 128)
+                    if scalar_id {
+                        scalar_enum_id(
+                            module,
+                            function,
+                            arg,
+                            &format!("Std.Embedded.{namespace}.{namespace}Id"),
+                            128,
+                        )
                     } else {
                         pin_id(module, function, arg, 128)
                     }
@@ -273,7 +286,11 @@ fn collect_bindings(module: &Module, uart: bool) -> Result<Vec<(i32, FnId)>, Vec
                         &function.name,
                         &format!(
                             "{label} binding requires a statically resolved {} constant",
-                            if uart { "UartId" } else { "GpioPin" }
+                            if scalar_id {
+                                format!("{namespace}Id")
+                            } else {
+                                "GpioPin".into()
+                            }
                         ),
                     )
                 })?;
@@ -298,7 +315,7 @@ fn collect_bindings(module: &Module, uart: bool) -> Result<Vec<(i32, FnId)>, Vec
                 || f.external.is_some()
                 || f.env.is_some()
                 || f.ret != TypeId::UNIT
-                || params.len() != if uart { 2 } else { 1 }
+                || params.len() != if scalar_id { 2 } else { 1 }
                 || !matches!(module.core.types[*params.last().unwrap()], Type::Enum(event, _) if module.core.enums[event].name == event_name)
             {
                 return Err(unsupported(
@@ -313,7 +330,7 @@ fn collect_bindings(module: &Module, uart: bool) -> Result<Vec<(i32, FnId)>, Vec
                     &function.name,
                     &format!(
                         "duplicate {label} interrupt binding for {} {pin}",
-                        if uart { "UART ID" } else { "pin" }
+                        if scalar_id { "bus ID" } else { "pin" }
                     ),
                 ));
             }
@@ -873,6 +890,8 @@ pub(super) fn erase_registration_callbacks(module: &mut Module) {
                 "Std.Embedded.Gpio.register_interrupt",
                 "Std.Embedded.Uart.bind_interrupt",
                 "Std.Embedded.Uart.register_interrupt",
+                "Std.Embedded.I2c.bind_interrupt",
+                "Std.Embedded.I2c.register_interrupt",
             ]
             .iter()
             .any(|name| named(f, name))

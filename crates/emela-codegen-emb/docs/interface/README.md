@@ -15,15 +15,19 @@ I²Cの7bit固定・アドレス設定項目の削除・10bit対応の先送り�
 
 ## GPIOの実装状況（2026-10-24）
 
-GPIOは`GpioConfig`・`GpioError`・静的binding・ISR専用read/writeを両BSPへ実装した。[具体的なMCU/profile/pin/対応設定](gpio-interface.md#対応mcuprofilepin設定)と[CLI/Renode確認](../gpio-validation.md)を参照する。`IsrSafe`の新しい言語構文は追加せず、公開署名の`Immediate`とembedded backendの到達検査で制約を実装する。mainの文字列付きエラーとISRの固定エラーが共存する試験も追加した。UARTと固定容量のISR→main共有APIは下記の更新欄を参照する。I²C/SPIとの所有権統合は後続の作業である。
+GPIOは`GpioConfig`・`GpioError`・静的binding・ISR専用read/writeを両BSPへ実装した。[具体的なMCU/profile/pin/対応設定](gpio-interface.md#対応mcuprofilepin設定)と[CLI/Renode確認](../gpio-validation.md)を参照する。`IsrSafe`の新しい言語構文は追加せず、公開署名の`Immediate`とembedded backendの到達検査で制約を実装する。mainの文字列付きエラーとISRの固定エラーが共存する試験も追加した。UARTと固定容量のISR→main共有APIは下記の更新欄を参照する。I²Cのpin所有権も統合済み。SPIは後続の作業である。
 
 ## UART・固定容量共有APIの実装状況（2026-10-24）
 
 UARTは専用エラー、同期送受信、receive_some/discard_input、固定した受信方式、静的bindingとイベント別C入口を両BSPへ実装した。[MCU/profile/controller/pin/設定表](uart-interface.md#初期対応bsp)と[検証](../uart-validation.md)を参照する。共有APIは`Std.Embedded.Interrupt`のWordChannel（4本×16 Int）、try_push/try_popを使う。ISRのchannelとproducer競合をbuildで検査し、満杯はFalseで返す。一般のC FFIや新しい言語構文は追加しない。
 
+## I²Cの実装状況（2026-10-25）
+
+I²Cは専用エラー、7bit master同期転送、8/16bitレジスタ、Repeated START、応答確認、静的bindingと転送全体の最終通知を両BSPへ実装した。[controller・pin・設定・IRQ](i2c-interface.md#初期対応bsp)と[検証範囲](../i2c-validation.md)を参照する。GPIOとの双方向のpin競合、共通期限、software IRQからのcallback、復旧が必要な状態を管理する。
+
 ## 確定した実装方針
 
-2026-10-23時点の決定として、4つのペリフェラルの拡充は、既存の同梱BSPであるSTM32F4とESP32-C3の両方で動作することを目標とする。通常処理ではEmelaの言語機能を活かし、ISRに到達する経路へ必要な制約を適用する。採用した計画を本書と各ペリフェラル仕様に記録する。実装順序と完成条件は[実装段階と受け入れ条件](#実装段階と受け入れ条件)に従う。GPIOの実装状況は上記の更新欄に記載し、UARTの実装状況は下記の更新欄を参照する。I²C/SPIの改訂は未実装である。
+2026-10-23時点の決定として、4つのペリフェラルの拡充は、既存の同梱BSPであるSTM32F4とESP32-C3の両方で動作することを目標とする。通常処理ではEmelaの言語機能を活かし、ISRに到達する経路へ必要な制約を適用する。採用した計画を本書と各ペリフェラル仕様に記録する。実装順序と完成条件は[実装段階と受け入れ条件](#実装段階と受け入れ条件)に従う。GPIOの実装状況は上記の更新欄に記載し、UARTの実装状況は下記の更新欄を参照する。I²Cの実装状況は上記の更新欄、SPIは後続の計画を参照する。
 
 回復可能な失敗は、ペリフェラルごとの専用エラー型で返す方針に統一する。同じペリフェラルのエラー型と分類の意味をボード間で揃える。
 
@@ -134,7 +138,7 @@ bridgeは0〜65,535の共通word範囲・入力容量・負のsize・受信要�
 
 ### エラーと部分的な副作用
 
-C status 0は成功。現行の非0 statusは`PeripheralError(code)`になり、-1/-2は共有bridge専用の予約codeである。改訂後は専用エラー型へ変換し、-1を`InvalidArgument`、-2を`CapacityExceeded`としてBSPからも返せる共通statusにする。
+C status 0は成功。GPIO/UART/I²Cの非0は各専用エラーへ変換し、SPIは`PeripheralError(code)`を使う。-1は`InvalidArgument`、-2は`CapacityExceeded`を表す共通statusであり、共有bridgeとBSPの両方から返せる。
 
 改訂後の分類・定義元・未知statusの扱いは[エラー定義の共通化](#エラー定義の共通化)に従う。
 
@@ -158,7 +162,7 @@ GPIO・UART・I²C・SPIの機能拡張と両BSPの実装を進める。UARTの[
 
 エラーの種類と意味をEmela標準API側でペリフェラルごとに定義し、BSPが機種固有のHALエラーを対応する分類へ変換する。共通化する単位は、同じペリフェラルのボード間でのエラー型と意味である。同じ機能・設定を提供するBSP間では、アプリのEmelaコードやエラー処理を変更せずに複数のボードへ対応できることを目指す。
 
-現在のUART・I²C・SPIの`PeripheralError(code: Int)`は共通のエラー型だが、`code`の意味の大半はBSPが定義する。このため、timeout等の判別がボード依存になる。改訂では上記の`GpioError`・`UartError`・`I2cError`・`SpiError`を採用し、それぞれのAPIで必要な分類をenumで表す。
+旧UART・I²C・SPIの`PeripheralError(code: Int)`は共通のエラー型だが、`code`の意味の大半はBSPが定義する。このため、timeout等の判別がボード依存になる。改訂では上記の`GpioError`・`UartError`・`I2cError`・`SpiError`を採用し、それぞれのAPIで必要な分類をenumで表す。
 
 | 共通の分類 | 意味 |
 | --- | --- |
@@ -180,7 +184,7 @@ GPIO・UART・I²C・SPIの機能拡張と両BSPの実装を進める。UARTの[
 - BSP：HALのエラーをEmelaが定めた各ペリフェラルの共通statusへ変換する。HAL固有のcodeをそのまま共通statusとして返さない。
 - Board handler：共通statusを対応する専用エラー型の分類へ変換する。アプリは数値codeではなく分類で処理を分ける。
 
-C境界は整数statusのまま維持する。数値・名称・分類の対応を単一の定義表に置き、C header定数とEmela側の変換を同じ表から生成する。成功の0、不正引数の-1、容量超過の-2を維持し、改訂後はBSPも-1/-2を返せる。数値割当は[peripheral_status.rs](../../src/peripheral_status.rs)へ確定した。現在は共通C定数とGPIO分類の変換をこの表から生成し、通信3種の専用エラーへの移行は後続で行う。HALやenumの内部値から推測しない。未知の非0 statusは`Other`として扱う。
+C境界は整数statusのまま維持する。数値・名称・分類の対応を単一の定義表に置き、C header定数とEmela側の変換を同じ表から生成する。成功の0、不正引数の-1、容量超過の-2を維持し、改訂後はBSPも-1/-2を返せる。数値割当は[peripheral_status.rs](../../src/peripheral_status.rs)へ確定した。現在は共通C定数とGPIO/UART/I²C分類の変換をこの表から生成し、SPIの専用エラーへの移行は後続で行う。HALやenumの内部値から推測しない。未知の非0 statusは`Other`として扱う。
 
 専用エラー型・GPIO設定API・C ABIは同じ改訂で移行する。stdlib・共有handler・生成header・同梱の両BSP・使用例・試験・関連文書を合わせて更新する。旧headerや旧BSPとの混在は互換対象とせず、再生成・再buildを移行手順に含める。
 

@@ -11,6 +11,10 @@
 #include "emela_uart.h"
 #define BOARD_UART 1
 #endif
+#if __has_include("emela_i2c.h")
+#include "emela_i2c.h"
+#define BOARD_I2C 1
+#endif
 #if __has_include("emela_clock.h")
 #include "emela_clock.h"
 #define BOARD_CLOCK 1
@@ -54,6 +58,9 @@ static volatile uint32_t configured_inputs;
 #endif
 #if defined(BOARD_GPIO) || defined(BOARD_UART)
 static bool uart_pins_owned;
+#endif
+#if defined(BOARD_GPIO) || defined(BOARD_I2C)
+static bool i2c_pins_owned;
 #endif
 static unsigned event_locked;
 static volatile unsigned in_trap;
@@ -204,6 +211,7 @@ static int32_t gpio_priority;
 #define GPIO_CPU_IRQ UINT32_C(2)
 
 static int32_t gpio_pin_status(EmelaGpioPin pin) {
+    if (i2c_pins_owned && (pin.id == 6 || pin.id == 7)) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (uart_pins_owned && (pin.id == 4 || pin.id == 5)) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (pin.id < 0 || pin.id > 21) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
     /* Flash power/data, USB Serial/JTAG and the Console retain their pins. */
@@ -338,7 +346,7 @@ static void gpio_interrupt(void) {
 }
 #endif
 
-#if defined(BOARD_CLOCK) || defined(BOARD_UART)
+#if defined(BOARD_CLOCK) || defined(BOARD_UART) || defined(BOARD_I2C)
 static uint64_t timer_ticks(void) {
     TIMER(0x04u) = BIT(30);
     while (!(TIMER(0x04u) & BIT(29))) {}
@@ -350,6 +358,9 @@ static uint64_t timer_ticks(void) {
 #endif
 #ifdef BOARD_UART
 #include "uart.inc"
+#endif
+#ifdef BOARD_I2C
+#include "i2c.inc"
 #endif
 #ifdef BOARD_CLOCK
 int64_t emela_board_clock_now(void) {
@@ -403,6 +414,14 @@ void board_trap(uint32_t cause, uint32_t pc, uintptr_t sp) {
 #ifdef BOARD_UART
     if ((cause & UINT32_C(0x80000fff)) == (UINT32_C(0x80000000) | UART_CPU_IRQ)) {
         uart_interrupt();
+        __asm volatile("fence iorw, iorw" ::: "memory");
+        in_trap = 0;
+        return;
+    }
+#endif
+#ifdef BOARD_I2C
+    if ((cause & UINT32_C(0x80000fff)) == (UINT32_C(0x80000000) | I2C_CPU_IRQ)) {
+        i2c_interrupt();
         __asm volatile("fence iorw, iorw" ::: "memory");
         in_trap = 0;
         return;

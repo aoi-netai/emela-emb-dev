@@ -1,0 +1,37 @@
+import Std.Embedded.I2c
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardI2c}
+
+fn completed(id: I2c.I2cId, event: I2c.I2cEvent) -> () fails {} use {} {
+  value = event match {
+    I2c.TransferError(_, kind) -> kind match {
+      I2c.Nack -> 13
+      I2c.Timeout -> 5
+      _ -> -1
+    }
+    I2c.TransferComplete(_) -> 4
+    I2c.DeviceReady(ready) -> if ready { 1 } else { 0 }
+  }
+  accepted = Interrupt.try_push(Interrupt.Channel0, value)
+  ()
+}
+fn notification() -> Int {
+  event = Interrupt.try_pop(Interrupt.Channel0)
+  if event.available { event.value } else { -100 }
+}
+pub fn recover() -> Int {
+  with BoardI2c {
+    bus = use I2c.I2c
+    bus.configure(I2c.I2c1, I2c.I2cConfig(100000, I2c.Standard))
+    I2c.bind_interrupt(I2c.I2c1, completed)
+    bus.enable_interrupt(I2c.I2c1, Interrupt.Normal)
+    nack = { bus.master_transmit(I2c.I2c1, 65, [255], Int64.from_int(100))
+      False } escape { I2c.I2cError(I2c.Nack) -> True }
+    timeout = { bus.master_receive(I2c.I2c1, 66, 2, Int64.from_int(100))
+      False } escape { I2c.I2cError(I2c.Timeout) -> True }
+    ready = bus.is_device_ready(I2c.I2c1, 65, 3, Int64.from_int(100))
+    data = bus.memory_read(I2c.I2c1, 64, 0, I2c.Bits8, 2, Int64.from_int(100))
+    bus.disable_interrupt(I2c.I2c1)
+    if nack && timeout && !ready && data == [0, 255] && notification() == 13 && notification() == 5 && notification() == 0 && notification() == 4 && notification() == -100 { 42 } else { -1 }
+  } escape { I2c.I2cError(_) -> -2 }
+}

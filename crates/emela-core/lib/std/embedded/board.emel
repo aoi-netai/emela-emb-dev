@@ -10,7 +10,8 @@ import Std.Embedded.Gpio.{Gpio, GpioPin, PinState, GpioConfig, Edge, GpioError, 
 import Std.Embedded.Interrupt.{InterruptPriority}
 import Std.Embedded.Uart
 import Std.Embedded.Uart.{Uart, UartId, UartConfig, UartReceiveMode, UartError}
-import Std.Embedded.I2c.{I2c, I2cId, I2cConfig, MemoryAddressSize}
+import Std.Embedded.I2c
+import Std.Embedded.I2c.{I2c, I2cId, I2cConfig, MemoryAddressSize, I2cError}
 import Std.Embedded.Spi.{Spi, SpiId, SpiConfig}
 
 @external(c, "__emela_peripheral_gpio_configure")
@@ -132,24 +133,37 @@ fn i2c_is_device_ready(
   timeout_ms: Int64
 ) -> (Int, Bool)
 
+@external(c, "__emela_peripheral_i2c_enable_interrupt")
+fn i2c_enable_interrupt(id: I2cId, priority: InterruptPriority) -> (Int, ())
+@external(c, "__emela_peripheral_i2c_disable_interrupt")
+fn i2c_disable_interrupt(id: I2cId) -> (Int, ())
+
 ## Synchronous I2C master operations on the selected board.
 pub handler BoardI2c: I2c {
-  fn configure(id, config) { checked(i2c_configure(id, config)) }
+  fn configure(id, config) { checked_i2c(i2c_configure(id, config)) }
   fn master_transmit(id, address, data, timeout_ms) {
-    checked(i2c_master_transmit(id, address, data, timeout_ms))
+    checked_i2c(i2c_master_transmit(id, address, data, timeout_ms))
   }
   fn master_receive(id, address, size, timeout_ms) {
-    checked(i2c_master_receive(id, address, size, timeout_ms))
+    checked_i2c(i2c_master_receive(id, address, size, timeout_ms))
   }
   fn memory_write(id, address, memory_address, address_size, data, timeout_ms) {
-    checked(i2c_memory_write(id, address, memory_address, address_size, data, timeout_ms))
+    checked_i2c(i2c_memory_write(id, address, memory_address, address_size, data, timeout_ms))
   }
   fn memory_read(id, address, memory_address, address_size, size, timeout_ms) {
-    checked(i2c_memory_read(id, address, memory_address, address_size, size, timeout_ms))
+    checked_i2c(i2c_memory_read(id, address, memory_address, address_size, size, timeout_ms))
   }
   fn is_device_ready(id, address, trials, timeout_ms) {
-    checked(i2c_is_device_ready(id, address, trials, timeout_ms))
+    checked_i2c(i2c_is_device_ready(id, address, trials, timeout_ms))
   }
+  fn enable_interrupt(id, priority) { checked_i2c(i2c_enable_interrupt(id, priority)) }
+  fn disable_interrupt(id) { checked_i2c(i2c_disable_interrupt(id)) }
+}
+
+fn checked_i2c[A](outcome: (Int, A)) -> A fails I2cError {
+  (status, value) = outcome
+  I2c.check_status(status)
+  value
 }
 
 @external(c, "__emela_peripheral_spi_configure")

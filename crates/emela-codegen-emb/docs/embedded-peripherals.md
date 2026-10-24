@@ -15,7 +15,7 @@ GPIO・UART・I²C・SPI固有の操作契約は[周辺機器インターフェ�
 - GPIOを含む失敗可能なoperationは `(Int, 元の戻り値)` を返し、外部関数自体は非failsであること。
 - Clock・Consoleはそれぞれの固定署名に一致し、Clock.sleepだけがsuspendすること。
 
-失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を失敗に変換する。GPIOは生成された共通statusの対応表を通して`GpioError(kind)`へ変換し、UARTは`UartError(kind)`、I²C/SPIは現在も`PeripheralError(code)`を使う。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
+失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を失敗に変換する。GPIOは生成された共通statusの対応表を通して`GpioError(kind)`へ変換し、UARTは`UartError(kind)`、I²Cは`I2cError(kind)`、SPIは`PeripheralError(code)`を使う。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
 
 ## 生成ファイルと値型
 
@@ -46,7 +46,7 @@ int32_t emela_i2c_is_device_ready(
     int64_t timeout_ms, int32_t *out);
 ```
 
-status `0` は成功。GPIOの非0は`GpioError(kind)`、UARTの非0は`UartError(kind)`、I²C/SPIの非0は`PeripheralError(code)`になる。失敗時は出力値を利用しない。GPIOのreadもstatusを返し、入力レベルは出力pointerへ書く。
+status `0` は成功。GPIOの非0は`GpioError(kind)`、UARTの非0は`UartError(kind)`、I²Cの非0は`I2cError(kind)`、SPIの非0は`PeripheralError(code)`になる。失敗時は出力値を利用しない。GPIOのreadもstatusを返し、入力レベルは出力pointerへ書く。
 
 operationは同期呼び出しであり、長いHAL待機を短くするschedulerへの変換は行わない。UART/I²C/SPIをISRで呼ばず、応答時間はtimeoutとボード実装で管理する。
 
@@ -101,7 +101,7 @@ ConsoleはNUL終端に依存しないUTF-8のpointerとbyte長を受け取る。
 
 ## 確認範囲
 
-[`tests/embedded_peripherals`](../tests/embedded_peripherals/mod.rs) は共有handlerと生成C bridgeの回帰試験をまとめる。標準effectのoperationはGPIO 6、UART 8、I²C 6、SPI 4、Clock 2、Console 2の28個である。UARTの追加5operationは専用のUART試験で確認する。
+[`tests/embedded_peripherals`](../tests/embedded_peripherals/mod.rs) は共有handlerと生成C bridgeの回帰試験をまとめる。標準effectのoperationはGPIO 6、UART 8、I²C 8、SPI 4、Clock 2、Console 2の30個である。UARTの追加5operationは専用のUART試験で確認する。
 
 | 試験 | 対象 |
 | --- | --- |
@@ -130,3 +130,11 @@ UARTはconfigure/transmit/receiveに加え、receive_some・discard_input・set_
 CへUartEventの内部layoutを公開せず、emela_uart_received / emela_uart_transmit_complete / emela_uart_receive_errorの基本型入口を生成する。静的binding先でイベントを構築し、ISR内で直接実行する。GPIOと共通のISR特殊化・heap検査を使う。共有Interrupt.try_push/try_popを使う場合は、4本×16 Intの固定queueとBSPのIRQ lockを生成・接続する。
 
 [UART仕様](interface/uart-interface.md)に公開署名・C入口・状態遷移・制約を、[検証](uart-validation.md)に両BSPのCLI/Renode試験を記載する。
+
+## I²Cの同期転送とISR
+
+I²Cは7bit masterの同期送受信、8/16bitのmemoryアクセス、応答確認、割り込み通知の開始・停止を提供する。共通statusから`I2cError`へ変換し、ACK/NACK・bus error・arbitration lostと`is_device_ready`の`False`を区別する。
+
+`emela_i2c_transfer_complete`・`emela_i2c_transfer_error`・`emela_i2c_device_ready`のscalar入口を生成する。operationの公開C定数はEmela enumの内部tagから独立して変換する。BSPは後処理と結果確定後に固定recordをsoftware IRQで消費し、private callbackをISR内で実行する。callback終了後に同期呼び出しが戻り、受信Listは通常の呼び出し側で作る。GPIO/UARTと同じISR安全性・queue producer検査を適用する。
+
+[対応設定と期限・状態](interface/i2c-interface.md)、[検証手順と範囲](i2c-validation.md)を参照する。

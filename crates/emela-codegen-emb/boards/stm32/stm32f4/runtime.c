@@ -15,6 +15,10 @@
 #include "emela_uart.h"
 #define BOARD_HAS_UART 1
 #endif
+#if __has_include("emela_i2c.h")
+#include "emela_i2c.h"
+#define BOARD_HAS_I2C 1
+#endif
 
 #define REG(address) (*(volatile uint32_t *)(uintptr_t)(address))
 #define GPIO_REG(port, offset) REG(UINT32_C(0x40020000) + (port) * UINT32_C(0x400) + (offset))
@@ -54,6 +58,9 @@ volatile uint32_t board_boot_initialized;
 static unsigned event_locked;
 static volatile uint32_t output_pins[EMELA_GPIO_PORT_COUNT];
 static bool uart_ready;
+#if BOARD_HAS_GPIO || BOARD_HAS_I2C
+static bool i2c_pins_owned;
+#endif
 #if BOARD_HAS_GPIO || BOARD_HAS_UART
 static bool uart_pins_owned;
 #endif
@@ -167,7 +174,8 @@ static int32_t gpio_pin_status(EmelaGpioPin pin) {
     uint32_t port = (uint32_t)pin.id / 16u, bit = UINT32_C(1) << ((uint32_t)pin.id % 16u);
     if (!(gpio_pin_masks[port] & bit)) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
     if (pin.id == EMELA_CONSOLE_TX_PIN || pin.id == EMELA_CONSOLE_RX_PIN
-        || (uart_pins_owned && (pin.id == 9 || pin.id == 10)))
+        || (uart_pins_owned && (pin.id == 9 || pin.id == 10))
+        || (i2c_pins_owned && (pin.id == 22 || pin.id == 23)))
         return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     return 0;
 }
@@ -340,6 +348,9 @@ void EXTI15_10_IRQHandler(void) { gpio_exti(UINT32_C(0xfc00)); }
 
 #if BOARD_HAS_UART
 #include "uart.inc"
+#endif
+#if BOARD_HAS_I2C
+#include "i2c.inc"
 #endif
 
 void emela_board_console_print_line(const char *data, uint16_t length) {

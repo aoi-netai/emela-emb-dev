@@ -308,6 +308,39 @@ enum Std.Embedded.I2c.I2cConfig {
   I2cConfig(clock_speed_hz: Int, duty_cycle: Std.Embedded.I2c.I2cDutyCycle)
 }
 
+enum Std.Embedded.I2c.I2cErrorKind {
+  InvalidArgument
+  CapacityExceeded
+  NotConfigured
+  Unsupported
+  Timeout
+  Busy
+  ResourceConflict
+  InvalidState
+  Nack
+  BusError
+  ArbitrationLost
+  Other
+}
+
+error enum Std.Embedded.I2c.I2cError {
+  I2cError(kind: Std.Embedded.I2c.I2cErrorKind)
+}
+
+enum Std.Embedded.I2c.I2cOperationKind {
+  MasterTransmit
+  MasterReceive
+  MemoryWrite
+  MemoryRead
+  IsDeviceReady
+}
+
+enum Std.Embedded.I2c.I2cEvent {
+  TransferComplete(operation: Std.Embedded.I2c.I2cOperationKind)
+  TransferError(operation: Std.Embedded.I2c.I2cOperationKind, kind: Std.Embedded.I2c.I2cErrorKind)
+  DeviceReady(ready: Bool)
+}
+
 enum Std.Embedded.Spi.SpiId {
   Spi1
   Spi2

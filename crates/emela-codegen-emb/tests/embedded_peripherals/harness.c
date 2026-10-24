@@ -292,3 +292,6 @@ int32_t emela_uart_discard_input(EmelaUartId id, int32_t size, int32_t *out) { (
 int32_t emela_uart_set_receive_mode(EmelaUartId id, EmelaUartReceiveMode mode) { (void)id; (void)mode; return 0; }
 int32_t emela_uart_enable_interrupt(EmelaUartId id, EmelaInterruptPriority p, int32_t tx) { (void)id; (void)p; (void)tx; return 0; }
 int32_t emela_uart_disable_interrupt(EmelaUartId id) { (void)id; return 0; }
+
+int32_t emela_i2c_enable_interrupt(EmelaI2cId id, EmelaInterruptPriority priority) { (void)id; (void)priority; return 0; }
+int32_t emela_i2c_disable_interrupt(EmelaI2cId id) { (void)id; return 0; }

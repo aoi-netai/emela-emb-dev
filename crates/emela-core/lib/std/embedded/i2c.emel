@@ -1,27 +1,57 @@
 # The Emela interface for I2C. This version provides master operations only.
 # Device addresses are unshifted 7-bit values. The board adds the R/W bit.
 # Transfers are synchronous and must not be called from interrupt context.
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Interrupt.{InterruptPriority}
 
 pub enum I2cId { I2c1, I2c2, I2c3 }
 pub enum I2cDutyCycle { Standard, Fast16To9 }
 pub enum MemoryAddressSize { Bits8, Bits16 }
 pub type I2cConfig(clock_speed_hz: Int, duty_cycle: I2cDutyCycle)
 
+pub enum I2cErrorKind {
+  InvalidArgument, CapacityExceeded, NotConfigured, Unsupported, Timeout,
+  Busy, ResourceConflict, InvalidState, Nack, BusError, ArbitrationLost, Other
+}
+pub error I2cError(kind: I2cErrorKind)
+
+pub enum I2cOperationKind {
+  MasterTransmit, MasterReceive, MemoryWrite, MemoryRead, IsDeviceReady
+}
+pub enum I2cEvent {
+  TransferComplete(operation: I2cOperationKind)
+  TransferError(operation: I2cOperationKind, kind: I2cErrorKind)
+  DeviceReady(ready: Bool)
+}
+
+@external(c, "__emela_i2c_error_kind")
+fn error_kind(status: Int) -> I2cErrorKind use {}
+
+pub fn check_status(status: Int) -> () fails I2cError {
+  if status != 0 { fail I2cError(error_kind(status)) }
+}
+
+@external(c, "__emela_i2c_register_interrupt")
+fn register_interrupt[R: Immediate](id: I2cId, callback: fn(I2cId, I2cEvent) -> () fails {} use R) -> Int use {}
+
+## A capture-free named callback, resolved statically by the embedded backend.
+pub fn bind_interrupt[R: Immediate](id: I2cId, callback: fn(I2cId, I2cEvent) -> () fails {} use R) -> () fails I2cError {
+  check_status(register_interrupt(id, callback))
+}
+
 pub effect I2c {
-  fn configure(id: I2cId, config: I2cConfig) -> () fails PeripheralError
+  fn configure(id: I2cId, config: I2cConfig) -> () fails I2cError
   fn master_transmit(
     id: I2cId,
     address: Int,
     data: List[Int],
     timeout_ms: Int64
-  ) -> () fails PeripheralError
+  ) -> () fails I2cError
   fn master_receive(
     id: I2cId,
     address: Int,
     size: Int,
     timeout_ms: Int64
-  ) -> List[Int] fails PeripheralError
+  ) -> List[Int] fails I2cError
   fn memory_write(
     id: I2cId,
     address: Int,
@@ -29,7 +59,7 @@ pub effect I2c {
     address_size: MemoryAddressSize,
     data: List[Int],
     timeout_ms: Int64
-  ) -> () fails PeripheralError
+  ) -> () fails I2cError
   fn memory_read(
     id: I2cId,
     address: Int,
@@ -37,11 +67,13 @@ pub effect I2c {
     address_size: MemoryAddressSize,
     size: Int,
     timeout_ms: Int64
-  ) -> List[Int] fails PeripheralError
+  ) -> List[Int] fails I2cError
   fn is_device_ready(
     id: I2cId,
     address: Int,
     trials: Int,
     timeout_ms: Int64
-  ) -> Bool fails PeripheralError
+  ) -> Bool fails I2cError
+  fn enable_interrupt(id: I2cId, priority: InterruptPriority) -> () fails I2cError
+  fn disable_interrupt(id: I2cId) -> () fails I2cError
 }

@@ -83,7 +83,8 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py flash \
 - ConsoleはprofileのUSARTを115200 baud、8N1へ初期化する。AFRL・AFRHをpinごとに設定し、APB1／APB2の選択を反映する。全profileはHSI・APBのreset値16 MHzを維持する。
 - UARTは`Uart1`=USART1、TX PA9 / RX PA10、Consoleとは別controllerで同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。専用`UartError`を返す。USART1をConsoleに使う`stm32f429zi`では`ResourceConflict`。[対応設定と状態遷移](../../../docs/interface/uart-interface.md)、[検証](../../../docs/uart-validation.md)を参照する。
 - GPIOは静的bindingとEXTIのRising/Falling/Bothを実装する。共有IRQの優先度、port間のEXTI入力競合、未bindingでの有効化を検査する。read/writeは生成されたISR専用経路でも使える。
-- I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC等のdriverも対象外である。
+- I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはPB6/PB7、I2C1・AF4。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../../docs/interface/i2c-interface.md)、[検証](../../../docs/i2c-validation.md)を参照する。
+- SPIのC symbols（`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC等のdriverも対象外である。
 
 USART pinのAF・RCC操作、GPIO register配置はF4共通である。別シリーズへ同じregister offsetやclock設定を流用しない。
 

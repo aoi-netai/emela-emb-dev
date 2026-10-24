@@ -3,6 +3,7 @@ use super::*;
 mod clock;
 mod diagnostics;
 mod gpio;
+mod i2c;
 mod uart;
 
 fn source_output(source: &str) -> Output {

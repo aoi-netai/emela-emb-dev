@@ -1,4 +1,4 @@
-//! One definition of the numeric BSP status ABI and its GPIO classification.
+//! Shared numeric BSP status ABI and per-peripheral error classifications.
 pub(super) const STATUSES: &[(&str, i32, &str)] = &[
     ("INVALID_ARGUMENT", -1, "InvalidArgument"),
     ("CAPACITY_EXCEEDED", -2, "Other"),
@@ -12,4 +12,22 @@ pub(super) const STATUSES: &[(&str, i32, &str)] = &[
     ("PARITY", -10, "Other"),
     ("FRAMING", -11, "Other"),
     ("OVERRUN", -12, "Other"),
+    ("NACK", -13, "Other"),
+    ("BUS_ERROR", -14, "Other"),
+    ("ARBITRATION_LOST", -15, "Other"),
 ];
+
+/// Classify a shared BSP status for each peripheral's public error enum.
+pub(super) fn error_kind(peripheral: &str, status: &str, common: &'static str) -> &'static str {
+    match (peripheral, status) {
+        ("uart" | "i2c", "CAPACITY_EXCEEDED") => "CapacityExceeded",
+        ("uart" | "i2c", "TIMEOUT") => "Timeout",
+        ("uart", "PARITY") => "Parity",
+        ("uart", "FRAMING") => "Framing",
+        ("uart", "OVERRUN") => "Overrun",
+        ("i2c", "NACK") => "Nack",
+        ("i2c", "BUS_ERROR") => "BusError",
+        ("i2c", "ARBITRATION_LOST") => "ArbitrationLost",
+        _ => common,
+    }
+}

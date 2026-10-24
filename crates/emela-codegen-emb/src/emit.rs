@@ -26,6 +26,8 @@ mod error_runtime;
 mod external;
 #[path = "gpio_irq.rs"]
 mod gpio_irq;
+#[path = "i2c_irq.rs"]
+mod i2c_irq;
 #[path = "owned.rs"]
 mod owned;
 #[path = "peripheral.rs"]
@@ -67,6 +69,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let mut prepared_flow = flow.clone();
     let gpio_bindings = gpio_irq::collect(&prepared_flow)?;
     let uart_bindings = uart_irq::collect(&prepared_flow)?;
+    let i2c_bindings = i2c_irq::collect(&prepared_flow)?;
     external::normalize_exports(&mut prepared_flow);
     const_bridge::prepare(&mut prepared_flow, &const_groups);
     let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
@@ -96,6 +99,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     crate::static_handler::lower(&mut lowered_flow);
     let gpio_irqs = gpio_irq::prepare(&mut lowered_flow, gpio_bindings)?;
     let uart_irqs = uart_irq::prepare(&mut lowered_flow, uart_bindings)?;
+    let i2c_irqs = i2c_irq::prepare(&mut lowered_flow, i2c_bindings)?;
     gpio_irq::erase_registration_callbacks(&mut lowered_flow);
     let discarded_results = crate::discarded::normalize(&mut lowered_flow);
     let flow = &lowered_flow;
@@ -262,9 +266,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     let mut queue_owners = HashMap::new();
     gpio_irqs.claim_channels(flow, &mut queue_owners)?;
     uart_irqs.claim_channels(flow, &mut queue_owners)?;
+    i2c_irqs.claim_channels(flow, &mut queue_owners)?;
     gpio_irq::validate_main_producers(flow, &emitted_functions, &queue_owners)?;
     gpio_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
     uart_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
+    i2c_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -1166,6 +1172,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         .any(|file| file.path == "emela_uart.h")
     {
         uart_irqs.emit(flow, &layouts, &names, &mut source);
+    }
+    if peripheral_headers
+        .iter()
+        .any(|file| file.path == "emela_i2c.h")
+    {
+        i2c_irqs.emit(flow, &layouts, &names, &mut source);
     }
     Ok(Output {
         exports: flow

@@ -46,7 +46,8 @@ startup自身がgp・sp・bss・guardを初期化し、256byte整列した32entr
 - GPIO番号は物理GPIO番号。0〜10でInput・OutputPushPull・OutputOpenDrain、NoPull・Up・Down、出力初期Low/Highを実装する。11〜17はFlash、18/19はUSB Serial/JTAG、20/21はConsoleの予約として`GpioError(ResourceConflict)`で拒否する。Analogは`Unsupported`。静的binding、Rising/Falling/Both、ISR専用read/writeにも対応し、GPIO全pinで共有するCPU IRQ2の優先度競合を検査する。
 - ConsoleはUART0 TX=GPIO21 / RX=GPIO20、115200/8N1。通常UARTは`Uart1`=UART1、TX=GPIO4 / RX=GPIO5に分離し、同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。UART0は`UartError(ResourceConflict)`で拒否する。[対応設定・IRQ・復旧](../../docs/interface/uart-interface.md)、[検証](../../docs/uart-validation.md)を参照する。
 - `Clock.now`は起動からの単調増加millisecondを仮想Unix epochへ対応させる。実日時のRTCではない。`Clock.sleep`は同時1件をSysTimer割り込みで完了する。
-- I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を解放するprofileは現在提供しない。
+- I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはGPIO6/GPIO7、I2C0。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../docs/interface/i2c-interface.md)、[検証](../../docs/i2c-validation.md)を参照する。
+- SPIのC symbols（`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を解放するprofileは現在提供しない。
 
 Emela heapは設定された固定領域の中だけを使う。`resources.json`の静的RAMには固定heap・poolが含まれる。stack予約量と実行で観測した使用量は区別する。
 
