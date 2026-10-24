@@ -16,7 +16,9 @@ pub(super) fn emit_infallible_raise(layouts: &TypeLayouts<'_>, writer: &mut Writ
     if !layouts.has_cause_raise {
         return;
     }
-    writer.begin_block("static inline void emela_infallible_cause_fail(EmelaError error)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED void emela_infallible_cause_fail(EmelaError error)",
+    );
     writer.line("(void)error;");
     if layouts.has_scopes && layouts.has_error_abi {
         writer.begin_block("if (emela_current_fiber != NULL)");
@@ -44,13 +46,13 @@ pub(super) fn emit_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     if !layouts.has_causes {
         return;
     }
-    writer.begin_block("static inline emela_cause *emela_cause_checked(void *value)");
+    writer.begin_block("static inline EMELA_UNUSED emela_cause *emela_cause_checked(void *value)");
     writer.line(&format!("if (value == NULL || emela_heap_header(value)->kind != UINT32_C({})) emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));", layouts.cause_kind()));
     writer.line("emela_cause *cause = (emela_cause *)value;");
     writer.line("if (cause->kind > 2) emela_board_defect(EMELA_DEFECT_ASSERT, \"invalid Cause\", UINT16_C(13));");
     writer.line("return cause;");
     writer.end_block();
-    writer.begin_block("static inline void *emela_cause_interrupt(void)");
+    writer.begin_block("static inline EMELA_UNUSED void *emela_cause_interrupt(void)");
     writer.line(&format!(
         "emela_cause *cause = (emela_cause *)emela_heap_allocate(sizeof(*cause), UINT32_C({}));",
         layouts.cause_kind()
@@ -62,7 +64,7 @@ pub(super) fn emit_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     writer.line("return cause;");
     writer.end_block();
     if layouts.has_error_abi {
-        writer.begin_block("static inline void *emela_cause_fail(EmelaError error)");
+        writer.begin_block("static inline EMELA_UNUSED void *emela_cause_fail(EmelaError error)");
         writer.line(&format!("emela_cause *cause = (emela_cause *)emela_heap_allocate(sizeof(*cause), UINT32_C({}));", layouts.cause_kind()));
         writer.line(&format!(
             "cause->kind = UINT32_C({}); cause->error = error;",
@@ -166,7 +168,7 @@ pub(super) fn emit_attempts(
             writer.end_block();
             writer.line("emela_frame_return(fiber);");
             writer.end_block();
-            writer.begin_block(&format!("static inline void emela_attempt_{index}(emela_fiber *fiber, {} body, {ex} *result)", layouts.c_type(body)));
+            writer.begin_block(&format!("static inline EMELA_UNUSED void emela_attempt_{index}(emela_fiber *fiber, {} body, {ex} *result)", layouts.c_type(body)));
             writer.line("if (body.call == NULL) emela_scheduler_invalid();");
             writer.line(&format!("emela_attempt_frame_{index} *frame = (emela_attempt_frame_{index} *)emela_frame_push(fiber, sizeof(*frame), emela_attempt_step_{index});"));
             writer.line("for (size_t i = sizeof(emela_frame); i < sizeof(*frame); i++) ((unsigned char *)frame)[i] = 0;");
@@ -180,7 +182,7 @@ pub(super) fn emit_attempts(
             writer.end_block();
         } else {
             writer.begin_block(&format!(
-                "static inline {ex} emela_attempt_{index}({} body)",
+                "static inline EMELA_UNUSED {ex} emela_attempt_{index}({} body)",
                 layouts.c_type(body)
             ));
             writer.line("if (body.call == NULL) emela_board_defect(EMELA_DEFECT_PANIC, \"null function value\", UINT16_C(19));");

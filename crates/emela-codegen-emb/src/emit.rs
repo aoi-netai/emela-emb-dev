@@ -487,6 +487,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     source.line(&format!("#include \"{BOARD_HEADER_FILE}\""));
     source.line("#include <math.h>");
     source.line("#include <stddef.h>");
+    source.blank();
+    emit_unused_attribute(&mut source);
 
     source.blank();
     if !runtime_consts.is_empty() {
@@ -551,8 +553,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         emit_public_string_ownership(&mut source);
         external::emit_ownership_helpers(flow, &external_bindings, &layouts, &mut source);
     } else {
-        source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
-        source.line("static inline void emela_heap_release(void *value) { (void)value; }");
+        source.line(
+            "static inline EMELA_UNUSED void emela_heap_retain(void *value) { (void)value; }",
+        );
+        source.line(
+            "static inline EMELA_UNUSED void emela_heap_release(void *value) { (void)value; }",
+        );
         error_runtime::emit_ownership(&layouts, false, &mut source);
         emit_any_ownership(&layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);
@@ -611,7 +617,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     ) || has_int_shift
         || has_builtin(flow, &emitted_functions, &[Builtin::Int64ToInt])
     {
-        source.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
+        source.begin_block("static inline EMELA_UNUSED int32_t emela_i32_from_bits(uint32_t bits)");
         source.begin_block("if (bits <= (uint32_t)INT32_MAX)");
         source.line("return (int32_t)bits;");
         source.end_block();
@@ -1126,6 +1132,17 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     })
 }
 
+/// Defines `EMELA_UNUSED` for the runtime's static inline helpers. They are emitted
+/// whether or not the program uses them, and clang (unlike gcc) warns on unused
+/// static inline functions in the main file.
+pub(crate) fn emit_unused_attribute(writer: &mut Writer) {
+    writer.line("#if defined(__GNUC__) || defined(__clang__)");
+    writer.line("#define EMELA_UNUSED __attribute__((unused))");
+    writer.line("#else");
+    writer.line("#define EMELA_UNUSED");
+    writer.line("#endif");
+}
+
 fn emit_local_declarations(
     layouts: &TypeLayouts<'_>,
     function: &Function,
@@ -1187,7 +1204,9 @@ fn emit_closure_environment_declarations(
 
 fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
     let kind = layouts.string_owner_kind();
-    writer.begin_block("static inline EmelaString emela_heap_copy_string(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_heap_copy_string(EmelaString value)",
+    );
     writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line(&format!(
         "char *bytes = (char *)emela_heap_allocate((size_t)value.length, UINT32_C({kind}));"
@@ -1200,7 +1219,9 @@ fn emit_closure_string_copy_helper(layouts: &TypeLayouts<'_>, writer: &mut Write
     writer.ret(Some("copy"));
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline EmelaString emela_heap_own_string(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_heap_own_string(EmelaString value)",
+    );
     writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line("if (value.owner == NULL) return emela_heap_copy_string(value);");
     writer.line("emela_heap_retain(value.owner);");
@@ -1818,6 +1839,13 @@ impl StringBufferPlan {
                     "emela_emb_string_output_capacity".to_owned(),
                 ),
             })
+    }
+
+    /// The length of the stack array for `variable`, or None for the caller's output buffer.
+    fn array_capacity(&self, variable: VarId) -> Option<u16> {
+        self.buffers
+            .get(&variable)
+            .and_then(|(slot, capacity)| slot.map(|_| *capacity))
     }
 
     fn has_string_output_call(&self, function: FnId) -> bool {
@@ -3204,57 +3232,70 @@ fn emit_builtin(
                 "emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));",
             );
             writer.end_block();
+            // Only the encodings that fit a fixed array are emitted: clang rejects
+            // constant indexes past its end even behind the capacity defect above.
+            let fits = |bytes: u16| {
+                string_buffers
+                    .array_capacity(dst)
+                    .is_none_or(|capacity| bytes <= capacity)
+            };
             writer.begin_block(&format!("if ({length_name} == UINT16_C(1))"));
             writer.assign(&format!("{buffer}[0]"), &format!("(char){value_name}"));
             writer.end_block();
-            writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
-            writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[2]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
-            writer.begin_block("else");
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[2]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[3]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
+            if fits(2) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
+            if fits(3) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[2]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
+            if fits(4) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(4))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[2]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[3]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
             writer.assign(&variable_name(dst), &some);
             writer.end_block();
         }
@@ -4170,17 +4211,17 @@ fn emit_any_ownership_declarations(layouts: &TypeLayouts<'_>, writer: &mut Write
     if !layouts.any_abi {
         return;
     }
-    writer.line("static inline void emela_any_retain(EmelaAny value);");
-    writer.line("static inline void emela_any_own(EmelaAny *value);");
-    writer.line("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail);");
-    writer.line("static inline void emela_any_release(EmelaAny value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_retain(EmelaAny value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_own(EmelaAny *value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail);");
+    writer.line("static inline EMELA_UNUSED void emela_any_release(EmelaAny value);");
 }
 
 fn emit_any_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer) {
     if !layouts.any_abi {
         return;
     }
-    writer.begin_block("static inline void emela_any_retain(EmelaAny value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_retain(EmelaAny value)");
     writer.line("(void)value;");
     if heap && layouts.any_box_required {
         writer.line("if (value.tag == 0) emela_heap_retain(value.payload.any_box);");
@@ -4189,7 +4230,7 @@ fn emit_any_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer
         writer.line("if (value.tag != 0) emela_error_retain(value);");
     }
     writer.end_block();
-    writer.begin_block("static inline void emela_any_own(EmelaAny *value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_own(EmelaAny *value)");
     writer.line("(void)value;");
     if heap && layouts.any_box_required {
         writer.line("if (value->tag == 0) emela_heap_retain(value->payload.any_box);");
@@ -4199,7 +4240,7 @@ fn emit_any_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer
     }
     writer.end_block();
     if heap {
-        writer.begin_block("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.begin_block("static inline EMELA_UNUSED void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
         writer.line("(void)value; (void)pending; (void)tail;");
         if layouts.any_box_required {
             writer.line(
@@ -4211,7 +4252,7 @@ fn emit_any_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer
         }
         writer.end_block();
     }
-    writer.begin_block("static inline void emela_any_release(EmelaAny value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_release(EmelaAny value)");
     if heap {
         writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
         writer.line("emela_any_enqueue(value, &pending, &tail); emela_heap_drain(pending, tail);");
@@ -4403,7 +4444,7 @@ fn show_string(value: &str) -> String {
 
 fn emit_string_matches_at_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
     );
     writer.begin_block(
         "if (offset > (uint32_t)value.length || (uint32_t)needle.length > (uint32_t)value.length - offset)",
@@ -4422,7 +4463,7 @@ fn emit_string_matches_at_helper(writer: &mut Writer) {
 
 fn emit_string_contains_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
     );
     writer.begin_block("if (needle.length > value.length)");
     writer.line("return INT32_C(0);");
@@ -4440,7 +4481,7 @@ fn emit_string_contains_helper(writer: &mut Writer) {
 
 fn emit_string_starts_with_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
     );
     writer.line("return emela_emb_string_matches_at(value, prefix, UINT32_C(0));");
     writer.end_block();
@@ -4449,7 +4490,7 @@ fn emit_string_starts_with_helper(writer: &mut Writer) {
 
 fn emit_string_ends_with_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
     );
     writer.begin_block("if (suffix.length > value.length)");
     writer.line("return INT32_C(0);");
@@ -4462,7 +4503,7 @@ fn emit_string_ends_with_helper(writer: &mut Writer) {
 
 fn emit_string_append_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
     );
     writer.begin_block(
         "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",
@@ -4488,7 +4529,7 @@ fn emit_string_append_helper(writer: &mut Writer) {
 
 fn emit_int_to_string_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
     );
     writer.line("uint64_t magnitude = value < INT64_C(0) ? (uint64_t)(-(value + INT64_C(1))) + UINT64_C(1) : (uint64_t)value;");
     writer.line("uint32_t digit_count = UINT32_C(1);");
@@ -4518,7 +4559,7 @@ fn emit_int_to_string_helper(writer: &mut Writer) {
 
 fn emit_string_output_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_copy_to_output(EmelaString value, char *output, uint16_t capacity, uint16_t maximum_length)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_copy_to_output(EmelaString value, char *output, uint16_t capacity, uint16_t maximum_length)",
     );
     writer.begin_block(
         "if (value.length > capacity || value.length > maximum_length || (value.length != UINT16_C(0) && (output == NULL || value.data == NULL)))",
@@ -4549,7 +4590,9 @@ fn emit_string_output_helper(writer: &mut Writer) {
 }
 
 fn emit_int_parse_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int emela_emb_int_parse(EmelaString value, int32_t *result)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int emela_emb_int_parse(EmelaString value, int32_t *result)",
+    );
     writer.begin_block("if (value.length == UINT16_C(0))");
     writer.line("return 0;");
     writer.end_block();
@@ -4594,7 +4637,7 @@ fn emit_int_parse_helper(writer: &mut Writer) {
 
 fn emit_string_show_helpers(writer: &mut Writer) {
     writer.begin_block(
-        "static inline void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
+        "static inline EMELA_UNUSED void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
     );
     writer.begin_block("if (*length >= (uint32_t)capacity)");
     writer.line(
@@ -4607,7 +4650,7 @@ fn emit_string_show_helpers(writer: &mut Writer) {
     writer.blank();
 
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
     );
     writer.line("uint32_t length = UINT32_C(0);");
     writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
@@ -4656,7 +4699,7 @@ fn emit_string_show_helpers(writer: &mut Writer) {
 
 fn emit_utf8_decode_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
+        "static inline EMELA_UNUSED int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
     );
     writer.begin_block("if (offset >= (uint32_t)value.length)");
     writer.line("return INT32_C(0);");
@@ -4715,14 +4758,18 @@ fn emit_utf8_decode_helper(writer: &mut Writer) {
 }
 
 fn emit_string_trim_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int32_t emela_emb_is_white_space(uint32_t code_point)",
+    );
     writer.line(
         "return (code_point >= UINT32_C(0x0009) && code_point <= UINT32_C(0x000d)) || code_point == UINT32_C(0x0020) || code_point == UINT32_C(0x0085) || code_point == UINT32_C(0x00a0) || code_point == UINT32_C(0x1680) || (code_point >= UINT32_C(0x2000) && code_point <= UINT32_C(0x200a)) || code_point == UINT32_C(0x2028) || code_point == UINT32_C(0x2029) || code_point == UINT32_C(0x202f) || code_point == UINT32_C(0x205f) || code_point == UINT32_C(0x3000);",
     );
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline EmelaString emela_emb_string_trim(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_trim(EmelaString value)",
+    );
     writer.begin_block("if (value.length == UINT16_C(0))");
     writer.line("return value;");
     writer.end_block();
@@ -4765,7 +4812,7 @@ fn emit_string_trim_helper(writer: &mut Writer) {
 
 fn emit_string_join_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline void emela_emb_string_join_put(char *buffer, uint16_t capacity, uint32_t *length, EmelaString value)",
+        "static inline EMELA_UNUSED void emela_emb_string_join_put(char *buffer, uint16_t capacity, uint32_t *length, EmelaString value)",
     );
     writer.begin_block("if ((uint32_t)value.length > (uint32_t)capacity - *length)");
     writer.line(
@@ -6782,7 +6829,7 @@ fn has_dynamic_defect(flow: &emela_lir::Module, emitted: &HashSet<FnId>) -> bool
 
 fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
+        "static inline EMELA_UNUSED int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
     );
     writer.begin_block("if (value.length < length || (exact && value.length != length))");
     writer.line("return 0;");
@@ -6795,7 +6842,9 @@ fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
     writer.line("return 1;");
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline EmelaDefectKind emela_emb_defect_kind(EmelaString message)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaDefectKind emela_emb_defect_kind(EmelaString message)",
+    );
     for (message, kind, exact) in [
         ("not yet implemented", "TODO", "1"),
         ("unreachable: no match arm matched", "NO_MATCH", "1"),
@@ -7423,7 +7472,7 @@ fn primitive_string_expression(op: PrimOp, args: &[String]) -> Result<String, &'
 }
 
 fn emit_string_comparison_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
+    writer.begin_block("static inline EMELA_UNUSED int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
     // Valid UTF-8 has the same lexicographic byte order as Unicode scalar values.
     writer.line("uint32_t length = left->length < right->length ? left->length : right->length;");
     writer.begin_block("for (uint32_t i = 0; i < length; i++)");
@@ -7519,7 +7568,9 @@ fn primitive_f64_expression(op: PrimOp, args: &[String]) -> Result<String, &'sta
 }
 
 fn emit_i32_shift_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_i32_shift_left(int32_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int32_t emela_i32_shift_left(int32_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(32))");
     writer.line("return INT32_C(0);");
     writer.end_block();
@@ -7527,7 +7578,9 @@ fn emit_i32_shift_helpers(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int32_t emela_i32_shift_right(int32_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int32_t emela_i32_shift_right(int32_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(32))");
     writer.line("return value < INT32_C(0) ? -INT32_C(1) : INT32_C(0);");
     writer.end_block();
@@ -7540,7 +7593,7 @@ fn emit_i32_shift_helpers(writer: &mut Writer) {
     writer.blank();
 
     writer.begin_block(
-        "static inline int32_t emela_i32_shift_right_unsigned(int32_t value, int32_t by)",
+        "static inline EMELA_UNUSED int32_t emela_i32_shift_right_unsigned(int32_t value, int32_t by)",
     );
     writer.begin_block("if (by >= INT32_C(32))");
     writer.line("return INT32_C(0);");
@@ -7551,7 +7604,9 @@ fn emit_i32_shift_helpers(writer: &mut Writer) {
 }
 
 fn emit_i64_shift_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_shift_left(int64_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_left(int64_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return INT64_C(0);");
     writer.end_block();
@@ -7559,7 +7614,9 @@ fn emit_i64_shift_helpers(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int64_t emela_i64_shift_right(int64_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_right(int64_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return value < INT64_C(0) ? -INT64_C(1) : INT64_C(0);");
     writer.end_block();
@@ -7572,7 +7629,7 @@ fn emit_i64_shift_helpers(writer: &mut Writer) {
     writer.blank();
 
     writer.begin_block(
-        "static inline int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
     );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return INT64_C(0);");
@@ -7583,7 +7640,9 @@ fn emit_i64_shift_helpers(writer: &mut Writer) {
 }
 
 fn emit_negative_shift_helper(writer: &mut Writer) {
-    writer.begin_block("static inline void emela_emb_negative_shift_defect(int32_t amount)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED void emela_emb_negative_shift_defect(int32_t amount)",
+    );
     writer.line("char message[48];");
     writer.line("static const char prefix[] = \"negative shift amount: \";");
     writer.line("uint16_t prefix_length = (uint16_t)(sizeof prefix - 1);");
@@ -7610,7 +7669,8 @@ fn emit_negative_shift_helper(writer: &mut Writer) {
 }
 
 fn emit_i32_division_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -7623,7 +7683,8 @@ fn emit_i32_division_helpers(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -7638,7 +7699,7 @@ fn emit_i32_division_helpers(writer: &mut Writer) {
 }
 
 fn emit_i64_wrap_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_from_bits(uint64_t bits)");
+    writer.begin_block("static inline EMELA_UNUSED int64_t emela_i64_from_bits(uint64_t bits)");
     writer.begin_block("if (bits <= (uint64_t)INT64_MAX)");
     writer.line("return (int64_t)bits;");
     writer.end_block();
@@ -7648,7 +7709,8 @@ fn emit_i64_wrap_helper(writer: &mut Writer) {
 }
 
 fn emit_i64_division_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_div(int64_t lhs, int64_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int64_t emela_i64_div(int64_t lhs, int64_t rhs)");
     writer.begin_block("if (rhs == INT64_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -7661,7 +7723,8 @@ fn emit_i64_division_helpers(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int64_t emela_i64_rem(int64_t lhs, int64_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int64_t emela_i64_rem(int64_t lhs, int64_t rhs)");
     writer.begin_block("if (rhs == INT64_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -7677,7 +7740,7 @@ fn emit_i64_division_helpers(writer: &mut Writer) {
 
 fn emit_float_to_int_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_float_to_int(double value, uint8_t operation)",
+        "static inline EMELA_UNUSED int32_t emela_emb_float_to_int(double value, uint8_t operation)",
     );
     writer.begin_block("if (!(value > -2147483649.0 && value < 2147483648.0))");
     writer.line(
@@ -9791,12 +9854,12 @@ impl<'a> TypeLayouts<'a> {
             }
             let aggregate_type = self.c_type(aggregate.ty);
             writer.begin_block(&format!(
-                "static inline void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+                "static inline EMELA_UNUSED void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
             ));
             writer.line("(void)value;");
             writer.end_block();
             writer.begin_block(&format!(
-                "static inline void emela_heap_release_value_{index}({aggregate_type} *value)"
+                "static inline EMELA_UNUSED void emela_heap_release_value_{index}({aggregate_type} *value)"
             ));
             writer.line("(void)value;");
             writer.end_block();

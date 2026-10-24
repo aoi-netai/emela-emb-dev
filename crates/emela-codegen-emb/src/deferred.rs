@@ -53,7 +53,7 @@ pub(super) fn emit_runtime(
             continue;
         }
         writer.begin_block(&format!(
-            "static inline {} emela_deferred_read_{}(EmelaAny emela_v_0)",
+            "static inline EMELA_UNUSED {} emela_deferred_read_{}(EmelaAny emela_v_0)",
             layouts.c_type(ty),
             ty.index()
         ));
@@ -82,7 +82,7 @@ pub(super) fn emit_runtime(
     for &ty in &layouts.deferred_complete_types {
         let represented = layouts.type_repr(ty) != Repr::Void;
         writer.begin_block(&format!(
-            "static inline int32_t emela_deferred_complete_{}(emela_deferred *deferred{})",
+            "static inline EMELA_UNUSED int32_t emela_deferred_complete_{}(emela_deferred *deferred{})",
             ty.index(),
             if represented {
                 format!(", {} emela_v_0", layouts.c_type(ty))
@@ -111,7 +111,7 @@ pub(super) fn emit_runtime(
         let some =
             option_variant_expression(layouts, &f, option, "Some", represented.then_some("value"))?;
         writer.begin_block(&format!(
-            "static inline {} emela_deferred_poll_{}(emela_deferred *deferred)",
+            "static inline EMELA_UNUSED {} emela_deferred_poll_{}(emela_deferred *deferred)",
             layouts.c_type(option),
             option.index()
         ));

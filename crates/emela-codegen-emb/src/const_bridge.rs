@@ -227,7 +227,7 @@ impl Bridges {
     }
     fn signature(&self, source: TypeId, destination: TypeId, layouts: &TypeLayouts<'_>) -> String {
         format!(
-            "static inline {} {}({})",
+            "static inline EMELA_UNUSED {} {}({})",
             layouts.c_type(destination),
             self.name(source, destination),
             if layouts.type_repr(source) == Repr::Void {

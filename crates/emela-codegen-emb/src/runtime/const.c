@@ -25,11 +25,11 @@ static _Noreturn void emela_const_defect_sink(EmelaDefectKind kind, const char *
 /* The macro is private to this generated translation unit, never the board header. */
 #define emela_board_defect emela_embedded_report_defect
 
-static inline void emela_const_copy(char *target, const char *source, uint32_t length) {
+static inline EMELA_UNUSED void emela_const_copy(char *target, const char *source, uint32_t length) {
   for (uint32_t i = 0; i < length; i++) target[i] = source[i];
 }
 
-static inline uint32_t emela_const_prefix_bytes(void) {
+static inline EMELA_UNUSED uint32_t emela_const_prefix_bytes(void) {
   uint32_t total = 0;
   for (EmelaConstContext *context = emela_const_current; context != NULL; context = context->previous) {
     total += context->prefix_length;
