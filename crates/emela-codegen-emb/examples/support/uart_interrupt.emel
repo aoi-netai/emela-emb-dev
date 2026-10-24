@@ -1,0 +1,62 @@
+import Std.Embedded.Uart
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardUart, BoardGpio, BoardClock, BoardConsole}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+
+const ID = Uart.Uart1
+const LED = Gpio.GpioPin(__OUTPUT__)
+fn on_uart(id: Uart.UartId, event: Uart.UartEvent) -> () fails {} use {Gpio.Gpio} {
+  event match {
+    Uart.Received(value) -> { accepted = Interrupt.try_push(Interrupt.Channel0, value)
+      () }
+    _ -> ()
+  }
+  level = event match {
+    Uart.Received(value) -> if value == 1 { Gpio.High } else { Gpio.Low }
+    Uart.TransmitComplete -> Gpio.High
+    Uart.ReceiveError(errors) -> Gpio.Low
+  }
+  (use Gpio.Gpio).write(LED, level) escape { Gpio.GpioError(_) -> () }
+}
+fn config() -> Uart.UartConfig { Uart.UartConfig(115200, Uart.Bits8, Uart.One, Uart.NoParity, Uart.Both, Uart.NoFlowControl, Uart.__OVERSAMPLING__) }
+
+pub fn main() -> Int use Async {
+  with BoardUart, BoardGpio, BoardClock, BoardConsole {
+    uart = use Uart.Uart
+    gpio = use Gpio.Gpio
+    clock = use Clock
+    console = use Console
+    gpio.configure(LED, Gpio.OutputPushPull(Gpio.NoPull, Gpio.Low))
+    uart.configure(ID, config())
+    uart.set_receive_mode(ID, Uart.InterruptReceive)
+    Uart.bind_interrupt(ID, on_uart)
+    uart.enable_interrupt(ID, Interrupt.Normal, True)
+    exclusive = { uart.receive(ID, 0, Int64.from_int(0))
+      False } escape { Uart.UartError(Uart.InvalidState) -> True }
+    uart.transmit(ID, [], Int64.from_int(0))
+    uart.transmit(ID, [0, 10, 255], Int64.from_int(100))
+    console.print_line("uart: interrupt")
+    clock.sleep(10)
+    uart.disable_interrupt(ID)
+    received_first = Interrupt.try_pop(Interrupt.Channel0)
+    received_second = Interrupt.try_pop(Interrupt.Channel0)
+    empty = Interrupt.try_pop(Interrupt.Channel0)
+    uart.disable_interrupt(ID)
+    console.print_line("uart: stopped")
+    clock.sleep(10)
+    uart.configure(ID, config())
+    kept_mode = { uart.receive_some(ID, 0, Int64.from_int(0))
+      False } escape { Uart.UartError(Uart.InvalidState) -> True }
+    uart.enable_interrupt(ID, Interrupt.High, False)
+    console.print_line("uart: restarted")
+    clock.sleep(10)
+    uart.disable_interrupt(ID)
+    restarted_first = Interrupt.try_pop(Interrupt.Channel0)
+    restarted_second = Interrupt.try_pop(Interrupt.Channel0)
+    console.print_line("uart: complete")
+    if exclusive && kept_mode && received_first.available && received_first.value == 1 && received_second.available && received_second.value == 0 && !empty.available && restarted_first.available && restarted_first.value == 1 && restarted_second.available && restarted_second.value == 0 { 42 } else { -100 }
+  } escape { Uart.UartError(_) -> -1
+    Gpio.GpioError(_) -> -2 }
+}

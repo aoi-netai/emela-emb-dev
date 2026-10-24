@@ -54,6 +54,9 @@ volatile uint32_t board_boot_initialized;
 static unsigned event_locked;
 static volatile uint32_t output_pins[EMELA_GPIO_PORT_COUNT];
 static bool uart_ready;
+#if BOARD_HAS_GPIO || BOARD_HAS_UART
+static bool uart_pins_owned;
+#endif
 static volatile uint64_t elapsed_ms;
 #ifdef EMELA_HAS_TASK_RUNTIME
 static volatile uint32_t remaining_ms;
@@ -163,7 +166,8 @@ static int32_t gpio_pin_status(EmelaGpioPin pin) {
         return EMELA_PERIPHERAL_INVALID_ARGUMENT;
     uint32_t port = (uint32_t)pin.id / 16u, bit = UINT32_C(1) << ((uint32_t)pin.id % 16u);
     if (!(gpio_pin_masks[port] & bit)) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
-    if (pin.id == EMELA_CONSOLE_TX_PIN || pin.id == EMELA_CONSOLE_RX_PIN)
+    if (pin.id == EMELA_CONSOLE_TX_PIN || pin.id == EMELA_CONSOLE_RX_PIN
+        || (uart_pins_owned && (pin.id == 9 || pin.id == 10)))
         return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     return 0;
 }
@@ -335,32 +339,7 @@ void EXTI15_10_IRQHandler(void) { gpio_exti(UINT32_C(0xfc00)); }
 #endif
 
 #if BOARD_HAS_UART
-int32_t emela_uart_configure(EmelaUartId id, EmelaUartConfig config) {
-    main_context();
-    if (id != EMELA_CONSOLE_UART_ID || config.baud_rate != 115200
-        || config.data_bits != EMELA_UART_DATA_BITS_BITS8
-        || config.stop_bits != EMELA_UART_STOP_BITS_ONE
-        || config.parity != EMELA_UART_PARITY_NO_PARITY
-        || config.direction != EMELA_UART_DIRECTION_TRANSMIT
-        || config.flow_control != EMELA_UART_FLOW_CONTROL_NO_FLOW_CONTROL
-        || config.oversampling != EMELA_UART_OVERSAMPLING_BY16) return 1;
-    init_uart();
-    return 0;
-}
-
-int32_t emela_uart_transmit(EmelaUartId id, const uint16_t *data, uint16_t length, int64_t timeout_ms) {
-    main_context();
-    (void)id; (void)data; (void)length; (void)timeout_ms;
-    return 2;
-}
-
-int32_t emela_uart_receive(EmelaUartId id, int32_t size, int64_t timeout_ms,
-                           uint16_t *out, uint16_t capacity, uint16_t *length) {
-    main_context();
-    (void)id; (void)size; (void)timeout_ms; (void)out; (void)capacity;
-    *length = 0;
-    return 2;
-}
+#include "uart.inc"
 #endif
 
 void emela_board_console_print_line(const char *data, uint16_t length) {

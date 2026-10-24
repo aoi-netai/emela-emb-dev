@@ -286,3 +286,9 @@ int main(void) {
   assert(checks > 0 && heap_live() == 0);
   return 0;
 }
+
+int32_t emela_uart_receive_some(EmelaUartId id, int32_t size, int64_t timeout, uint16_t *out, uint16_t capacity, uint16_t *length) { return emela_uart_receive(id, size, timeout, out, capacity, length); }
+int32_t emela_uart_discard_input(EmelaUartId id, int32_t size, int32_t *out) { (void)id; (void)size; *out = 0; return 0; }
+int32_t emela_uart_set_receive_mode(EmelaUartId id, EmelaUartReceiveMode mode) { (void)id; (void)mode; return 0; }
+int32_t emela_uart_enable_interrupt(EmelaUartId id, EmelaInterruptPriority p, int32_t tx) { (void)id; (void)p; (void)tx; return 0; }
+int32_t emela_uart_disable_interrupt(EmelaUartId id) { (void)id; return 0; }

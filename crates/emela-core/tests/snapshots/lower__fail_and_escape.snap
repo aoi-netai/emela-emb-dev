@@ -66,6 +66,10 @@ error enum Std.Embedded.Gpio.GpioError {
   GpioError(kind: Std.Embedded.Gpio.GpioErrorKind)
 }
 
+error enum Std.Embedded.Uart.UartError {
+  UartError(kind: Std.Embedded.Uart.UartErrorKind)
+}
+
 export fn main() -> Int fails {
   let a%1: Int = {
     find(1)?

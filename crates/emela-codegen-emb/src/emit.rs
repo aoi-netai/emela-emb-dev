@@ -36,6 +36,8 @@ mod peripheral_status;
 mod suspend;
 #[path = "task_values.rs"]
 mod task_values;
+#[path = "uart_irq.rs"]
+mod uart_irq;
 
 const HEADER_FILE: &str = "emela_embedded.h";
 const SOURCE_FILE: &str = "emela_embedded.c";
@@ -64,6 +66,7 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     crate::const_origins::function_groups(flow)?;
     let mut prepared_flow = flow.clone();
     let gpio_bindings = gpio_irq::collect(&prepared_flow)?;
+    let uart_bindings = uart_irq::collect(&prepared_flow)?;
     external::normalize_exports(&mut prepared_flow);
     const_bridge::prepare(&mut prepared_flow, &const_groups);
     let mut runtime_consts = crate::const_runtime::prepare(&mut prepared_flow, runtime_reachable);
@@ -92,6 +95,8 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     }
     crate::static_handler::lower(&mut lowered_flow);
     let gpio_irqs = gpio_irq::prepare(&mut lowered_flow, gpio_bindings)?;
+    let uart_irqs = uart_irq::prepare(&mut lowered_flow, uart_bindings)?;
+    gpio_irq::erase_registration_callbacks(&mut lowered_flow);
     let discarded_results = crate::discarded::normalize(&mut lowered_flow);
     let flow = &lowered_flow;
     let emitted_functions = runtime_reachable(flow);
@@ -254,7 +259,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         &names,
         options,
     )?;
+    let mut queue_owners = HashMap::new();
+    gpio_irqs.claim_channels(flow, &mut queue_owners)?;
+    uart_irqs.claim_channels(flow, &mut queue_owners)?;
+    gpio_irq::validate_main_producers(flow, &emitted_functions, &queue_owners)?;
     gpio_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
+    uart_irqs.validate(flow, &heap_functions, &layouts, &names, options)?;
     let main_entry = flow.functions.iter().find(|(id, function)| {
         emitted_functions.contains(id) && function.exported && function.name == "main"
     });
@@ -492,7 +502,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
     if has_runtime_op(flow, &emitted_functions, RuntimeOp::DebugPrint) {
         board_header.line("void emela_board_debug(const char *bytes, uint16_t length);");
     }
-    if has_tasks {
+    if has_tasks
+        || peripheral_headers
+            .iter()
+            .any(|f| f.path == "emela_interrupt.h")
+    {
         board_header.line("/* Save/restore interrupt state and serialize task/event access; callable from ISR. */");
         board_header.line("uint32_t emela_board_event_lock(void);");
         board_header.line("void emela_board_event_unlock(uint32_t previous_state);");
@@ -799,6 +813,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
                 }
             ));
         }
+    }
+    if peripheral_headers
+        .iter()
+        .any(|f| f.path == "emela_interrupt.h")
+    {
+        source.line(include_str!("runtime/interrupt_queue.h"));
     }
     let function_ref_adapters = function_ref_adapters(flow, &emitted_functions, &layouts);
     for &(target, function_type) in &function_ref_adapters {
@@ -1140,6 +1160,12 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
 
     if peripheral_headers.iter().any(|f| f.path == "emela_gpio.h") {
         gpio_irqs.emit(flow, &layouts, &names, &mut source);
+    }
+    if peripheral_headers
+        .iter()
+        .any(|file| file.path == "emela_uart.h")
+    {
+        uart_irqs.emit(flow, &layouts, &names, &mut source);
     }
     Ok(Output {
         exports: flow
@@ -2476,8 +2502,9 @@ fn validate_isr_function(
                 }
                 if callee.external.is_some() {
                     if peripheral::resolve(flow, callee)?.is_some_and(|op| {
-                        op.peripheral == "gpio"
-                            && matches!(op.name.as_str(), "isr_read" | "isr_write" | "error_kind")
+                        (op.peripheral == "gpio"
+                            && matches!(op.name.as_str(), "isr_read" | "isr_write" | "error_kind"))
+                            || (op.peripheral == "interrupt" && op.name == "try_push")
                     }) {
                         continue;
                     }

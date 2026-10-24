@@ -1,3 +1,15 @@
 # Shared logical priorities for BSP-managed peripheral interrupts.
 # Their hardware encoding is defined by the selected board.
 pub enum InterruptPriority { Low, Normal, High }
+
+## Four independent fixed queues. Each has 16 Int slots and one producer/consumer.
+pub enum WordChannel { Channel0, Channel1, Channel2, Channel3 }
+pub type SharedWord(available: Bool, value: Int)
+
+## Nonblocking. False means full; no allocation and no scheduler wakeup.
+@external(c, "__emela_shared_try_push")
+pub fn try_push(channel: WordChannel, value: Int) -> Bool use {}
+
+## Main context only. An empty queue returns SharedWord(False, 0).
+@external(c, "__emela_shared_try_pop")
+pub fn try_pop(channel: WordChannel) -> SharedWord use {}

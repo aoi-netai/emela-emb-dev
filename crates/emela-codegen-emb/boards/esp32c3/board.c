@@ -52,6 +52,9 @@ static volatile uint32_t configured_outputs;
 #ifdef BOARD_GPIO
 static volatile uint32_t configured_inputs;
 #endif
+#if defined(BOARD_GPIO) || defined(BOARD_UART)
+static bool uart_pins_owned;
+#endif
 static unsigned event_locked;
 static volatile unsigned in_trap;
 #if defined(BOARD_CLOCK) && defined(EMELA_HAS_TASK_RUNTIME)
@@ -201,6 +204,7 @@ static int32_t gpio_priority;
 #define GPIO_CPU_IRQ UINT32_C(2)
 
 static int32_t gpio_pin_status(EmelaGpioPin pin) {
+    if (uart_pins_owned && (pin.id == 4 || pin.id == 5)) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (pin.id < 0 || pin.id > 21) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
     /* Flash power/data, USB Serial/JTAG and the Console retain their pins. */
     if (pin.id >= 11) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
@@ -334,34 +338,7 @@ static void gpio_interrupt(void) {
 }
 #endif
 
-#ifdef BOARD_UART
-int32_t emela_uart_configure(EmelaUartId id, EmelaUartConfig config) {
-    require_main();
-    if (id != EMELA_UART_ID_UART0 || config.baud_rate != 115200
-        || config.data_bits != EMELA_UART_DATA_BITS_BITS8 || config.stop_bits != EMELA_UART_STOP_BITS_ONE
-        || config.parity != EMELA_UART_PARITY_NO_PARITY || config.direction != EMELA_UART_DIRECTION_TRANSMIT
-        || config.flow_control != EMELA_UART_FLOW_CONTROL_NO_FLOW_CONTROL
-        || config.oversampling != EMELA_UART_OVERSAMPLING_BY16) return 1;
-    uart_init();
-    return 0;
-}
-
-int32_t emela_uart_transmit(EmelaUartId id, const uint16_t *data, uint16_t length, int64_t timeout) {
-    require_main();
-    (void)id; (void)data; (void)length; (void)timeout;
-    return 2;
-}
-
-int32_t emela_uart_receive(EmelaUartId id, int32_t size, int64_t timeout,
-                         uint16_t *out, uint16_t capacity, uint16_t *length) {
-    require_main();
-    (void)id; (void)size; (void)timeout; (void)out; (void)capacity;
-    *length = 0;
-    return 2;
-}
-#endif
-
-#ifdef BOARD_CLOCK
+#if defined(BOARD_CLOCK) || defined(BOARD_UART)
 static uint64_t timer_ticks(void) {
     TIMER(0x04u) = BIT(30);
     while (!(TIMER(0x04u) & BIT(29))) {}
@@ -370,6 +347,11 @@ static uint64_t timer_ticks(void) {
     return ((uint64_t)hi << 32) | lo;
 }
 
+#endif
+#ifdef BOARD_UART
+#include "uart.inc"
+#endif
+#ifdef BOARD_CLOCK
 int64_t emela_board_clock_now(void) {
     require_main();
     uint32_t previous = irq_disable();
@@ -413,6 +395,14 @@ void board_trap(uint32_t cause, uint32_t pc, uintptr_t sp) {
 #ifdef BOARD_GPIO
     if ((cause & UINT32_C(0x80000fff)) == (UINT32_C(0x80000000) | GPIO_CPU_IRQ)) {
         gpio_interrupt();
+        __asm volatile("fence iorw, iorw" ::: "memory");
+        in_trap = 0;
+        return;
+    }
+#endif
+#ifdef BOARD_UART
+    if ((cause & UINT32_C(0x80000fff)) == (UINT32_C(0x80000000) | UART_CPU_IRQ)) {
+        uart_interrupt();
         __asm volatile("fence iorw, iorw" ::: "memory");
         in_trap = 0;
         return;

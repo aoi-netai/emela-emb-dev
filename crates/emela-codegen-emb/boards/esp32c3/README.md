@@ -44,7 +44,7 @@ startup自身がgp・sp・bss・guardを初期化し、256byte整列した32entr
 ## 標準APIの範囲
 
 - GPIO番号は物理GPIO番号。0〜10でInput・OutputPushPull・OutputOpenDrain、NoPull・Up・Down、出力初期Low/Highを実装する。11〜17はFlash、18/19はUSB Serial/JTAG、20/21はConsoleの予約として`GpioError(ResourceConflict)`で拒否する。Analogは`Unsupported`。静的binding、Rising/Falling/Both、ISR専用read/writeにも対応し、GPIO全pinで共有するCPU IRQ2の優先度競合を検査する。
-- ConsoleはUART0 TX=GPIO21、115200 baud/8N1で、RX=GPIO20も設定する。`Uart.configure`はUart0／115200／Bits8／One／NoParity／Transmit／NoFlowControl／By16を受け入れ、それ以外は`PeripheralError(1)`になる。標準UARTのtimed transmit/receiveは`PeripheralError(2)`を返す。
+- ConsoleはUART0 TX=GPIO21 / RX=GPIO20、115200/8N1。通常UARTは`Uart1`=UART1、TX=GPIO4 / RX=GPIO5に分離し、同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。UART0は`UartError(ResourceConflict)`で拒否する。[対応設定・IRQ・復旧](../../docs/interface/uart-interface.md)、[検証](../../docs/uart-validation.md)を参照する。
 - `Clock.now`は起動からの単調増加millisecondを仮想Unix epochへ対応させる。実日時のRTCではない。`Clock.sleep`は同時1件をSysTimer割り込みで完了する。
 - I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を解放するprofileは現在提供しない。
 

@@ -1,6 +1,6 @@
 # The Emela interface for UART.
 # Transfers are synchronous and must not be called from interrupt context.
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Interrupt.{InterruptPriority}
 
 pub enum UartId { Uart0, Uart1, Uart2, Uart3, Uart4, Uart5, Uart6, Uart7 }
 ## The data width excludes the parity bit.
@@ -9,7 +9,8 @@ pub enum UartStopBits { Half, One, OneAndHalf, Two }
 pub enum Parity { NoParity, Even, Odd }
 pub enum UartDirection { Receive, Transmit, Both }
 pub enum FlowControl { NoFlowControl, Rts, Cts, RtsCts }
-pub enum Oversampling { By8, By16 }
+## Native uses the board's sampling scheme without requesting a fixed ratio.
+pub enum Oversampling { By8, By16, Native }
 pub type UartConfig(
   baud_rate: Int,
   data_bits: UartDataBits,
@@ -20,8 +21,42 @@ pub type UartConfig(
   oversampling: Oversampling
 )
 
+pub enum UartErrorKind {
+  InvalidArgument, CapacityExceeded, NotConfigured, Unsupported, Timeout,
+  Busy, ResourceConflict, InvalidState, Parity, Framing, Overrun, Other
+}
+pub error UartError(kind: UartErrorKind)
+
+pub enum UartReceiveMode { Polling, InterruptReceive }
+pub type UartReceiveErrors(parity: Bool, framing: Bool, overrun: Bool, other: Bool)
+pub enum UartEvent {
+  Received(value: Int)
+  TransmitComplete
+  ReceiveError(errors: UartReceiveErrors)
+}
+
+@external(c, "__emela_uart_error_kind")
+fn error_kind(status: Int) -> UartErrorKind use {}
+
+pub fn check_status(status: Int) -> () fails UartError {
+  if status != 0 { fail UartError(error_kind(status)) }
+}
+
+@external(c, "__emela_uart_register_interrupt")
+fn register_interrupt[R: Immediate](id: UartId, callback: fn(UartId, UartEvent) -> () fails {} use R) -> Int use {}
+
+## A capture-free named callback, resolved statically by the embedded backend.
+pub fn bind_interrupt[R: Immediate](id: UartId, callback: fn(UartId, UartEvent) -> () fails {} use R) -> () fails UartError {
+  check_status(register_interrupt(id, callback))
+}
+
 pub effect Uart {
-  fn configure(id: UartId, config: UartConfig) -> () fails PeripheralError
-  fn transmit(id: UartId, data: List[Int], timeout_ms: Int64) -> () fails PeripheralError
-  fn receive(id: UartId, size: Int, timeout_ms: Int64) -> List[Int] fails PeripheralError
+  fn configure(id: UartId, config: UartConfig) -> () fails UartError
+  fn transmit(id: UartId, data: List[Int], timeout_ms: Int64) -> () fails UartError
+  fn receive(id: UartId, size: Int, timeout_ms: Int64) -> List[Int] fails UartError
+  fn receive_some(id: UartId, max_size: Int, timeout_ms: Int64) -> List[Int] fails UartError
+  fn discard_input(id: UartId, max_size: Int) -> Int fails UartError
+  fn set_receive_mode(id: UartId, mode: UartReceiveMode) -> () fails UartError
+  fn enable_interrupt(id: UartId, priority: InterruptPriority, notify_transmit: Bool) -> () fails UartError
+  fn disable_interrupt(id: UartId) -> () fails UartError
 }

@@ -2,7 +2,7 @@
 
 状態：2026-10-24、`GpioConfig`、`GpioError`、静的な割り込みbinding、ISR専用read/writeをstdlib・codegen・STM32F4/ESP32-C3 BSPに実装。従来の`GpioMode`とstatusを返さないC ABIから移行した。旧header・旧BSPとの混在には対応せず、Cとfirmwareを再生成する。
 
-[仕様一覧](README.md)、[共通bridge](../embedded-peripherals.md)、[Renode試験と再実行手順](../gpio-validation.md)も参照する。UART・I²C・SPIの拡充は引き続き別の実装段階である。
+[仕様一覧](README.md)、[共通bridge](../embedded-peripherals.md)、[Renode試験と再実行手順](../gpio-validation.md)も参照する。UARTの拡充と固定容量共有APIは[UART仕様](uart-interface.md)を参照する。I²C・SPIは後続の実装段階である。
 
 ## Emela API
 
@@ -106,7 +106,7 @@ STM32のIDは`port番号 × 16 + pin番号`で、A=0、B=1である。package上
 
 Inputは出力駆動を無効にしデジタル入力を有効にする。Analogはデジタルread/write/toggleと割り込みに使わない。pullの指定を実現できなければ別の設定へ丸めず拒否する。引数・対応設定・資源の検証失敗では、以前の設定や出力を変更しない。
 
-対象pinの割り込み有効中の再設定は`InvalidState`。先に停止し、必要なら再び有効化する。他pinの設定・出力を変更しない。現在の資源表はpackageの存在とConsole等の予約を扱い、将来のUART/I²C/SPI driverの所有権も同じ検査へ統合する。
+対象pinの割り込み有効中の再設定は`InvalidState`。先に停止し、必要なら再び有効化する。他pinの設定・出力を変更しない。資源表はpackageの存在、Console、設定済みUARTのpin予約を扱う。UARTが使用中のpinはResourceConflict。I²C/SPIとの所有権統合は後続の作業。
 
 ### read・write・toggle
 
@@ -142,7 +142,7 @@ compilerは型検査・具体化後にbindingを集める。pinのliteral、固�
 
 read/writeは`GpioError`で失敗し得るためcallback内で捕捉する。固定エラーの失敗経路を辿り、mainだけで使う文字列付きエラーを理由に固定エラーまでheap必須とは判定しない。mainのList/StringとISRのenum/match・read/writeが共存する。固定のpin値等のconstは、ISR用の純粋な定義を通し、mainの遅延初期化cellへ触れない。
 
-BSPの固定領域とpinはmainで準備する。ISRからmainのList/String/Cell/Stateへの参照を渡さない。固定容量の単一producer・単一consumer受け渡しAPIは、GPIOのこの改訂には含めず、UART等の次段階で実装する。
+BSPの固定領域とpinはmainで準備する。ISRからmainのList/String/Cell/Stateへの参照を渡さない。固定容量の単一producer・単一consumer受け渡しには、UARTと共通の[WordChannel / try_push / try_pop](uart-interface.md#優先度と情報共有)を使う。
 
 ## 不正な操作とdefect
 

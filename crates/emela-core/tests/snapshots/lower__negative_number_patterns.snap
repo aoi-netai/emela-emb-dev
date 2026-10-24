@@ -144,6 +144,17 @@ enum Std.Embedded.Interrupt.InterruptPriority {
   High
 }
 
+enum Std.Embedded.Interrupt.WordChannel {
+  Channel0
+  Channel1
+  Channel2
+  Channel3
+}
+
+enum Std.Embedded.Interrupt.SharedWord {
+  SharedWord(available: Bool, value: Int)
+}
+
 enum Std.Embedded.Gpio.GpioPin {
   GpioPin(id: Int)
 }
@@ -236,10 +247,45 @@ enum Std.Embedded.Uart.FlowControl {
 enum Std.Embedded.Uart.Oversampling {
   By8
   By16
+  Native
 }
 
 enum Std.Embedded.Uart.UartConfig {
   UartConfig(baud_rate: Int, data_bits: Std.Embedded.Uart.UartDataBits, stop_bits: Std.Embedded.Uart.UartStopBits, parity: Std.Embedded.Uart.Parity, direction: Std.Embedded.Uart.UartDirection, flow_control: Std.Embedded.Uart.FlowControl, oversampling: Std.Embedded.Uart.Oversampling)
+}
+
+enum Std.Embedded.Uart.UartErrorKind {
+  InvalidArgument
+  CapacityExceeded
+  NotConfigured
+  Unsupported
+  Timeout
+  Busy
+  ResourceConflict
+  InvalidState
+  Parity
+  Framing
+  Overrun
+  Other
+}
+
+error enum Std.Embedded.Uart.UartError {
+  UartError(kind: Std.Embedded.Uart.UartErrorKind)
+}
+
+enum Std.Embedded.Uart.UartReceiveMode {
+  Polling
+  InterruptReceive
+}
+
+enum Std.Embedded.Uart.UartReceiveErrors {
+  UartReceiveErrors(parity: Bool, framing: Bool, overrun: Bool, other: Bool)
+}
+
+enum Std.Embedded.Uart.UartEvent {
+  Received(value: Int)
+  TransmitComplete
+  ReceiveError(errors: Std.Embedded.Uart.UartReceiveErrors)
 }
 
 enum Std.Embedded.I2c.I2cId {

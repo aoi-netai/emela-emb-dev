@@ -1,0 +1,40 @@
+import Std.Embedded.Uart
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardUart, BoardGpio, BoardClock, BoardConsole}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+
+const LED = Gpio.GpioPin(60)
+
+# USART1へ届いた0で消灯、1で点灯。ISR内ではConsoleやListを使わない。
+fn on_uart(id: Uart.UartId, event: Uart.UartEvent) -> () fails {} use {Gpio.Gpio} {
+  event match {
+    Uart.Received(value) -> {
+      (use Gpio.Gpio).write(LED, if value == 1 { Gpio.High } else { Gpio.Low })
+        escape { Gpio.GpioError(_) -> () }
+    }
+    Uart.TransmitComplete -> ()
+    Uart.ReceiveError(errors) -> {
+      (use Gpio.Gpio).write(LED, Gpio.Low) escape { Gpio.GpioError(_) -> () }
+    }
+  }
+}
+
+pub fn main() -> Int use Async {
+  with BoardUart, BoardGpio, BoardClock, BoardConsole {
+    uart = use Uart.Uart
+    (use Gpio.Gpio).configure(LED, Gpio.OutputPushPull(Gpio.NoPull, Gpio.Low))
+    uart.configure(Uart.Uart1, Uart.UartConfig(115200, Uart.Bits8, Uart.One, Uart.NoParity, Uart.Both, Uart.NoFlowControl, Uart.By16))
+    uart.set_receive_mode(Uart.Uart1, Uart.InterruptReceive)
+    Uart.bind_interrupt(Uart.Uart1, on_uart)
+    uart.enable_interrupt(Uart.Uart1, Interrupt.Normal, True)
+    uart.transmit(Uart.Uart1, [69, 109, 101, 108, 97, 10], Int64.from_int(100))
+    (use Console).print_line("UART ready")
+    (use Clock).sleep(60000)
+    uart.disable_interrupt(Uart.Uart1)
+    (use Gpio.Gpio).write(LED, Gpio.Low)
+    0
+  } escape { Uart.UartError(_) -> -1
+    Gpio.GpioError(_) -> -2 }
+}

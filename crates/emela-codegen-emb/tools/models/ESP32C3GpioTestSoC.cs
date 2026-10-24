@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// GPIO test model for the native BSP's MMIO and mtvec-mode-1 trap path.
+// GPIO/UART test model for the native BSP's MMIO and mtvec-mode-1 trap path.
 // Not a complete ESP32-C3: no ROM, flash, watchdogs, analog signals, or IRQ nesting.
 using System;
 using System.Collections.Generic;
@@ -47,6 +47,12 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             counter = new LimitTimer(machine.ClockSource, 16000000, this, "counter", ulong.MaxValue, Direction.Ascending, enabled: true);
             tick = new LimitTimer(machine.ClockSource, 1000, this, "tick", 1, Direction.Descending, enabled: false, eventEnabled: true, autoUpdate: true);
             tick.LimitReached += () => { timerPending = true; UpdateInterrupts(); };
+            uartTimer = new LimitTimer(machine.ClockSource, 1000000, this, "uart1tx", 87, Direction.Descending, enabled: false, eventEnabled: true, autoUpdate: true);
+            uartTimer.LimitReached += () => {
+                uartTxLog.Add(uartTx.Dequeue());
+                if(uartTx.Count == 0) { uartTimer.Enabled = false; uartRaw |= 1u << 14; }
+                UpdateInterrupts();
+            };
             Reset();
         }
 
@@ -54,6 +60,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         {
             registers.Clear();
             text.Clear();
+            uartRx.Clear(); uartTx.Clear(); uartTxLog.Clear(); uartRaw = 0; uartTimer.Reset(); uartTimer.Enabled = false;
             output = enable = input = pending = 0;
             timerPending = false;
             counter.Reset();
@@ -80,6 +87,11 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         {
             switch(offset)
             {
+                case 0x10000: { uint word = uartRx.Count == 0 ? 0 : uartRx.Dequeue(); UpdateInterrupts(); return word; }
+                case 0x10004: return UartRaw();
+                case 0x10008: return UartRaw() & Register(0x1000c);
+                case 0x1001c: return (uint)uartRx.Count | ((uint)uartTx.Count << 16);
+                case 0x1006c: return uartTx.Count == 0 ? 0u : 1u << 4;
                 case 0x1c: return 0; // UART TX FIFO is always ready in this model.
                 case 0x4004: return output;
                 case 0x4020: return enable;
@@ -99,6 +111,14 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
         {
             switch(offset)
             {
+                case 0x10000:
+                    uartTx.Enqueue(value & 255); uartRaw &= ~(1u << 14); uartTimer.Enabled = true; break;
+                case 0x10010: uartRaw &= ~value; break;
+                case 0x10020:
+                    if((value & (1u << 17)) != 0) uartRx.Clear();
+                    if((value & (1u << 18)) != 0) { uartTx.Clear(); uartTimer.Enabled = false; }
+                    registers[offset] = value; break;
+                case 0x10080: registers[offset] = value & ~(1u << 31); break;
                 case 0: text.Append((char)(value & 255)); break;
                 case 0x80: registers[offset] = value & ~(1u << 31); break; // UART update strobe.
                 case 0x4004: output = value; break;
@@ -118,6 +138,19 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             UpdateInterrupts();
         }
 
+        public void ReceiveWord(uint value) {
+            if(uartRx.Count == 128) uartRaw |= 1u << 4;
+            else uartRx.Enqueue(value & 255);
+            UpdateInterrupts();
+        }
+        public void ReceiveError(uint errors) { uartRaw |= errors & 0x1c; UpdateInterrupts(); }
+        public string UartTxWords { get { return String.Join(",", uartTxLog); } }
+        private uint UartRaw() { return uartRaw | (uartRx.Count > 0 ? 1u : 0); }
+        private readonly Queue<uint> uartRx = new Queue<uint>();
+        private readonly Queue<uint> uartTx = new Queue<uint>();
+        private readonly List<uint> uartTxLog = new List<uint>();
+        private uint uartRaw;
+        private readonly LimitTimer uartTimer;
         public long Size { get { return 0xd0000; } }
         public string ConsoleText { get { return text.ToString(); } }
         public IReadOnlyDictionary<int, IGPIO> Connections { get; private set; }
@@ -155,6 +188,7 @@ namespace Antmicro.Renode.Peripherals.Miscellaneous
             uint enabled = Register(0xc2104);
             cpu.MIE = enabled;
             cpu.OnGPIO(1, (enabled & 2) != 0 && Register(0xc2094) == 1 && timerPending);
+            cpu.OnGPIO(3, (enabled & 8) != 0 && Register(0xc2058) == 3 && (UartRaw() & Register(0x1000c)) != 0);
             cpu.OnGPIO(2, (enabled & 4) != 0 && Register(0xc2040) == 2 && EnabledPending() != 0);
         }
 

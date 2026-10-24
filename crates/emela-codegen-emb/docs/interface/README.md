@@ -15,11 +15,15 @@ I²Cの7bit固定・アドレス設定項目の削除・10bit対応の先送り�
 
 ## GPIOの実装状況（2026-10-24）
 
-GPIOは`GpioConfig`・`GpioError`・静的binding・ISR専用read/writeを両BSPへ実装した。[具体的なMCU/profile/pin/対応設定](gpio-interface.md#対応mcuprofilepin設定)と[CLI/Renode確認](../gpio-validation.md)を参照する。`IsrSafe`の新しい言語構文は追加せず、公開署名の`Immediate`とembedded backendの到達検査で制約を実装する。mainの文字列付きエラーとISRの固定エラーが共存する試験も追加した。固定容量のISR→main共有API、通信driverの所有権統合、UART/I²C/SPIの残りの段階は未実装である。
+GPIOは`GpioConfig`・`GpioError`・静的binding・ISR専用read/writeを両BSPへ実装した。[具体的なMCU/profile/pin/対応設定](gpio-interface.md#対応mcuprofilepin設定)と[CLI/Renode確認](../gpio-validation.md)を参照する。`IsrSafe`の新しい言語構文は追加せず、公開署名の`Immediate`とembedded backendの到達検査で制約を実装する。mainの文字列付きエラーとISRの固定エラーが共存する試験も追加した。UARTと固定容量のISR→main共有APIは下記の更新欄を参照する。I²C/SPIとの所有権統合は後続の作業である。
+
+## UART・固定容量共有APIの実装状況（2026-10-24）
+
+UARTは専用エラー、同期送受信、receive_some/discard_input、固定した受信方式、静的bindingとイベント別C入口を両BSPへ実装した。[MCU/profile/controller/pin/設定表](uart-interface.md#初期対応bsp)と[検証](../uart-validation.md)を参照する。共有APIは`Std.Embedded.Interrupt`のWordChannel（4本×16 Int）、try_push/try_popを使う。ISRのchannelとproducer競合をbuildで検査し、満杯はFalseで返す。一般のC FFIや新しい言語構文は追加しない。
 
 ## 確定した実装方針
 
-2026-10-23時点の決定として、4つのペリフェラルの拡充は、既存の同梱BSPであるSTM32F4とESP32-C3の両方で動作することを目標とする。通常処理ではEmelaの言語機能を活かし、ISRに到達する経路へ必要な制約を適用する。採用した計画を本書と各ペリフェラル仕様に記録する。実装順序と完成条件は[実装段階と受け入れ条件](#実装段階と受け入れ条件)に従う。GPIOの実装状況は上記の更新欄に記載し、通信3種の改訂は未実装である。
+2026-10-23時点の決定として、4つのペリフェラルの拡充は、既存の同梱BSPであるSTM32F4とESP32-C3の両方で動作することを目標とする。通常処理ではEmelaの言語機能を活かし、ISRに到達する経路へ必要な制約を適用する。採用した計画を本書と各ペリフェラル仕様に記録する。実装順序と完成条件は[実装段階と受け入れ条件](#実装段階と受け入れ条件)に従う。GPIOの実装状況は上記の更新欄に記載し、UARTの実装状況は下記の更新欄を参照する。I²C/SPIの改訂は未実装である。
 
 回復可能な失敗は、ペリフェラルごとの専用エラー型で返す方針に統一する。同じペリフェラルのエラー型と分類の意味をボード間で揃える。
 
@@ -32,7 +36,7 @@ GPIOは`GpioConfig`・`GpioError`・静的binding・ISR専用read/writeを両BSP
 
 各MCU・board profileで使うcontroller・pin・対応設定は、最初の実装段階で対応表に固定する。共通エラー分類とstatus生成の方針は[エラー定義の共通化](#エラー定義の共通化)に従う。この決定は、現行BSPの対応済み機能や、専用エラー型への移行が実装済みであることを示さない。
 
-UART割り込みの利用者向けインターフェースは、`bind_interrupt`でUART IDと1つのユーザー関数を静的に対応付け、その関数へ`UartId`と`UartEvent`を渡す構成を採用する。BSP向けC入口はイベント別の整数・Bool引数とし、生成bridgeがEmela側でイベントを構築してISR内で直接呼び出す。[利用例](uart-interface.md#採用した利用者向けインターフェース)と[C境界の方針](uart-interface.md#割り込みイベントのc入口)に詳細を記載する。この接続は未実装である。
+UART割り込みの利用者向けインターフェースは、`bind_interrupt`でUART IDと1つのユーザー関数を静的に対応付け、その関数へ`UartId`と`UartEvent`を渡す構成を採用する。BSP向けC入口はイベント別の整数・Bool引数とし、生成bridgeがEmela側でイベントを構築してISR内で直接呼び出す。[利用例](uart-interface.md#採用した利用者向けインターフェース)と[C境界の方針](uart-interface.md#割り込みイベントのc入口)に詳細を記載する。GPIO/UARTの接続を実装した。
 
 ### 実行場所と言語機能
 

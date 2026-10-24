@@ -1,0 +1,51 @@
+import Std.Embedded.Uart
+import Std.Embedded.Gpio
+import Std.Embedded.Interrupt
+import Std.Embedded.Board.{BoardUart, BoardGpio, BoardClock, BoardConsole}
+import Std.Clock.{Clock}
+import Std.Console.{Console}
+const ID = Uart.Uart1
+const LED = Gpio.GpioPin(__OUTPUT__)
+fn config() -> Uart.UartConfig { Uart.UartConfig(115200, Uart.Bits8, Uart.One, Uart.NoParity, Uart.Both, Uart.NoFlowControl, Uart.__OVERSAMPLING__) }
+fn on_uart(id: Uart.UartId, event: Uart.UartEvent) -> () fails {} use {Gpio.Gpio} {
+  level = event match { Uart.TransmitComplete -> Gpio.High
+    _ -> Gpio.Low }
+  (use Gpio.Gpio).write(LED, level) escape { Gpio.GpioError(_) -> () }
+}
+pub fn main() -> Int use Async {
+  with BoardUart, BoardGpio, BoardClock, BoardConsole {
+    uart = use Uart.Uart
+    gpio = use Gpio.Gpio
+    clock = use Clock
+    console = use Console
+    gpio.configure(LED, Gpio.OutputPushPull(Gpio.NoPull, Gpio.Low))
+    uart.configure(ID, Uart.UartConfig(9600, Uart.Bits8, Uart.One, Uart.NoParity, Uart.Both, Uart.NoFlowControl, Uart.__OVERSAMPLING__))
+    uart.configure(ID, config())
+    uart.set_receive_mode(ID, Uart.Polling)
+    ownership = { gpio.configure(Gpio.GpioPin(__TX__), Gpio.Input(Gpio.NoPull))
+      False } escape { Gpio.GpioError(Gpio.ResourceConflict) -> True }
+    rx_timeout = { uart.receive(ID, 1, Int64.from_int(2))
+      False } escape { Uart.UartError(Uart.Timeout) -> True }
+    Uart.bind_interrupt(ID, on_uart)
+    uart.enable_interrupt(ID, Interrupt.Low, True)
+    uart.transmit(ID, [], Int64.from_int(0))
+    uart.transmit(ID, [0, 10, 255], Int64.from_int(100))
+    gpio.write(LED, Gpio.Low)
+    console.print_line("uart: polling")
+    clock.sleep(10)
+    no_consume = { uart.receive(ID, 4, Int64.from_int(0))
+      False } escape { Uart.UartError(Uart.Timeout) -> True }
+    words = uart.receive(ID, 2, Int64.from_int(0))
+    rest = uart.receive_some(ID, 16, Int64.from_int(0))
+    console.print_line("uart: discard")
+    clock.sleep(10)
+    discarded = uart.discard_input(ID, 2)
+    last = uart.receive_some(ID, 16, Int64.from_int(0))
+    uart.disable_interrupt(ID)
+    fixed_mode = { uart.set_receive_mode(ID, Uart.InterruptReceive)
+      False } escape { Uart.UartError(Uart.InvalidState) -> True }
+    console.print_line("uart: complete")
+    if ownership && rx_timeout && no_consume && fixed_mode && words == [0, 10] && rest == [255] && discarded == 2 && last == [5] { 42 } else { -100 }
+  } escape { Uart.UartError(_) -> -1
+    Gpio.GpioError(_) -> -2 }
+}

@@ -81,7 +81,7 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py flash \
 - `configure`は`GpioConfig`のInput／OutputPushPull／OutputOpenDrain／Analog、NoPull／Up／Downを受け入れ、該当portのRCCを有効化する。出力を解放してから指定初期値・出力型を設定し、出力を有効にする。
 - `write`は設定済みoutputに限定しBSRRへ書く。`read`はIDRのpin level、`toggle`はODR latchを使う。
 - ConsoleはprofileのUSARTを115200 baud、8N1へ初期化する。AFRL・AFRHをpinごとに設定し、APB1／APB2の選択を反映する。全profileはHSI・APBのreset値16 MHzを維持する。
-- `Uart.configure`はConsoleに選択したUart ID／115200／Bits8／One／NoParity／Transmit／NoFlowControl／By16を受け入れる。それ以外は`PeripheralError(1)`、timeout付き`transmit`／`receive`は`PeripheralError(2)`になる。
+- UARTは`Uart1`=USART1、TX PA9 / RX PA10、Consoleとは別controllerで同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。専用`UartError`を返す。USART1をConsoleに使う`stm32f429zi`では`ResourceConflict`。[対応設定と状態遷移](../../../docs/interface/uart-interface.md)、[検証](../../../docs/uart-validation.md)を参照する。
 - GPIOは静的bindingとEXTIのRising/Falling/Bothを実装する。共有IRQの優先度、port間のEXTI入力競合、未bindingでの有効化を検査する。read/writeは生成されたISR専用経路でも使える。
 - I²C・SPIのC symbols（`emela_i2c_*`・`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC等のdriverも対象外である。
 

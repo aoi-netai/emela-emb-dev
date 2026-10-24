@@ -8,7 +8,8 @@ import Std.Instant.{Instant}
 import Std.Embedded.Peripheral.{PeripheralError}
 import Std.Embedded.Gpio.{Gpio, GpioPin, PinState, GpioConfig, Edge, GpioError, check_status}
 import Std.Embedded.Interrupt.{InterruptPriority}
-import Std.Embedded.Uart.{Uart, UartId, UartConfig}
+import Std.Embedded.Uart
+import Std.Embedded.Uart.{Uart, UartId, UartConfig, UartReceiveMode, UartError}
 import Std.Embedded.I2c.{I2c, I2cId, I2cConfig, MemoryAddressSize}
 import Std.Embedded.Spi.{Spi, SpiId, SpiConfig}
 
@@ -55,11 +56,33 @@ fn uart_transmit(id: UartId, data: List[Int], timeout_ms: Int64) -> (Int, ())
 @external(c, "__emela_peripheral_uart_receive")
 fn uart_receive(id: UartId, size: Int, timeout_ms: Int64) -> (Int, List[Int])
 
+@external(c, "__emela_peripheral_uart_receive_some")
+fn uart_receive_some(id: UartId, max_size: Int, timeout_ms: Int64) -> (Int, List[Int])
+@external(c, "__emela_peripheral_uart_discard_input")
+fn uart_discard_input(id: UartId, max_size: Int) -> (Int, Int)
+@external(c, "__emela_peripheral_uart_set_receive_mode")
+fn uart_set_receive_mode(id: UartId, mode: UartReceiveMode) -> (Int, ())
+@external(c, "__emela_peripheral_uart_enable_interrupt")
+fn uart_enable_interrupt(id: UartId, priority: InterruptPriority, notify_transmit: Bool) -> (Int, ())
+@external(c, "__emela_peripheral_uart_disable_interrupt")
+fn uart_disable_interrupt(id: UartId) -> (Int, ())
+
 ## Synchronous UART operations on the selected board.
 pub handler BoardUart: Uart {
-  fn configure(id, config) { checked(uart_configure(id, config)) }
-  fn transmit(id, data, timeout_ms) { checked(uart_transmit(id, data, timeout_ms)) }
-  fn receive(id, size, timeout_ms) { checked(uart_receive(id, size, timeout_ms)) }
+  fn configure(id, config) { checked_uart(uart_configure(id, config)) }
+  fn transmit(id, data, timeout_ms) { checked_uart(uart_transmit(id, data, timeout_ms)) }
+  fn receive(id, size, timeout_ms) { checked_uart(uart_receive(id, size, timeout_ms)) }
+  fn receive_some(id, max_size, timeout_ms) { checked_uart(uart_receive_some(id, max_size, timeout_ms)) }
+  fn discard_input(id, max_size) { checked_uart(uart_discard_input(id, max_size)) }
+  fn set_receive_mode(id, mode) { checked_uart(uart_set_receive_mode(id, mode)) }
+  fn enable_interrupt(id, priority, notify_transmit) { checked_uart(uart_enable_interrupt(id, priority, notify_transmit)) }
+  fn disable_interrupt(id) { checked_uart(uart_disable_interrupt(id)) }
+}
+
+fn checked_uart[A](outcome: (Int, A)) -> A fails UartError {
+  (status, value) = outcome
+  Uart.check_status(status)
+  value
 }
 
 @external(c, "__emela_peripheral_i2c_configure")

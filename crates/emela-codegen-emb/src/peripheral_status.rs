@@ -9,4 +9,7 @@ pub(super) const STATUSES: &[(&str, i32, &str)] = &[
     ("RESOURCE_CONFLICT", -7, "ResourceConflict"),
     ("INVALID_STATE", -8, "InvalidState"),
     ("OTHER", -9, "Other"),
+    ("PARITY", -10, "Other"),
+    ("FRAMING", -11, "Other"),
+    ("OVERRUN", -12, "Other"),
 ];
