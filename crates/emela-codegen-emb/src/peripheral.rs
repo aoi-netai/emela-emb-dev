@@ -16,10 +16,10 @@ pub(super) struct Operation {
 
 pub(super) fn is_binding(function: &Function) -> bool {
     (function.name.starts_with(MODULE)
-        || function.name.split('[').next().is_some_and(|name| matches!(name, "Std.Embedded.Gpio.register_interrupt" | "Std.Embedded.Gpio.error_kind" | "Std.Embedded.Uart.register_interrupt" | "Std.Embedded.Uart.error_kind" | "Std.Embedded.I2c.register_interrupt" | "Std.Embedded.I2c.error_kind" | "Std.Embedded.Interrupt.try_push" | "Std.Embedded.Interrupt.try_pop")))
+        || function.name.split('[').next().is_some_and(|name| matches!(name, "Std.Embedded.Gpio.register_interrupt" | "Std.Embedded.Gpio.error_kind" | "Std.Embedded.Uart.register_interrupt" | "Std.Embedded.Uart.error_kind" | "Std.Embedded.I2c.register_interrupt" | "Std.Embedded.I2c.error_kind" | "Std.Embedded.Spi.error_kind" | "Std.Embedded.Interrupt.try_push" | "Std.Embedded.Interrupt.try_pop")))
         && function.external.as_ref().is_some_and(|external| {
             external.binding("c").is_some_and(|binding| {
-                matches!(&binding.host, emela_core::HostRef::Global(symbol) if symbol.starts_with(SYMBOL) || symbol.starts_with("__emela_gpio_") || symbol.starts_with("__emela_uart_") || symbol.starts_with("__emela_i2c_") || symbol.starts_with("__emela_shared_"))
+                matches!(&binding.host, emela_core::HostRef::Global(symbol) if symbol.starts_with(SYMBOL) || symbol.starts_with("__emela_gpio_") || symbol.starts_with("__emela_uart_") || symbol.starts_with("__emela_i2c_") || symbol.starts_with("__emela_spi_") || symbol.starts_with("__emela_shared_"))
             })
         })
 }
@@ -68,14 +68,18 @@ pub(super) fn resolve(
             fails: false,
         }));
     }
-    if let Some((module, prefix)) = [("Gpio", "gpio"), ("Uart", "uart"), ("I2c", "i2c")]
-        .into_iter()
-        .find(|(module, _)| {
-            function
-                .name
-                .starts_with(&format!("Std.Embedded.{module}."))
-        })
-    {
+    if let Some((module, prefix)) = [
+        ("Gpio", "gpio"),
+        ("Uart", "uart"),
+        ("I2c", "i2c"),
+        ("Spi", "spi"),
+    ]
+    .into_iter()
+    .find(|(module, _)| {
+        function
+            .name
+            .starts_with(&format!("Std.Embedded.{module}."))
+    }) {
         let item = function
             .name
             .strip_prefix(&format!("Std.Embedded.{module}."))
@@ -150,6 +154,9 @@ pub(super) fn resolve(
             &function.name,
             "invalid standard board binding identity",
         ));
+    }
+    if spi_bridge::is_operation(item) {
+        return spi_bridge::resolve(flow, function);
     }
     let operation = match item {
         "clock_sleep" => Operation {
@@ -402,6 +409,7 @@ fn prototype(
 pub(super) fn headers(
     flow: &emela_lir::Module,
     emitted: &HashSet<FnId>,
+    capacity: u16,
 ) -> Result<Vec<GeneratedFile>, Vec<Error>> {
     let mut used = BTreeSet::new();
     for (_, function) in flow.functions.iter().filter(|(id, _)| emitted.contains(id)) {
@@ -541,8 +549,15 @@ pub(super) fn headers(
                                 emit_enum(&flow.core, id, &mut written, &mut writer)?;
                             }
                         }
-                        writer.line(&prototype(&flow.core, &peripheral, op)?);
+                        if peripheral != "spi"
+                            || !spi_bridge::is_operation(&format!("spi_{}", op.name))
+                        {
+                            writer.line(&prototype(&flow.core, &peripheral, op)?);
+                        }
                     }
+                }
+                if peripheral == "spi" {
+                    spi_bridge::header(capacity, &mut writer);
                 }
             }
         }
@@ -555,7 +570,11 @@ pub(super) fn headers(
     Ok(files)
 }
 
-fn to_board(layouts: &TypeLayouts<'_>, ty: TypeId, expression: &str) -> Result<String, Vec<Error>> {
+pub(super) fn to_board(
+    layouts: &TypeLayouts<'_>,
+    ty: TypeId,
+    expression: &str,
+) -> Result<String, Vec<Error>> {
     if let Type::Enum(id, _) = layouts.types[ty] {
         let def = &layouts.core.enums[id];
         if !layouts.enum_is_i32(id) {
@@ -599,7 +618,9 @@ pub(super) fn emit_adapter(
     };
     writer.begin_block(&signature(layouts, function, name, true, false, false));
     let variables: Vec<_> = function.params.iter().map(|&p| variable_name(p)).collect();
-    if op.peripheral == "interrupt" {
+    if op.peripheral == "spi" && spi_bridge::is_operation(&format!("spi_{}", op.name)) {
+        spi_bridge::emit_adapter(flow, layouts, function, &op, &variables, capacity, writer)?;
+    } else if op.peripheral == "interrupt" {
         if op.name == "try_push" {
             writer.ret(Some(&format!(
                 "emela_shared_queue_push({}, {})",
@@ -624,7 +645,9 @@ pub(super) fn emit_adapter(
             op.peripheral,
             to_board(layouts, op.params[0], &variables[0])?
         )));
-    } else if matches!(op.peripheral.as_str(), "gpio" | "uart" | "i2c") && op.name == "error_kind" {
+    } else if matches!(op.peripheral.as_str(), "gpio" | "uart" | "i2c" | "spi")
+        && op.name == "error_kind"
+    {
         let Type::Enum(id, _) = flow.core.types[function.ret] else {
             unreachable!()
         };

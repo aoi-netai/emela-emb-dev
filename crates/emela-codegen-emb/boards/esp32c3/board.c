@@ -15,6 +15,10 @@
 #include "emela_i2c.h"
 #define BOARD_I2C 1
 #endif
+#if __has_include("emela_spi.h")
+#include "emela_spi.h"
+#define BOARD_SPI 1
+#endif
 #if __has_include("emela_clock.h")
 #include "emela_clock.h"
 #define BOARD_CLOCK 1
@@ -56,11 +60,15 @@ static volatile uint32_t configured_outputs;
 #ifdef BOARD_GPIO
 static volatile uint32_t configured_inputs;
 #endif
-#if defined(BOARD_GPIO) || defined(BOARD_UART)
+#if defined(BOARD_GPIO) || defined(BOARD_UART) || defined(BOARD_SPI)
 static bool uart_pins_owned;
 #endif
-#if defined(BOARD_GPIO) || defined(BOARD_I2C)
+#if defined(BOARD_GPIO) || defined(BOARD_I2C) || defined(BOARD_SPI)
 static bool i2c_pins_owned;
+#endif
+#if defined(BOARD_GPIO) || defined(BOARD_SPI)
+static bool spi_pins_owned;
+static uint32_t spi_cs_owned;
 #endif
 static unsigned event_locked;
 static volatile unsigned in_trap;
@@ -211,6 +219,7 @@ static int32_t gpio_priority;
 #define GPIO_CPU_IRQ UINT32_C(2)
 
 static int32_t gpio_pin_status(EmelaGpioPin pin) {
+    if (pin.id >= 0 && pin.id <= 21 && ((spi_pins_owned && (pin.id == 0 || pin.id == 1 || pin.id == 10)) || (spi_cs_owned & BIT((uint32_t)pin.id)))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (i2c_pins_owned && (pin.id == 6 || pin.id == 7)) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (uart_pins_owned && (pin.id == 4 || pin.id == 5)) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (pin.id < 0 || pin.id > 21) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
@@ -346,7 +355,7 @@ static void gpio_interrupt(void) {
 }
 #endif
 
-#if defined(BOARD_CLOCK) || defined(BOARD_UART) || defined(BOARD_I2C)
+#if defined(BOARD_CLOCK) || defined(BOARD_UART) || defined(BOARD_I2C) || defined(BOARD_SPI)
 static uint64_t timer_ticks(void) {
     TIMER(0x04u) = BIT(30);
     while (!(TIMER(0x04u) & BIT(29))) {}
@@ -354,6 +363,7 @@ static uint64_t timer_ticks(void) {
     uint32_t lo = TIMER(0x44u);
     return ((uint64_t)hi << 32) | lo;
 }
+#include "monotonic.inc"
 
 #endif
 #ifdef BOARD_UART
@@ -362,14 +372,14 @@ static uint64_t timer_ticks(void) {
 #ifdef BOARD_I2C
 #include "i2c.inc"
 #endif
+#ifdef BOARD_SPI
+#include "spi.inc"
+#endif
 #ifdef BOARD_CLOCK
 int64_t emela_board_clock_now(void) {
     require_main();
-    uint32_t previous = irq_disable();
-    uint64_t ticks = timer_ticks();
-    irq_restore(previous);
-    /* Monotonic milliseconds with a virtual Unix epoch, without a wall-clock RTC. */
-    return (int64_t)(ticks / TICKS_PER_MS);
+    /* Boot-time zero is the board's virtual epoch. */
+    return (int64_t)peripheral_now_ms();
 }
 
 #ifdef EMELA_HAS_TASK_RUNTIME

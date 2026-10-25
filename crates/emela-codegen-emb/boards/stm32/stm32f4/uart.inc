@@ -7,10 +7,11 @@ static uint32_t uart_hw_lock(void) {
     __asm volatile("cpsid i" ::: "memory"); return previous;
 }
 static void uart_hw_unlock(uint32_t previous) { __asm volatile("msr primask, %0" :: "r"(previous) : "memory"); }
-static uint64_t uart_hw_now(void) {
-    uint32_t previous = uart_hw_lock(); uint64_t now = elapsed_ms; uart_hw_unlock(previous); return now;
-}
+static uint64_t uart_hw_now(void) { return peripheral_now_ms(); }
 static int32_t uart_hw_validate(EmelaUartConfig config) {
+#if BOARD_HAS_SPI
+    if (spi_cs_owned[0] & ((1u << 9) | (1u << 10))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+#endif
 #if BOARD_HAS_GPIO
     if (configured_pins[0] & ((1u << 9) | (1u << 10))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
 #endif

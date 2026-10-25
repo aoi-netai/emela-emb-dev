@@ -6,23 +6,8 @@
 #define APP_I2C(offset) REG(UINT32_C(0x60013000) + (offset))
 #define I2C_CPU_IRQ 4u
 #define I2C_REQUIRE_MAIN() require_main()
-static uint64_t i2c_clock_ticks, i2c_clock_ms;
-static uint32_t i2c_clock_fraction;
 static bool i2c_c3_active;
-static uint64_t i2c_hw_now(void) {
-    /* Extend the 52-bit system timer across wrap. Masking also prevents a
-     * UART ISR from replacing the latched snapshot between its hi/lo reads.
-     */
-    uint32_t previous = irq_disable();
-    uint64_t current = timer_ticks();
-    uint64_t delta = ((current - i2c_clock_ticks) & ((UINT64_C(1) << 52) - 1u)) + i2c_clock_fraction;
-    i2c_clock_ticks = current;
-    i2c_clock_ms += delta / TICKS_PER_MS;
-    i2c_clock_fraction = (uint32_t)(delta % TICKS_PER_MS);
-    uint64_t now = i2c_clock_ms;
-    irq_restore(previous);
-    return now;
-}
+static uint64_t i2c_hw_now(void) { return peripheral_now_ms(); }
 static bool i2c_expired(uint64_t start, int64_t timeout);
 static void i2c_c3_timing(EmelaI2cConfig config, uint32_t *divider, uint32_t *low, uint32_t *high) {
     uint32_t hz = (uint32_t)config.clock_speed_hz;
@@ -34,6 +19,9 @@ static void i2c_c3_timing(EmelaI2cConfig config, uint32_t *divider, uint32_t *lo
     *low = unit * low_factor; *high = unit * high_factor;
 }
 static int32_t i2c_hw_validate(EmelaI2cConfig config) {
+#if defined(BOARD_SPI)
+    if (spi_cs_owned & (BIT(6) | BIT(7))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+#endif
 #ifdef BOARD_GPIO
     if (configured_inputs & (BIT(6) | BIT(7))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
 #endif

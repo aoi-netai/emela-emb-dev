@@ -145,9 +145,20 @@ fn i2c_bsp_register_models_preserve_wire_protocol_and_recover_from_errors() {
     for (board, bsp) in [
         (
             "TEST_STM32",
-            include_str!("../../boards/stm32/stm32f4/i2c.inc"),
+            concat!(
+                include_str!("../../boards/stm32/stm32f4/monotonic.inc"),
+                "\n",
+                include_str!("../../boards/stm32/stm32f4/i2c.inc")
+            ),
         ),
-        ("TEST_ESP32", include_str!("../../boards/esp32c3/i2c.inc")),
+        (
+            "TEST_ESP32",
+            concat!(
+                include_str!("../../boards/esp32c3/monotonic.inc"),
+                "\n",
+                include_str!("../../boards/esp32c3/i2c.inc")
+            ),
+        ),
     ] {
         let temp = TempDir::new();
         for file in &output.files {
@@ -175,6 +186,7 @@ fn i2c_bsp_register_models_preserve_wire_protocol_and_recover_from_errors() {
                 "-Werror",
                 "-Wno-unused-function",
                 "-Wno-unused-parameter",
+                "-Wno-unused-variable",
                 "-fsanitize=undefined,address",
                 "-fno-omit-frame-pointer",
                 "-D",

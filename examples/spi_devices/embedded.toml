@@ -1,0 +1,9 @@
+heap_bytes = 8192
+string_capacity = 64
+peripheral_buffer_capacity = 16
+fiber_capacity = 4
+frame_capacity = 12
+frame_bytes = 1536
+task_capacity = 2
+event_capacity = 2
+deferred_capacity = 1

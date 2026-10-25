@@ -5,14 +5,15 @@
 import Std.Clock.{Clock}
 import Std.Console.{Console}
 import Std.Instant.{Instant}
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Gpio
 import Std.Embedded.Gpio.{Gpio, GpioPin, PinState, GpioConfig, Edge, GpioError, check_status}
 import Std.Embedded.Interrupt.{InterruptPriority}
 import Std.Embedded.Uart
 import Std.Embedded.Uart.{Uart, UartId, UartConfig, UartReceiveMode, UartError}
 import Std.Embedded.I2c
 import Std.Embedded.I2c.{I2c, I2cId, I2cConfig, MemoryAddressSize, I2cError}
-import Std.Embedded.Spi.{Spi, SpiId, SpiConfig}
+import Std.Embedded.Spi
+import Std.Embedded.Spi.{Spi, SpiId, SpiConfig, SpiError, SpiDeviceConfig, SpiDevice, SpiOperation, SpiTransactionError, SpiFailure, GpioFailure}
 
 @external(c, "__emela_peripheral_gpio_configure")
 fn gpio_configure(pin: GpioPin, config: GpioConfig) -> (Int, ())
@@ -178,18 +179,43 @@ fn spi_receive(id: SpiId, size: Int, timeout_ms: Int64) -> (Int, List[Int])
 @external(c, "__emela_peripheral_spi_transfer")
 fn spi_transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> (Int, List[Int])
 
-## Synchronous SPI operations on the selected board. Use GPIO for chip select.
+@external(c, "__emela_peripheral_spi_create_device")
+fn spi_create_device(config: SpiDeviceConfig) -> (Int, Int, Int, SpiDevice)
+@external(c, "__emela_peripheral_spi_transaction")
+fn spi_transaction(device: SpiDevice, operations: List[SpiOperation], timeout_ms: Int64) -> (Int, Int, Int, List[List[Int]])
+@external(c, "__emela_peripheral_spi_recover")
+fn spi_recover(id: SpiId) -> (Int, Int, Int, ())
+
+## Synchronous SPI operations. Basic transfers leave chip select to the caller.
 pub handler BoardSpi: Spi {
-  fn configure(id, config) { checked(spi_configure(id, config)) }
-  fn transmit(id, data, timeout_ms) { checked(spi_transmit(id, data, timeout_ms)) }
-  fn receive(id, size, timeout_ms) { checked(spi_receive(id, size, timeout_ms)) }
-  fn transfer(id, data, timeout_ms) { checked(spi_transfer(id, data, timeout_ms)) }
+  fn configure(id, config) { checked_spi(spi_configure(id, config)) }
+  fn transmit(id, data, timeout_ms) { checked_spi(spi_transmit(id, data, timeout_ms)) }
+  fn receive(id, size, timeout_ms) { checked_spi(spi_receive(id, size, timeout_ms)) }
+  fn transfer(id, data, timeout_ms) { checked_spi(spi_transfer(id, data, timeout_ms)) }
+  fn create_device(config) { checked_spi_transaction(spi_create_device(config)) }
+  fn transaction(device, operations, timeout_ms) { checked_spi_transaction(spi_transaction(device, operations, timeout_ms)) }
+  fn recover(id) { checked_spi_transaction(spi_recover(id)) }
 }
 
-# The bridge returns status zero on success. Preserve the board's error code on failure.
-fn checked[A](outcome: (Int, A)) -> A fails PeripheralError {
-  (code, value) = outcome
-  if code == 0 { value } else { fail PeripheralError(code) }
+fn checked_spi[A](outcome: (Int, A)) -> A fails SpiError {
+  (status, value) = outcome
+  Spi.check_status(status)
+  value
+}
+fn checked_spi_transaction[A](outcome: (Int, Int, Int, A)) -> A fails SpiTransactionError {
+  (source, status, cleanup_status, value) = outcome
+  if source == 0 && cleanup_status == 0 { value } else {
+    primary = if source == 2 {
+      { Gpio.check_status(status)
+        None } escape { Gpio.GpioError(kind) -> Some(GpioFailure(kind)) }
+    } else if source != 0 {
+      { Spi.check_status(status)
+        None } escape { Spi.SpiError(kind) -> Some(SpiFailure(kind)) }
+    } else { None }
+    cleanup = { Gpio.check_status(cleanup_status)
+      None } escape { Gpio.GpioError(kind) -> Some(kind) }
+    fail SpiTransactionError(primary, cleanup)
+  }
 }
 
 @external(c, "__emela_peripheral_clock_sleep")

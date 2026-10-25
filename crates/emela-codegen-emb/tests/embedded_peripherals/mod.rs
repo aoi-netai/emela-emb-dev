@@ -4,6 +4,7 @@ mod clock;
 mod diagnostics;
 mod gpio;
 mod i2c;
+mod spi;
 mod uart;
 
 fn source_output(source: &str) -> Output {

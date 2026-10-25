@@ -19,6 +19,10 @@
 #include "emela_i2c.h"
 #define BOARD_HAS_I2C 1
 #endif
+#if __has_include("emela_spi.h")
+#include "emela_spi.h"
+#define BOARD_HAS_SPI 1
+#endif
 
 #define REG(address) (*(volatile uint32_t *)(uintptr_t)(address))
 #define GPIO_REG(port, offset) REG(UINT32_C(0x40020000) + (port) * UINT32_C(0x400) + (offset))
@@ -58,11 +62,15 @@ volatile uint32_t board_boot_initialized;
 static unsigned event_locked;
 static volatile uint32_t output_pins[EMELA_GPIO_PORT_COUNT];
 static bool uart_ready;
-#if BOARD_HAS_GPIO || BOARD_HAS_I2C
+#if BOARD_HAS_GPIO || BOARD_HAS_I2C || BOARD_HAS_SPI
 static bool i2c_pins_owned;
 #endif
-#if BOARD_HAS_GPIO || BOARD_HAS_UART
+#if BOARD_HAS_GPIO || BOARD_HAS_UART || BOARD_HAS_SPI
 static bool uart_pins_owned;
+#endif
+#if BOARD_HAS_GPIO || BOARD_HAS_SPI
+static bool spi_pins_owned;
+static uint32_t spi_cs_owned[EMELA_GPIO_PORT_COUNT];
 #endif
 static volatile uint64_t elapsed_ms;
 #ifdef EMELA_HAS_TASK_RUNTIME
@@ -173,6 +181,8 @@ static int32_t gpio_pin_status(EmelaGpioPin pin) {
         return EMELA_PERIPHERAL_INVALID_ARGUMENT;
     uint32_t port = (uint32_t)pin.id / 16u, bit = UINT32_C(1) << ((uint32_t)pin.id % 16u);
     if (!(gpio_pin_masks[port] & bit)) return EMELA_PERIPHERAL_INVALID_ARGUMENT;
+    if ((spi_pins_owned && pin.id >= 29 && pin.id <= 31) || (spi_cs_owned[port] & bit))
+        return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
     if (pin.id == EMELA_CONSOLE_TX_PIN || pin.id == EMELA_CONSOLE_RX_PIN
         || (uart_pins_owned && (pin.id == 9 || pin.id == 10))
         || (i2c_pins_owned && (pin.id == 22 || pin.id == 23)))
@@ -346,11 +356,16 @@ void EXTI9_5_IRQHandler(void) { gpio_exti(UINT32_C(0x3e0)); }
 void EXTI15_10_IRQHandler(void) { gpio_exti(UINT32_C(0xfc00)); }
 #endif
 
+#include "monotonic.inc"
+
 #if BOARD_HAS_UART
 #include "uart.inc"
 #endif
 #if BOARD_HAS_I2C
 #include "i2c.inc"
+#endif
+#if BOARD_HAS_SPI
+#include "spi.inc"
 #endif
 
 void emela_board_console_print_line(const char *data, uint16_t length) {
@@ -379,12 +394,8 @@ void emela_board_event_unlock(uint32_t previous) {
 
 int64_t emela_board_clock_now(void) {
     main_context();
-    uint32_t previous = interrupt_state();
-    __asm volatile("cpsid i" ::: "memory");
-    uint64_t value = elapsed_ms;
-    __asm volatile("msr primask, %0" :: "r"(previous) : "memory");
-    /* The epoch is boot-time zero; this package does not supply a wall-clock RTC. */
-    return (int64_t)value;
+    /* Boot-time zero is the board's virtual epoch. */
+    return (int64_t)peripheral_now_ms();
 }
 
 #ifdef EMELA_HAS_TASK_RUNTIME

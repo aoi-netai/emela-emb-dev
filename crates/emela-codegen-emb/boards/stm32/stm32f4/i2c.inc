@@ -9,9 +9,7 @@ static uint32_t i2c_hw_lock(void) {
     __asm volatile("cpsid i" ::: "memory"); return previous;
 }
 static void i2c_hw_unlock(uint32_t previous) { __asm volatile("msr primask, %0" :: "r"(previous) : "memory"); }
-static uint64_t i2c_hw_now(void) {
-    uint32_t previous = i2c_hw_lock(); uint64_t now = elapsed_ms; i2c_hw_unlock(previous); return now;
-}
+static uint64_t i2c_hw_now(void) { return peripheral_now_ms(); }
 static bool i2c_expired(uint64_t start, int64_t timeout);
 static uint32_t i2c_ccr(EmelaI2cConfig config) {
     uint32_t factor = config.clock_speed_hz <= 100000 ? 2u : config.duty_cycle ? 25u : 3u;
@@ -19,6 +17,9 @@ static uint32_t i2c_ccr(EmelaI2cConfig config) {
     return (UINT32_C(16000000) + denominator - 1u) / denominator;
 }
 static int32_t i2c_hw_validate(EmelaI2cConfig config) {
+#if BOARD_HAS_SPI
+    if (spi_cs_owned[1] & ((1u << 6) | (1u << 7))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+#endif
 #if BOARD_HAS_GPIO
     if (configured_pins[1] & ((1u << 6) | (1u << 7))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
 #endif

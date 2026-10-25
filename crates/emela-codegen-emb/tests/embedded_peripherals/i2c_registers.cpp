@@ -44,6 +44,7 @@ static void emela_validation_stack_record_sp(void) {}
 static constexpr uintptr_t base = 0x40005400;
 static volatile uint64_t elapsed_ms;
 static uint32_t interrupt_state(void) { elapsed_ms = ++ticks / 16u; return 0; }
+#define SYSTICK_VALUE REG(0xe000e018)
 #define RCC_AHB1ENR REG(0x40023830)
 #define RCC_APB1ENR REG(0x40023840)
 #define GPIO_REG(port, offset) REG(0x40020000u + (port) * 0x400u + (offset))

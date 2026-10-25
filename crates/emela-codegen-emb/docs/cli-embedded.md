@@ -162,7 +162,7 @@ Hardware = "ports/{board}/hardware.emel"
 
 heapとpoolは別の固定領域であり、使用するruntimeに応じて生成される。実際に必要な容量はアプリの型・同時生存数・targetのC layoutによる。frameの大きさはC compile時にも検査する。上のproject設定は任意のアプリの推奨値や最大使用量を表すものではない。
 
-転送bufferはC stack上の`uint16_t`配列で、送信または受信で`2 × capacity` byte、SPI同時送受信では2配列合計`4 × capacity` byteを使う。固定上限でも小さなstackに収まるとは限らない。heap・String・scheduler poolの実行時容量不足はdefect契約に従い、標準bridgeの転送容量超過は`PeripheralError(-2)`になる。詳細は[標準C bridge](embedded-peripherals.md)を参照する。
+転送bufferはC stack上の`uint16_t`配列で、送信または受信で`2 × capacity` byte、SPI同時送受信では2配列合計`4 × capacity` byteを使う。SPI transactionではdescriptor・TX/RXの配列で合計`12 × capacity` byteを使う。固定上限でも小さなstackに収まるとは限らない。heap・String・scheduler poolの実行時容量不足はdefect契約に従い、通信APIの転送容量超過は各専用エラーの`CapacityExceeded`になり、SPI transactionでは`primary`へ保持する。詳細は[標準C bridge](embedded-peripherals.md)を参照する。
 
 ### 外部Cとの接続
 

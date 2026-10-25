@@ -1,6 +1,6 @@
-# The Emela interface for SPI. Chip select is controlled through GPIO.
+# Synchronous SPI bus operations and devices with managed chip select.
 # Transfers are synchronous and must not be called from interrupt context.
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Gpio.{GpioPin, PinState, GpioErrorKind}
 
 pub enum SpiId { Spi1, Spi2, Spi3, Spi4, Spi5, Spi6 }
 pub enum SpiMode { Master, Slave }
@@ -20,9 +20,45 @@ pub type SpiConfig(
   bit_order: BitOrder
 )
 
+pub enum SpiErrorKind {
+  InvalidArgument, CapacityExceeded, NotConfigured, Unsupported, Timeout,
+  Busy, ResourceConflict, InvalidState, ModeFault, Overrun, Other
+}
+pub error SpiError(kind: SpiErrorKind)
+
+## A device description; create_device reserves and initializes its resources.
+pub type SpiDeviceConfig(
+  bus: SpiId, config: SpiConfig, cs: GpioPin, active: PinState,
+  setup_us: Int64, hold_us: Int64
+)
+## A checked board handle. Unknown or uninitialized slots are rejected at runtime.
+pub type SpiDevice(slot: Int)
+pub enum SpiOperation {
+  Write(data: List[Int])
+  Read(size: Int)
+  Transfer(data: List[Int])
+}
+pub enum SpiTransactionFailure {
+  SpiFailure(kind: SpiErrorKind)
+  GpioFailure(kind: GpioErrorKind)
+}
+## The first failure and a separate failure while deasserting chip select.
+pub error SpiTransactionError(
+  primary: Option[SpiTransactionFailure], cleanup: Option[GpioErrorKind]
+)
+
+@external(c, "__emela_spi_error_kind")
+fn error_kind(status: Int) -> SpiErrorKind use {}
+pub fn check_status(status: Int) -> () fails SpiError {
+  if status != 0 { fail SpiError(error_kind(status)) }
+}
+
 pub effect Spi {
-  fn configure(id: SpiId, config: SpiConfig) -> () fails PeripheralError
-  fn transmit(id: SpiId, data: List[Int], timeout_ms: Int64) -> () fails PeripheralError
-  fn receive(id: SpiId, size: Int, timeout_ms: Int64) -> List[Int] fails PeripheralError
-  fn transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> List[Int] fails PeripheralError
+  fn configure(id: SpiId, config: SpiConfig) -> () fails SpiError
+  fn transmit(id: SpiId, data: List[Int], timeout_ms: Int64) -> () fails SpiError
+  fn receive(id: SpiId, size: Int, timeout_ms: Int64) -> List[Int] fails SpiError
+  fn transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> List[Int] fails SpiError
+  fn create_device(config: SpiDeviceConfig) -> SpiDevice fails SpiTransactionError
+  fn transaction(device: SpiDevice, operations: List[SpiOperation], timeout_ms: Int64) -> List[List[Int]] fails SpiTransactionError
+  fn recover(id: SpiId) -> () fails SpiTransactionError
 }

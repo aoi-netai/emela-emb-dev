@@ -21,7 +21,7 @@ generated/runtimeの所有権・ISR・defect契約は[実装状況](implementati
 - GPIOは初期値付き設定・専用エラー・静的callback bindingとISR専用read/writeを実装する。[GPIO仕様](interface/gpio-interface.md)と[CLI/Renode確認](gpio-validation.md)を参照する。
 - UARTはConsoleと分離したUART1の同期送受信・受信ユーティリティ・静的割り込みbindingを実装する。[対応設定](interface/uart-interface.md)と[Renode検証](uart-validation.md)を参照する。
 - I²Cは両BSPで7bit master、memoryアクセス、応答確認、専用エラーと転送単位の割り込み通知を提供する。[対応設定](interface/i2c-interface.md)と[検証](i2c-validation.md)を参照する。
-- SPIのC driverは含まない。到達する場合は利用者が生成headerに従う実装を追加する必要がある。
+- SPIは両BSPの`Spi2`でMaster/TwoLine・8/16bit、CS付きのdevice/transaction/recoverを提供する。[設定・pin](interface/spi-interface.md)と[検証](spi-validation.md)を参照する。
 - Clockはmain側で開始した1つの物理sleepをIRQによる1 ms刻みの通知へ接続する。同時に複数の物理sleepを要求する構成はBSPの容量契約を超える。
 - 本BSPの `Clock.now` は起動時を明示的な仮想epoch 0とする経過msであり、RTC日時ではない。複数core/threadでの共有や実機固有のpin・電源・clock設定はボード実装側で管理する。
 

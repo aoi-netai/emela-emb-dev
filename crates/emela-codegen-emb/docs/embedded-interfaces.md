@@ -34,7 +34,7 @@
 | `Std.Embedded.Gpio` | ピン設定、読み書き、反転、割り込み元の設定 | `BoardGpio` | [GPIO](interface/gpio-interface.md) |
 | `Std.Embedded.Uart` | UART設定、データの送受信 | `BoardUart` | [UART](interface/uart-interface.md) |
 | `Std.Embedded.I2c` | 設定、master送受信、メモリアクセス、応答確認 | `BoardI2c` | [I²C](interface/i2c-interface.md) |
-| `Std.Embedded.Spi` | 設定、送信、受信、同時送受信 | `BoardSpi` | [SPI](interface/spi-interface.md) |
+| `Std.Embedded.Spi` | 設定、送信、受信、同時送受信、CS付きtransaction | `BoardSpi` | [SPI](interface/spi-interface.md) |
 | `Std.Clock` | `sleep`、`now` | `BoardClock` | — |
 | `Std.Console` | 通常・エラーの行出力 | `BoardConsole` | — |
 
@@ -42,7 +42,7 @@
 
 handlerは`Std.Embedded.Board`からimportし、`with`で適用する。GPIOの論理ピン番号とUART等のIDがどの物理機器に対応するかは、ボード実装が定める。GPIOは`bind_interrupt`でpinと名前付き関数を静的に対応付け、ISR制約を検査した上でイベントを直接渡す。割り込みの有効化・停止は別のoperationで行う。
 
-GPIO・UART・I²Cの失敗は、それぞれ`GpioError(kind)`・`UartError(kind)`・`I2cError(kind)`で扱う。共通C statusを機器ごとの分類へ変換し、未知の非0は`Other`になる。SPIは`Std.Embedded.Peripheral.PeripheralError(code)`を使う。C境界では0が成功、−1が不正な引数、−2が転送buffer容量超過である。設定・静的ISR binding・状態遷移は各機器の仕様を参照する。
+GPIO・UART・I²C・SPIの基本操作の失敗は、それぞれ`GpioError(kind)`・`UartError(kind)`・`I2cError(kind)`・`SpiError(kind)`で扱う。共通C statusを機器ごとの分類へ変換し、未知の非0は`Other`になる。SPIのdevice初期化・transaction・復旧は、最初の失敗とCS解除失敗を別々に持つ`SpiTransactionError(primary, cleanup)`を使う。C境界では0が成功、−1が不正な引数、−2が転送buffer容量超過である。設定・静的ISR binding・状態遷移は各機器の仕様を参照する。
 
 ## 最小の利用例
 

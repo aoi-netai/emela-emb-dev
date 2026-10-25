@@ -47,7 +47,7 @@ startup自身がgp・sp・bss・guardを初期化し、256byte整列した32entr
 - ConsoleはUART0 TX=GPIO21 / RX=GPIO20、115200/8N1。通常UARTは`Uart1`=UART1、TX=GPIO4 / RX=GPIO5に分離し、同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。UART0は`UartError(ResourceConflict)`で拒否する。[対応設定・IRQ・復旧](../../docs/interface/uart-interface.md)、[検証](../../docs/uart-validation.md)を参照する。
 - `Clock.now`は起動からの単調増加millisecondを仮想Unix epochへ対応させる。実日時のRTCではない。`Clock.sleep`は同時1件をSysTimer割り込みで完了する。
 - I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはGPIO6/GPIO7、I2C0。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../docs/interface/i2c-interface.md)、[検証](../../docs/i2c-validation.md)を参照する。
-- SPIのC symbols（`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC・無線・USB consoleも対象外である。GPIO18/19を解放するprofileは現在提供しない。
+- SPIは`Spi2`=SPI2、SCK=GPIO0 / MISO=GPIO10 / MOSI=GPIO1、GPIO matrix、XTAL 40MHz。Master/TwoLine・8/16bit・mode 0〜3・両bit順を実装する。CSは基本APIではアプリが制御し、上位APIでは固定4件のdeviceへ予約してtransaction/recoverで管理する。SPI・GPIO・UART・I²C間のpin競合を拒否する。[対応設定と復旧](../../docs/interface/spi-interface.md)、[検証](../../docs/spi-validation.md)を参照する。ADC等のdriverは対象外である。
 
 Emela heapは設定された固定領域の中だけを使う。`resources.json`の静的RAMには固定heap・poolが含まれる。stack予約量と実行で観測した使用量は区別する。
 

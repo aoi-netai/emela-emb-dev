@@ -15,7 +15,7 @@ GPIO・UART・I²C・SPI固有の操作契約は[周辺機器インターフェ�
 - GPIOを含む失敗可能なoperationは `(Int, 元の戻り値)` を返し、外部関数自体は非failsであること。
 - Clock・Consoleはそれぞれの固定署名に一致し、Clock.sleepだけがsuspendすること。
 
-失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を失敗に変換する。GPIOは生成された共通statusの対応表を通して`GpioError(kind)`へ変換し、UARTは`UartError(kind)`、I²Cは`I2cError(kind)`、SPIは`PeripheralError(code)`を使う。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
+失敗可能なoperationのadapterは `(code, value)` を返す。共有handlerが通常のEmelaコードで `code != 0` を失敗に変換する。GPIOは生成された共通statusの対応表を通して`GpioError(kind)`へ変換し、UARTは`UartError(kind)`、I²Cは`I2cError(kind)`、SPIは`SpiError(kind)`を使う。sourceの外部関数へ `fails` を追加したり、アプリのFlow IRを手動で置き換えたりしない。汎用FFIのadapter登録規約も変更しない。
 
 ## 生成ファイルと値型
 
@@ -46,7 +46,7 @@ int32_t emela_i2c_is_device_ready(
     int64_t timeout_ms, int32_t *out);
 ```
 
-status `0` は成功。GPIOの非0は`GpioError(kind)`、UARTの非0は`UartError(kind)`、I²Cの非0は`I2cError(kind)`、SPIの非0は`PeripheralError(code)`になる。失敗時は出力値を利用しない。GPIOのreadもstatusを返し、入力レベルは出力pointerへ書く。
+status `0` は成功。GPIOの非0は`GpioError(kind)`、UARTの非0は`UartError(kind)`、I²Cの非0は`I2cError(kind)`、SPIの非0は`SpiError(kind)`になる。失敗時は出力値を利用しない。GPIOのreadもstatusを返し、入力レベルは出力pointerへ書く。
 
 operationは同期呼び出しであり、長いHAL待機を短くするschedulerへの変換は行わない。UART/I²C/SPIをISRで呼ばず、応答時間はtimeoutとボード実装で管理する。
 
@@ -101,7 +101,7 @@ ConsoleはNUL終端に依存しないUTF-8のpointerとbyte長を受け取る。
 
 ## 確認範囲
 
-[`tests/embedded_peripherals`](../tests/embedded_peripherals/mod.rs) は共有handlerと生成C bridgeの回帰試験をまとめる。標準effectのoperationはGPIO 6、UART 8、I²C 8、SPI 4、Clock 2、Console 2の30個である。UARTの追加5operationは専用のUART試験で確認する。
+[`tests/embedded_peripherals`](../tests/embedded_peripherals/mod.rs) は共有handlerと生成C bridgeの回帰試験をまとめる。標準effectのoperationはGPIO 6、UART 8、I²C 8、SPI 7、Clock 2、Console 2の33個である。UARTの追加5operationは専用のUART試験で確認する。
 
 | 試験 | 対象 |
 | --- | --- |
@@ -138,3 +138,13 @@ I²Cは7bit masterの同期送受信、8/16bitのmemoryアクセス、応答確�
 `emela_i2c_transfer_complete`・`emela_i2c_transfer_error`・`emela_i2c_device_ready`のscalar入口を生成する。operationの公開C定数はEmela enumの内部tagから独立して変換する。BSPは後処理と結果確定後に固定recordをsoftware IRQで消費し、private callbackをISR内で実行する。callback終了後に同期呼び出しが戻り、受信Listは通常の呼び出し側で作る。GPIO/UARTと同じISR安全性・queue producer検査を適用する。
 
 [対応設定と期限・状態](interface/i2c-interface.md)、[検証手順と範囲](i2c-validation.md)を参照する。
+
+## SPI deviceとtransaction
+
+基本の4operationは`SpiError`を使う。`create_device`・`transaction`・`recover`は、最初のSPI/GPIO失敗と別途発生したCS解除失敗を`SpiTransactionError(primary, cleanup)`へ保持する。private bridgeの4 tupleは`(source, status, cleanup_status, value)`で、通常のEmela handlerが専用エラーへ変換する。
+
+bridgeは`List[SpiOperation]`を固定長の`EmelaSpiOperation`配列とTX/RX word配列へ変換する。操作数・総TX数・総RX数はそれぞれ`peripheral_buffer_capacity`以下であり、全操作をCS選択前に検証する。BSPは生成headerの容量とoffset/lengthを検証し、成功時に全受信領域を初期化する。CS解除とバス解放の後にRead/Transferだけの結果Listを構築し、ゼロ長のRead/Transferには空Listを返す。Writeには結果を作らない。一般のFFI規約は変更しない。
+
+transaction用のC stack配列はdescriptorが`8 × capacity` byte、TX/RXが各`2 × capacity` byteで、合計`12 × capacity` byteにローカル変数・呼び出し先が加わる。既定容量256なら配列は3072 byte。最大65,535を指定すると786,420 byteとなり、小さいMCUのstackへ収まる保証はない。アプリの設定と`.su`・link mapで確認する。
+
+[API・pin・復旧契約](interface/spi-interface.md)と[検証](spi-validation.md)を参照する。

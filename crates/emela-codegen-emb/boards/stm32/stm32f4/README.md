@@ -84,7 +84,7 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py flash \
 - UARTは`Uart1`=USART1、TX PA9 / RX PA10、Consoleとは別controllerで同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。専用`UartError`を返す。USART1をConsoleに使う`stm32f429zi`では`ResourceConflict`。[対応設定と状態遷移](../../../docs/interface/uart-interface.md)、[検証](../../../docs/uart-validation.md)を参照する。
 - GPIOは静的bindingとEXTIのRising/Falling/Bothを実装する。共有IRQの優先度、port間のEXTI入力競合、未bindingでの有効化を検査する。read/writeは生成されたISR専用経路でも使える。
 - I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはPB6/PB7、I2C1・AF4。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../../docs/interface/i2c-interface.md)、[検証](../../../docs/i2c-validation.md)を参照する。
-- SPIのC symbols（`emela_spi_*`）は提供しない。これらへ到達する生成Cをlinkすると未解決symbolになる。ADC等のdriverも対象外である。
+- SPIは`Spi2`=SPI2、SCK=PB13 / MISO=PB14 / MOSI=PB15、AF5、APB1 16MHz。Master/TwoLine・8/16bit・mode 0〜3・両bit順を実装する。CSは基本APIではアプリが制御し、上位APIでは固定4件のdeviceへ予約してtransaction/recoverで管理する。SPI・GPIO・UART・I²C間のpin競合を拒否する。[対応設定と復旧](../../../docs/interface/spi-interface.md)、[検証](../../../docs/spi-validation.md)を参照する。ADC等のdriverは対象外である。
 
 USART pinのAF・RCC操作、GPIO register配置はF4共通である。別シリーズへ同じregister offsetやclock設定を流用しない。
 

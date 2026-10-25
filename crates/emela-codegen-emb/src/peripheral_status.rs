@@ -15,16 +15,19 @@ pub(super) const STATUSES: &[(&str, i32, &str)] = &[
     ("NACK", -13, "Other"),
     ("BUS_ERROR", -14, "Other"),
     ("ARBITRATION_LOST", -15, "Other"),
+    ("MODE_FAULT", -16, "Other"),
 ];
 
 /// Classify a shared BSP status for each peripheral's public error enum.
 pub(super) fn error_kind(peripheral: &str, status: &str, common: &'static str) -> &'static str {
     match (peripheral, status) {
-        ("uart" | "i2c", "CAPACITY_EXCEEDED") => "CapacityExceeded",
-        ("uart" | "i2c", "TIMEOUT") => "Timeout",
+        ("uart" | "i2c" | "spi", "CAPACITY_EXCEEDED") => "CapacityExceeded",
+        ("uart" | "i2c" | "spi", "TIMEOUT") => "Timeout",
         ("uart", "PARITY") => "Parity",
         ("uart", "FRAMING") => "Framing",
         ("uart", "OVERRUN") => "Overrun",
+        ("spi", "MODE_FAULT") => "ModeFault",
+        ("spi", "OVERRUN") => "Overrun",
         ("i2c", "NACK") => "Nack",
         ("i2c", "BUS_ERROR") => "BusError",
         ("i2c", "ARBITRATION_LOST") => "ArbitrationLost",

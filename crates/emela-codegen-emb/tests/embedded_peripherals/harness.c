@@ -295,3 +295,7 @@ int32_t emela_uart_disable_interrupt(EmelaUartId id) { (void)id; return 0; }
 
 int32_t emela_i2c_enable_interrupt(EmelaI2cId id, EmelaInterruptPriority priority) { (void)id; (void)priority; return 0; }
 int32_t emela_i2c_disable_interrupt(EmelaI2cId id) { (void)id; return 0; }
+
+void emela_spi_create_device(EmelaSpiDeviceConfig c, EmelaSpiDevice *out, EmelaSpiTransactionStatus *s) { (void)c; (void)out; (void)s; abort(); }
+void emela_spi_transaction(EmelaSpiDevice d, const EmelaSpiOperation *op, uint16_t n, const uint16_t *tx, uint16_t len, int64_t t, uint16_t *out, uint16_t cap, EmelaSpiTransactionStatus *s) { (void)d; (void)op; (void)n; (void)tx; (void)len; (void)t; (void)out; (void)cap; (void)s; abort(); }
+void emela_spi_recover(EmelaSpiId id, EmelaSpiTransactionStatus *s) { (void)id; (void)s; abort(); }

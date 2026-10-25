@@ -5,8 +5,11 @@
 #define UART_CPU_IRQ 3u
 static uint32_t uart_hw_lock(void) { return irq_disable(); }
 static void uart_hw_unlock(uint32_t previous) { irq_restore(previous); }
-static uint64_t uart_hw_now(void) { return timer_ticks() / TICKS_PER_MS; }
+static uint64_t uart_hw_now(void) { return peripheral_now_ms(); }
 static int32_t uart_hw_validate(EmelaUartConfig config) {
+#if defined(BOARD_SPI)
+    if (spi_cs_owned & (BIT(4) | BIT(5))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
+#endif
 #ifdef BOARD_GPIO
     if (configured_inputs & (BIT(4) | BIT(5))) return EMELA_PERIPHERAL_RESOURCE_CONFLICT;
 #endif

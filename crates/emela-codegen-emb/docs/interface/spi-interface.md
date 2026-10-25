@@ -1,15 +1,15 @@
 # SPIインターフェース仕様
 
-状態：BSP実装に向けた操作契約と採用した実装計画。基本APIは現行の公開型・4operation・C ABIを基準に記載し、改訂方針として[SPI専用エラーへの移行](#spi専用エラーへの移行方針)と[上位のSpiDeviceとtransactionによるCS管理](#spideviceとtransactionによるcs管理)を初版に含める。これらの改訂は未実装である。以下のword・完了条件・dummy送信等は準拠するhandlerとBSPへの要求であり、同梱BSPの実装済み機能を示すものではない。
+状態：基本SPI、専用エラー、SpiDevice・transaction・CS管理をstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。以下は操作契約であり、実機の波形・電気特性まで確認済みという意味ではない。対応範囲と確認方法は[検証](../spi-validation.md)を参照する。
 
 実行文脈、設定、期限、空の転送、容量、エラー、所有権は[共通の操作契約案](README.md)に従う。SPI operationは同期呼び出しであり、Emelaの別fiberへ制御を渡さない。
 
 ## Emela API
 
-宣言元は[`Std.Embedded.Spi`](../../../emela-core/lib/std/embedded/spi.emel)、共有handlerは[`BoardSpi`](../../../emela-core/lib/std/embedded/board.emel)である。以下は現行の宣言であり、`SpiError`への改訂はまだ含まない。
+宣言元は[`Std.Embedded.Spi`](../../../emela-core/lib/std/embedded/spi.emel)、共有handlerは[`BoardSpi`](../../../emela-core/lib/std/embedded/board.emel)である。基本の4operationに、デバイス初期化・transaction・復旧を加える。
 
 ```emela
-import Std.Embedded.Peripheral.{PeripheralError}
+import Std.Embedded.Gpio.{GpioPin, PinState, GpioErrorKind}
 
 pub enum SpiId { Spi1, Spi2, Spi3, Spi4, Spi5, Spi6 }
 pub enum SpiMode { Master, Slave }
@@ -29,11 +29,41 @@ pub type SpiConfig(
   bit_order: BitOrder
 )
 
+pub enum SpiErrorKind {
+  InvalidArgument, CapacityExceeded, NotConfigured, Unsupported, Timeout,
+  Busy, ResourceConflict, InvalidState, ModeFault, Overrun, Other
+}
+pub error SpiError(kind: SpiErrorKind)
+
+## A device description; create_device reserves and initializes its resources.
+pub type SpiDeviceConfig(
+  bus: SpiId, config: SpiConfig, cs: GpioPin, active: PinState,
+  setup_us: Int64, hold_us: Int64
+)
+## A checked board handle. Unknown or uninitialized slots are rejected at runtime.
+pub type SpiDevice(slot: Int)
+pub enum SpiOperation {
+  Write(data: List[Int])
+  Read(size: Int)
+  Transfer(data: List[Int])
+}
+pub enum SpiTransactionFailure {
+  SpiFailure(kind: SpiErrorKind)
+  GpioFailure(kind: GpioErrorKind)
+}
+## The first failure and a separate failure while deasserting chip select.
+pub error SpiTransactionError(
+  primary: Option[SpiTransactionFailure], cleanup: Option[GpioErrorKind]
+)
+
 pub effect Spi {
-  fn configure(id: SpiId, config: SpiConfig) -> () fails PeripheralError
-  fn transmit(id: SpiId, data: List[Int], timeout_ms: Int64) -> () fails PeripheralError
-  fn receive(id: SpiId, size: Int, timeout_ms: Int64) -> List[Int] fails PeripheralError
-  fn transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> List[Int] fails PeripheralError
+  fn configure(id: SpiId, config: SpiConfig) -> () fails SpiError
+  fn transmit(id: SpiId, data: List[Int], timeout_ms: Int64) -> () fails SpiError
+  fn receive(id: SpiId, size: Int, timeout_ms: Int64) -> List[Int] fails SpiError
+  fn transfer(id: SpiId, data: List[Int], timeout_ms: Int64) -> List[Int] fails SpiError
+  fn create_device(config: SpiDeviceConfig) -> SpiDevice fails SpiTransactionError
+  fn transaction(device: SpiDevice, operations: List[SpiOperation], timeout_ms: Int64) -> List[List[Int]] fails SpiTransactionError
+  fn recover(id: SpiId) -> () fails SpiTransactionError
 }
 ```
 
@@ -51,7 +81,7 @@ pub effect Spi {
 | `prescaler` | MasterのSCKを、BSPが定める周辺clockの2〜256分周で生成する。実周波数と元clockをBSPに記載する。SlaveではSCKを生成せず、このfieldは周波数制御に使わない。 |
 | `bit_order` | word内のbitを最上位から送るか、最下位から送るか。Listの要素順序は変えない。 |
 
-enumの整数値を下位HALの定数として流用しない。BSPはmode・direction・幅・clock等の対応する組合せを文書化する。実現できない設定を黙って置き換えず、`PeripheralError`で拒否する。
+enumの整数値を下位HALの定数として流用しない。BSPはmode・direction・幅・clock等の対応する組合せを文書化する。実現できない設定を黙って置き換えず、`SpiError`で拒否する。
 
 ### クロックmode
 
@@ -91,7 +121,7 @@ enumの整数値を下位HALの定数として流用しない。BSPはmode・dir
 
 設定とpin割り当てを検証してから適用し、後の転送に使う。Masterでは設定したidle polarityへSCKを整える。アプリは全接続先のCSを非選択にしてから再設定する。
 
-改訂後は[固定資源表](README.md#bspの固定資源表)でcontroller・pin・予約資源の競合を検査する。進行中の転送やtransactionとの競合は`Busy`、予約用途との競合は`ResourceConflict`とする。transaction内部の設定切替は取得済みの所有権を使い、バスを二重取得しない。
+[固定資源表](README.md#bspの固定資源表)でcontroller・pin・予約資源の競合を検査する。進行中の転送やtransactionとの競合は`Busy`、予約用途との競合は`ResourceConflict`とする。transaction内部の設定切替は取得済みの所有権を使い、バスを二重取得しない。
 
 ### transmit
 
@@ -111,11 +141,11 @@ SPIにはI²Cのような標準のaddress ACKがない。operationの成功はco
 
 ## CSと複数operation
 
-以下は現行の基本SPI APIの契約である。標準の上位APIでCS管理をまとめる計画は、[後続のAPI検討](#spideviceとtransactionによるcs管理)に記載する。
+以下は現行の基本SPI APIの契約である。標準の上位APIによるCS管理は、[SpiDeviceとtransaction](#spideviceとtransactionによるcs管理)に記載する。
 
 MasterでのCS有効・無効のレベルとsetup/hold時間は接続先デバイスによる。アプリが[Gpio](gpio-interface.md)でCSを設定し、必要な転送の前後で制御する。SPIのconfigure/transmit/receive/transferはCSを自動変更しない。
 
-コマンド送信とデータ受信等、複数operationの間でCSを選択したままにできる。アプリはその間に同じバスを別の接続先へ使わせず、必要な排他を管理する。CSを保持するtransaction scopeやbus lockは現行APIにない。
+コマンド送信とデータ受信等、複数operationの間でCSを選択したままにできる。アプリはその間に同じバスを別の接続先へ使わせず、必要な排他を管理する。CSを標準APIで保持したい場合は、後述の`transaction`を使う。
 
 転送失敗時もBSPが勝手にアプリのGPIOを操作しない。アプリまたはCSを管理するhandlerが、通常の失敗経路でCSを非選択へ戻す。ゼロ長転送でもCSは変更せず、SCKによるデータ転送を行わない。
 
@@ -127,32 +157,19 @@ MasterでのCS有効・無効のレベルとsetup/hold時間は接続先デバ�
 
 timeout、mode fault、overrun等の異常では、部分的な受信結果を成功として返さない。転送済みのclock・データは取り消せない。BSPは返却までに借用配列の参照を終え、controllerを停止・復帰させる方法と、次の操作に再configureが必要な条件を文書化する。
 
-### SPI専用エラーへの移行方針
+### SPI専用エラー
 
-2026-10-23時点の決定として、[共通の確定方針](README.md#確定した実装方針)に従い、`Std.Embedded.Spi`で定義する専用の`SpiError`へ移行する。対象BSPは既存のSTM32F4とESP32-C3とし、ボード間でエラー分類の意味を揃える。細かい機種固有エラーは`Other`へまとめ、HAL固有のcodeをそのまま利用者へ公開しない。
+全基本operationは`SpiError(kind)`、device初期化・transaction・復旧は`SpiTransactionError(primary, cleanup)`を使う。BSPのstatusと分類は[単一定義表](../../src/peripheral_status.rs)から生成する。未知の非0は`Other`となる。
 
-既存の4operationの回復可能な失敗を、次の型で表す。これは改訂後の型であり、未実装である。
+| status | 分類 |
+| --- | --- |
+| -1 / -2 | `InvalidArgument` / `CapacityExceeded` |
+| -3 / -4 / -5 | `NotConfigured` / `Unsupported` / `Timeout` |
+| -6 / -7 / -8 | `Busy` / `ResourceConflict` / `InvalidState` |
+| -9 | `Other` |
+| -12 / -16 | `Overrun` / `ModeFault` |
 
-```emela
-pub enum SpiErrorKind {
-  InvalidArgument
-  CapacityExceeded
-  NotConfigured
-  Unsupported
-  Timeout
-  Busy
-  ResourceConflict
-  InvalidState
-  ModeFault
-  Overrun
-  Other
-}
-pub error SpiError(kind: SpiErrorKind)
-```
-
-共通分類は[エラー定義の共通化](README.md#エラー定義の共通化)に従う。`ModeFault`はcontrollerのmode・master権限等の異常、`Overrun`は受信データの取りこぼしを表す。未知の非0 statusは`Other`へ変換する。共通statusの単一の定義表からC定数とEmela側の変換を生成し、0は成功、-1は`InvalidArgument`、-2は`CapacityExceeded`とする。改訂後はBSPも-1/-2を返せる。
-
-上位のtransactionでは、SPI由来・GPIO由来の失敗とCS解除失敗を保持する専用の`SpiTransactionError`を使う。詳細は[失敗と復旧](#失敗と復旧)に従う。stdlib・共有handler・生成C ABI・BSP・試験を合わせて更新する。
+`ModeFault`はmode・master権限等の異常、`Overrun`は受信データの取りこぼし。GPIO/UART/I²C固有の他statusはSPIでは`Other`となる。共有bridgeもBSPも同じstatusを返せる。HAL固有codeを公開APIへそのまま渡さない。
 
 ## C ABI
 
@@ -172,37 +189,50 @@ int32_t emela_spi_transfer(
 
 status 0が成功。receiveは`*length = size`、transferは`*out_length = length`とし、capacity以内でその数のwordを初期化する。Bits8では出力wordの上位8bitを0にする。Listの構築・固定heapでの所有権管理は共有bridgeが行う。
 
-## 現在の実装と必要な確認
+### transactionのC ABI
 
-| 部分 | 現在の状態 |
-| --- | --- |
-| stdlib・BoardSpi・C bridge | 4operation、設定struct、word配列、status変換と受信Listの接続がある。 |
-| STM32F4・ESP32-C3 BSP | SPIのC driverは未実装。到達する場合は追加実装が必要。 |
-| host C mock | 4operationの設定・値・status・容量・返却長・所有権を確認。物理SCK・bit順・CSやmodeの組合せは確認しない。 |
+```c
+#define EMELA_SPI_DEVICE_CAPACITY 4
+/* 操作数とTX/RXの合計word数は生成設定のperipheral_buffer_capacity。 */
+typedef struct { uint16_t kind, length, tx_offset, rx_offset; } EmelaSpiOperation;
+typedef struct { int32_t source, status, cleanup_status; } EmelaSpiTransactionStatus;
+void emela_spi_create_device(EmelaSpiDeviceConfig config, EmelaSpiDevice *out,
+    EmelaSpiTransactionStatus *status);
+void emela_spi_transaction(EmelaSpiDevice device,
+    const EmelaSpiOperation *operations, uint16_t count,
+    const uint16_t *tx, uint16_t tx_length, int64_t timeout_ms,
+    uint16_t *out, uint16_t capacity, EmelaSpiTransactionStatus *status);
+void emela_spi_recover(EmelaSpiId id, EmelaSpiTransactionStatus *status);
+```
 
-共有bridgeは返却長の上限を検査するが、短いreceive/transferを成功として返すBSPを拒否しない。上の要求数全ての転送と設定幅はBSPが保証する。
+operation kindはWRITE=1、READ=2、TRANSFER=3（`EMELA_SPI_OPERATION_*`）。sourceはNONE=0、SPI=1、GPIO=2（`EMELA_SPI_FAILURE_*`）。`status`は最初の失敗、`cleanup_status`はCS解除の失敗を別に保持する。payload付きEmela enumやListの内部layoutはBSPへ渡さない。TX/RX offsetはoperationの順に累積し、WriteはTX、ReadはRX、Transferは両方を使う。bufferは呼出し中だけ借用し、成功時は指定されたRX領域を全て初期化する。
 
-BSP実装時には次を確認する。
+## 初期対応BSP
 
-| 対象 | 確認内容 |
-| --- | --- |
-| 設定 | IDとpin、Master/Slave、各direction、未設定・非対応operationの拒否、再設定。 |
-| 信号 | mode 0〜3のidle/sample edge、bit順、prescalerと実SCK。 |
-| word | Bits8/16の境界と範囲外、word数とbyte数の区別、host endiannessに依存しないこと。 |
-| 転送 | simultaneous transfer、Masterの受信dummy、送信時の受信値破棄、最終clockまでの完了。 |
-| CS | 明示したGPIOだけがCSを操作し、複数operationで選択を保持できること。 |
-| 失敗・資源 | timeout、Slaveの外部clock不足、途中失敗、空転送、容量境界、配列寿命、List解放とstack。 |
-| transactionの検証 | 操作数・総word数の容量、全要素の事前検証、空操作列・ゼロ長操作、Read/Transferと結果Listの対応。 |
-| バスの共有 | 基本APIとの同時利用の拒否、内部操作の二重取得がないこと、2デバイスの設定切替とCSの排他、通信中に全IRQを禁止しないこと。 |
-| transactionの失敗 | 転送とCS解除の同時失敗の保持、解除失敗後の再利用拒否、復旧手順、CS解除後のList構築。 |
-| deadlineと信号 | 設定・setup/holdを含む期限、timeout 0でCSやclockを開始しないこと、最終clock後のhold、失敗時の有界な停止・解除。 |
-| 言語機能の統合 | Emelaソースの操作enum・List・`fails`から生成C・firmwareまで通し、両BSPで2デバイスを操作すること。 |
+| BSP | 論理ID / controller | SCK / MISO / MOSI | clock・設定 |
+| --- | --- | --- | --- |
+| STM32F407VG/F412ZG/F429ZI/F446REとboard alias | `Spi2` / SPI2 | PB13 / PB14 / PB15、AF5 | APB1 16 MHz、Div2〜Div256（8 MHz〜62.5 kHz） |
+| ESP32-C3 | `Spi2` / SPI2（GPSPI） | GPIO0 / GPIO10 / GPIO1、GPIO matrix | XTAL 40 MHz、Div2〜Div256（20 MHz〜156.25 kHz） |
 
-## 後続のAPI検討
+両BSPともMaster・TwoLine、8/16bit、mode 0〜3、両bit順に対応する。Slave・TwoLineReceiveOnly・OneLineと他の論理IDは`Unsupported`。対応しない設定を別の通信方式へ置き換えない。clockは上表の名目値であり、実際の精度と配線の制約は別に確認する。
 
-### SpiDeviceとtransactionによるCS管理
+基本転送はCSを変更しない。device用CSは、bus・Console・UART/I²C・既存GPIO・他deviceとの競合を検査して非選択で初期化する。初期化済みCSとbus pinは通常のGPIO操作から変更できない。STM32F4はpackageに存在するpin、ESP32-C3はGPIO0〜10のうち予約と競合しないpinを使える。
 
-2026-10-23時点の決定として、基本のSPI・GPIO APIを分けたまま、両者をまとめる標準の上位APIを追加する計画とする。利用者が初期化時にCS用pinを指定し、通常の通信は接続先を表す`SpiDevice`と、その接続先への一連の通信を表す`transaction`を通して行えるようにする。基本SPI APIを直接使い、利用者が独自にCSを管理する経路も維持する。
+STM32F4は各wordのTXE/RXNEを処理し、送信時にも受信側をdrainする。最後はTXEとBSY解除を確認する。ESP32-C3は64byteのdata buffer単位で同時送受信し、最終commandとTRANS_DONEを確認する。16bitはbit順に応じて明示的にbyteを配置し、host endiannessへ依存しない。
+
+時刻の分解能は1μs。STM32F4はSysTickと単調増加ms、ESP32-C3は52bit SysTimerのwrapを延長して測る。`timeout_ms`は0〜`Int64`の最大値 / 1000を受け入れ、μsで扱えない値と負値を事前に拒否する。setup/holdが正なら量子化で短くならないよう追加の1μsを待つ。0では待たない。
+
+controller停止は追加2msの期限で有界に行い、必要ならresetする。通常転送の失敗後は未設定となるため再configureが必要。停止またはCS解除が失敗したバスは`recover`が成功するまで`InvalidState`。単なるconfigureでは復旧しない。追加時間には時刻の量子化・有限のMMIO処理とIRQ latencyが加わり、任意のISRを含む最大実行時間の証明ではない。
+
+## 実装と検証
+
+stdlib、BoardSpi、固定descriptorへの変換、共通driver、両BSP、2デバイスの使用例を提供する。[検証手順](../spi-validation.md)にhost生成C・ASan/UBSan付きレジスタモデル・CLI/firmware buildの範囲を記録する。実機のclock/sample edge、電気的なbit順、GPIO matrixの入力遅延、最大stackは未確認である。
+
+共有bridgeは基本転送の共通word範囲と返却長の上限を検査する。短いreceive/transferを成功として返さないことと、設定幅に収まることはBSPが保証する。
+
+## SpiDeviceとtransactionによるCS管理
+
+基本のSPI・GPIO APIを維持し、デバイスごとの設定とCSをまとめる標準APIを提供する。利用者が初期化時にCS用pinを指定し、通常の通信は接続先を表す`SpiDevice`と、その接続先への一連の通信を表す`transaction`を通して行えるようにする。基本SPI APIを直接使い、利用者が独自にCSを管理する経路も維持する。
 
 `SpiDevice`はMaster側の接続先ごとに、SPIバス・`SpiConfig`・CS用の`GpioPin`・CSの有効レベル・setup/hold時間を対応付ける。時間は非負のマイクロ秒値で最小時間を指定し、BSPの分解能へ切り上げる場合も共通deadlineを守る。実現できない要求は事前に拒否する。同じSPIバスに、設定とCSの異なる複数のデバイスを接続できる。利用者がGPIOのhandler全体を引数として渡す方式は要求しない。SlaveのNSS入力は、このMaster側のCS制御とは別にBSPで扱う。
 
@@ -222,9 +252,9 @@ pub enum SpiOperation {
 
 `transaction(device, operations, timeout_ms)`の成功結果は`List[List[Int]]`とし、操作列の`Read`・`Transfer`に対応する受信Listだけを、その操作の出現順に返す。`Write`には結果の要素を作らない。`Read(0)`・`Transfer([])`には空Listの要素を返し、対応関係を保つ。各操作の幅・方向・dummy送信・完了条件は基本SPI APIと同じとする。
 
-例えば初期化済みの`sensor`へ`[Write([0x80]), Read(2), Transfer([0x00])]`を渡すと、成功結果は長さ2と長さ1の受信Listを順に持つ。deviceの構築・初期化関数の正式名と引数順はABI実装段階で確定する。
+例えば初期化済みの`sensor`へ`[Write([0x80]), Read(2), Transfer([0x00])]`を渡すと、成功結果は長さ2と長さ1の受信Listを順に持つ。`SpiDeviceConfig(bus, config, cs, active, setup_us, hold_us)`を`(use Spi).create_device(config)`へ渡し、初期化済みの`SpiDevice(slot)`を取得する。未知・未初期化のslotは拒否する。slotは別のdeviceの設定を表す値ではなく、BSPの固定表にある初期化済み資源を参照するhandleである。
 
-CSを選択する前に、全操作の種類・方向・値の幅・size・timeout、操作数、送受信の総word数を検証する。容量は操作ごとだけでなくtransaction全体に適用し、上限を生成設定とheaderに記録する。総数計算の桁あふれも拒否する。固定容量のC descriptor、送信・受信buffer、結果のoffset/length領域を準備してから通信に入る。検証・容量不足の失敗ではCSもclockも操作しない。
+CSを選択する前に、全操作の種類・方向・値の幅・size・timeout、操作数、送受信の総word数を検証する。容量は操作ごとだけでなくtransaction全体に適用し、上限を生成設定とheaderに記録する。総数計算の桁あふれも拒否する。操作数、合計送信word数、合計受信word数はそれぞれ`peripheral_buffer_capacity`を上限とする。headerの`EMELA_SPI_TRANSACTION_OPERATION_CAPACITY`と`EMELA_SPI_TRANSACTION_WORD_CAPACITY`へ記録する。deviceは固定4件（`EMELA_SPI_DEVICE_CAPACITY`）。固定容量のC descriptor、送信・受信buffer、結果のoffset/length領域を準備してから通信に入る。検証・容量不足の失敗ではCSもclockも操作しない。
 
 空の操作列、または全操作がゼロ長なら、デバイス・設定・各引数を検証してからCS・clockを変更せず成功する。結果は上記の対応規則に従い、空の操作列なら`[]`、`[Read(0)]`なら`[[]]`になる。
 
@@ -254,9 +284,9 @@ CSを選択する前に、全操作の種類・方向・値の幅・size・timeo
 | CS解除だけが失敗 | 解除に失敗した`GpioErrorKind`を保持する。 |
 | 最初の失敗とCS解除失敗が併存 | 最初のSPI/GPIOの分類と、解除のGPIO分類の両方を保持する。 |
 
-発生元と併存をenum・固定サイズのfieldで区別できる型にし、後の解除失敗で最初の失敗を上書きしたり、両方を1つの`Other`へ潰したりしない。C境界にも主結果とcleanup結果を別のstatus欄として設ける。正式なvariant・field名は専用エラーとABIを実装する段階で確定する。
+発生元と併存をenum・固定サイズのfieldで区別できる型にし、後の解除失敗で最初の失敗を上書きしたり、両方を1つの`Other`へ潰したりしない。C境界にも主結果とcleanup結果を別のstatus欄として設ける。`primary`は`Option[SpiTransactionFailure]`（`SpiFailure(kind)` / `GpioFailure(kind)`）、`cleanup`は`Option[GpioErrorKind]`。CS解除だけの失敗では`primary = None`、`cleanup = Some(kind)`となる。
 
-CS解除に失敗したバスは復旧が必要な状態へ置き、新たな転送を`InvalidState`で拒否する。BSPの復旧手順でcontrollerの停止・全CSの非選択を確認するまで再利用せず、単なるバスlock解放や再configureだけで復旧済みにしない。借用bufferへの参照は失敗時も終了する。部分的な受信結果を成功として返さず、自動再送もしない。
+CS解除に失敗したバスは復旧が必要な状態へ置き、新たな転送を`InvalidState`で拒否する。`(use Spi).recover(bus)`でcontroller停止・予約済みの全CSの非選択を確認するまで再利用せず、単なるバスlock解放や再configureだけで復旧済みにしない。借用bufferへの参照は失敗時も終了する。部分的な受信結果を成功として返さず、自動再送もしない。
 
 結果Listの確保はCS解除とバス解放の後に行うため、そこでのheap不足がCSを選択したままにすることはない。runtimeのdefect全般に通常のcleanupを保証するものではなく、defect時の出力方針はBSPの契約に従う。
 
@@ -266,9 +296,9 @@ CS解除に失敗したバスは復旧が必要な状態へ置き、新たな転
 
 ISRでCSを操作する実装には、[BSP提供のISR専用handlerを静的に接続する方針](uart-interface.md#bspによるisr専用handlerの静的供給)を適用する。pin・操作列・bufferをmain側で準備し、ISRにListの構築・参照管理・解放を要求しない。初版の完成条件は同期transactionの契約であり、最終ISRからのCS解除を必須の実装方法にはしない。
 
-上位API・資源管理・BSP接続は未実装である。両BSPの代表profileでMaster転送を成立させた後、同じバス上の2デバイスについて上記の契約を確認する。
+上位APIと資源管理を両BSPへ接続した。BSP内部は同期pollingで実行し、ISRやfiberへ転送の進行を委ねない。失敗した初期化の予約も、安全なCS解除を確認したrecoverの後だけ解放する。
 
-### その他の拡張候補
+## その他の拡張候補
 
 Hz指定のclock設定、可変dummy cycle、上記の操作列を超える任意の送受信phase列、非同期・DMAは別の拡張として扱う。現行の同期operationへ暗黙に追加しない。
 

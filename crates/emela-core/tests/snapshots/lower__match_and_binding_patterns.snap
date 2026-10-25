@@ -406,6 +406,47 @@ enum Std.Embedded.Spi.SpiConfig {
   SpiConfig(mode: Std.Embedded.Spi.SpiMode, direction: Std.Embedded.Spi.SpiDirection, data_size: Std.Embedded.Spi.SpiDataSize, polarity: Std.Embedded.Spi.ClockPolarity, phase: Std.Embedded.Spi.ClockPhase, prescaler: Std.Embedded.Spi.SpiPrescaler, bit_order: Std.Embedded.Spi.BitOrder)
 }
 
+enum Std.Embedded.Spi.SpiErrorKind {
+  InvalidArgument
+  CapacityExceeded
+  NotConfigured
+  Unsupported
+  Timeout
+  Busy
+  ResourceConflict
+  InvalidState
+  ModeFault
+  Overrun
+  Other
+}
+
+error enum Std.Embedded.Spi.SpiError {
+  SpiError(kind: Std.Embedded.Spi.SpiErrorKind)
+}
+
+enum Std.Embedded.Spi.SpiDeviceConfig {
+  SpiDeviceConfig(bus: Std.Embedded.Spi.SpiId, config: Std.Embedded.Spi.SpiConfig, cs: Std.Embedded.Gpio.GpioPin, active: Std.Embedded.Gpio.PinState, setup_us: Int64, hold_us: Int64)
+}
+
+enum Std.Embedded.Spi.SpiDevice {
+  SpiDevice(slot: Int)
+}
+
+enum Std.Embedded.Spi.SpiOperation {
+  Write(data: List[Int])
+  Read(size: Int)
+  Transfer(data: List[Int])
+}
+
+enum Std.Embedded.Spi.SpiTransactionFailure {
+  SpiFailure(kind: Std.Embedded.Spi.SpiErrorKind)
+  GpioFailure(kind: Std.Embedded.Gpio.GpioErrorKind)
+}
+
+error enum Std.Embedded.Spi.SpiTransactionError {
+  SpiTransactionError(primary: Option[Std.Embedded.Spi.SpiTransactionFailure], cleanup: Option[Std.Embedded.Gpio.GpioErrorKind])
+}
+
 export fn main() -> String {
   let _%0: Float = @dbg[Float](area(Shape.Rect(width: 3.0, height: 2.0)))
   let _%1: String = @dbg[String](describe([1, 2, 3]: List[Int]))

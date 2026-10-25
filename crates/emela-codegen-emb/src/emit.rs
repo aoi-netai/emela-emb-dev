@@ -34,6 +34,8 @@ mod owned;
 mod peripheral;
 #[path = "peripheral_status.rs"]
 mod peripheral_status;
+#[path = "spi_bridge.rs"]
+mod spi_bridge;
 #[path = "suspend.rs"]
 mod suspend;
 #[path = "task_values.rs"]
@@ -119,7 +121,11 @@ pub(crate) fn emit(flow: &emela_lir::Module, options: &Options) -> Result<Output
         }
     }
     let external_bindings = external::resolve(flow, &emitted_functions, &mut layouts, options)?;
-    let peripheral_headers = peripheral::headers(flow, &emitted_functions)?;
+    let peripheral_headers = peripheral::headers(
+        flow,
+        &emitted_functions,
+        options.peripheral_buffer_capacity(),
+    )?;
     let derived_plan = derive_runtime::Plan::new(flow, &emitted_functions, &layouts)?;
     task_values::validate_types(flow, &emitted_functions, &layouts)?;
     validate_function_value_types(&layouts, &emitted_functions, flow)?;
@@ -7150,6 +7156,15 @@ fn emit_make(
     };
     let tag = i32::try_from(ctor.variant)
         .map_err(|_| unsupported(&function.name, "enum with too many variants"))?;
+    // A payload-free variant still shares storage with larger union members.
+    // Initialize that storage before copying the whole enum (not just its tag
+    // and dummy byte), including through optimized Option/error branches.
+    if fields
+        .iter()
+        .all(|field| layouts.type_repr(*field) == Repr::Void)
+    {
+        writer.assign(&target, &format!("({}){{0}}", layouts.c_type(ty)));
+    }
     writer.assign(&format!("{target}.tag"), &int32_literal(tag));
 
     let mut represented = false;

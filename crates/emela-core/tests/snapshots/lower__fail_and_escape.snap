@@ -74,6 +74,14 @@ error enum Std.Embedded.I2c.I2cError {
   I2cError(kind: Std.Embedded.I2c.I2cErrorKind)
 }
 
+error enum Std.Embedded.Spi.SpiError {
+  SpiError(kind: Std.Embedded.Spi.SpiErrorKind)
+}
+
+error enum Std.Embedded.Spi.SpiTransactionError {
+  SpiTransactionError(primary: Option[Std.Embedded.Spi.SpiTransactionFailure], cleanup: Option[Std.Embedded.Gpio.GpioErrorKind])
+}
+
 export fn main() -> Int fails {
   let a%1: Int = {
     find(1)?

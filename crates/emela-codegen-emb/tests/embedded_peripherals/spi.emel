@@ -1,0 +1,76 @@
+import Std.Embedded.Spi
+import Std.Embedded.Gpio
+import Std.Embedded.Board.{BoardSpi}
+
+fn config(bits: Int) -> Spi.SpiConfig {
+  Spi.SpiConfig(Spi.Master, Spi.TwoLine, if bits == 8 { Spi.Bits8 } else { Spi.Bits16 }, Spi.IdleLow, Spi.FirstEdge, Spi.Div16, Spi.MostSignificantFirst)
+}
+pub fn create(pin: Int, bits: Int) -> Int {
+  with BoardSpi {
+    device = (use Spi.Spi).create_device(Spi.SpiDeviceConfig(Spi.Spi2, config(bits), Gpio.GpioPin(pin), Gpio.Low, Int64.from_int(3), Int64.from_int(5)))
+    device.slot
+  } escape { Spi.SpiTransactionError(primary, cleanup) -> failure(primary, cleanup) }
+}
+pub fn transaction(slot: Int, kind: Int, arg: Int) -> Int {
+  with BoardSpi {
+    ops = if kind == 0 { [Spi.Write([1, 2]), Spi.Read(2), Spi.Transfer([0, 255])] }
+      else if kind == 1 { [Spi.Write([]), Spi.Read(0), Spi.Transfer([])] }
+      else if kind == 2 { [] }
+      else if kind == 3 { [Spi.Write([arg])] }
+      else if kind == 4 { [Spi.Read(arg)] }
+      else if kind == 5 { [Spi.Write([1,2,3]), Spi.Write([4,5])] }
+      else if kind == 6 { [Spi.Read(3), Spi.Transfer([0,1])] }
+      else { [Spi.Read(0), Spi.Read(0), Spi.Read(0), Spi.Read(0), Spi.Read(0)] }
+    rows = (use Spi.Spi).transaction(Spi.SpiDevice(slot), ops, Int64.from_int(if kind == 1 || kind == 2 { 0 } else if arg == -99 { 0 } else { 100 }))
+    if kind == 0 { if rows == [[165,165], [255,0]] { 42 } else { -100 } }
+    else if kind == 1 { if rows == [[],[]] { 43 } else { -101 } }
+    else { List.length(rows) }
+  } escape { Spi.SpiTransactionError(primary, cleanup) -> failure(primary, cleanup) }
+}
+pub fn recover() -> Int {
+  with BoardSpi { (use Spi.Spi).recover(Spi.Spi2)
+    0 } escape { Spi.SpiTransactionError(primary, cleanup) -> failure(primary, cleanup) }
+}
+pub fn direct(kind: Int, value: Int) -> Int {
+  with BoardSpi {
+    bus = use Spi.Spi
+    bus.configure(Spi.Spi2, config(if kind == 3 { 16 } else { 8 }))
+    if kind == 0 { bus.transmit(Spi.Spi2, [value], Int64.from_int(100))
+      0 }
+    else if kind == 1 { List.length(bus.receive(Spi.Spi2, value, Int64.from_int(100))) }
+    else { List.length(bus.transfer(Spi.Spi2, [value], Int64.from_int(100))) }
+  } escape { Spi.SpiError(kind) -> 100 + spi_code(kind) }
+}
+pub fn classify(status: Int) -> Int {
+  { Spi.check_status(status)
+    0 } escape { Spi.SpiError(kind) -> spi_code(kind) }
+}
+fn spi_code(kind: Spi.SpiErrorKind) -> Int {
+  kind match { Spi.InvalidArgument -> 1
+    Spi.CapacityExceeded -> 2
+    Spi.NotConfigured -> 3
+    Spi.Unsupported -> 4
+    Spi.Timeout -> 5
+    Spi.Busy -> 6
+    Spi.ResourceConflict -> 7
+    Spi.InvalidState -> 8
+    Spi.ModeFault -> 16
+    Spi.Overrun -> 12
+    Spi.Other -> 9 }
+}
+fn gpio_code(kind: Gpio.GpioErrorKind) -> Int {
+  kind match { Gpio.InvalidArgument -> 1
+    Gpio.NotConfigured -> 3
+    Gpio.Unsupported -> 4
+    Gpio.Busy -> 6
+    Gpio.ResourceConflict -> 7
+    Gpio.InvalidState -> 8
+    Gpio.Other -> 9 }
+}
+fn failure(primary: Option[Spi.SpiTransactionFailure], cleanup: Option[Gpio.GpioErrorKind]) -> Int {
+  p = primary match { None -> 0
+    Some(Spi.SpiFailure(kind)) -> 100 + spi_code(kind)
+    Some(Spi.GpioFailure(kind)) -> 200 + gpio_code(kind) }
+  p + (cleanup match { None -> 0
+    Some(kind) -> 1000 + gpio_code(kind) })
+}
