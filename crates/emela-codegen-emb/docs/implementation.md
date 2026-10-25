@@ -2,6 +2,8 @@
 
 `emela-codegen-emb` はFlow IRから、固定容量のメモリと必要なruntimeを使うC11コードを生成する。この文書は現在のコンパイラーライブラリの契約・実装箇所・対応する試験をまとめる。表の試験名はリポジトリにある回帰試験への参照であり、今回の実行結果を表すものではない。
 
+Flowの機能と入力の組み立て方は [Flow IRの機能一覧](flow-ir.md) を参照する。
+
 ## 1. 実装境界と入力
 
 中心となるAPIは `compile_flow(&emela_lir::Module, &Options)` である。入力は `Stage::Flow` の構造体であり、dump文字列を解析しない。型・制御・失敗辺を検証し、closure変換、値レイアウト、所有権、suspend継続、必要なruntime生成をこのcrateで行う。`emela_lir::to_heap` およびその後のHeap IRパスは呼ばない。

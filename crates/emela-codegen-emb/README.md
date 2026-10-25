@@ -2,7 +2,11 @@
 
 EmelaのFlow IRから、組み込み向けのCコードを生成するコンパイラーです。Heap IRへの変換を通さず、固定容量のメモリと機能ごとの小さなランタイムを生成します。
 
-[実装範囲と実装状況](docs/implementation.md)に、入力契約、各variantへの対応、メモリ方針と既存の検証をまとめています。
+[Flow IRの機能一覧](docs/flow-ir.md)に、値・制御・関数・effect・Fiber・組み込み操作と、Flow入力を生成するときの条件をまとめています。[実装範囲と実装状況](docs/implementation.md)では、各variantへの対応、メモリ方針と既存の検証を確認できます。
+
+[定義の自動抽出一覧](docs/generated/flow-ir-inventory.md)は、リポジトリrootから `bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh` でMarkdownとJSONを再生成できます。[生成方法と照合フォーマット案](docs/inventory-format.md)も参照してください。
+
+[実装箇所の抽出と比較（試作）](docs/implementation-inventory.md)は、指定した処理関数からvariantの分岐を抽出し、[比較表](docs/generated/flow-coverage.md)に根拠の欠落を表示します。`bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh` で生成します。抽出結果は構文上の候補であり、実装対応の完了判定ではありません。
 
 ## 主な入口
 
