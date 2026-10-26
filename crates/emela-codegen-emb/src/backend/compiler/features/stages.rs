@@ -1,0 +1,39 @@
+use super::*;
+pub(in crate::backend) fn flow() -> Result<(), Vec<Error>> {
+    Ok(())
+}
+pub(in crate::backend) fn closures_converted() -> Result<(), Vec<Error>> {
+    Err(vec![Error{kind:ErrorKind::InvalidFlowIr,message:"expected Flow IR, found ClosuresConverted; embedded codegen does not run Heap IR passes".into()}])
+}
+pub(in crate::backend) fn defects_explicit() -> Result<(), Vec<Error>> {
+    Err(vec![Error {
+        kind: ErrorKind::InvalidFlowIr,
+        message:
+            "expected Flow IR, found DefectsExplicit; embedded codegen does not run Heap IR passes"
+                .into(),
+    }])
+}
+pub(in crate::backend) fn state_machines() -> Result<(), Vec<Error>> {
+    Err(vec![Error {
+        kind: ErrorKind::InvalidFlowIr,
+        message:
+            "expected Flow IR, found StateMachines; embedded codegen does not run Heap IR passes"
+                .into(),
+    }])
+}
+pub(in crate::backend) fn ref_counted() -> Result<(), Vec<Error>> {
+    Err(vec![Error {
+        kind: ErrorKind::InvalidFlowIr,
+        message: "expected Flow IR, found RefCounted; embedded codegen does not run Heap IR passes"
+            .into(),
+    }])
+}
+pub(in crate::backend) fn verify(stage: emela_lir::Stage) -> Result<(), Vec<Error>> {
+    match stage {
+        emela_lir::Stage::Flow => flow(),
+        emela_lir::Stage::ClosuresConverted => closures_converted(),
+        emela_lir::Stage::DefectsExplicit => defects_explicit(),
+        emela_lir::Stage::StateMachines => state_machines(),
+        emela_lir::Stage::RefCounted => ref_counted(),
+    }
+}

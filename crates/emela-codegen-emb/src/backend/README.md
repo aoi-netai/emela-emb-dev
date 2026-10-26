@@ -1,0 +1,46 @@
+# Flow IR backendの構成
+
+公開APIの `compile_flow` は、共通コンパイルとボード接続を順に実行する。
+
+```text
+compile_flow
+  → compiler::compile_flow
+      → 正規化・検証・closure／handler／const等の準備
+      → CompiledModule
+  → board::link
+      → compiler::emit(compiled, target, options)
+          → 型配置・所有権・buffer・runtimeの計画
+          → 機能別のC生成とボード用adapter・入口の生成
+```
+
+`CompiledModule` は接続先に依存しない中間結果であり、最終的なC文字列ではない。IRとclosure・constのmetadataは非公開で、接続側には可変参照を渡さない。最終生成はそのcopyを使うため、同じ中間結果を別の接続先や別の容量設定で再利用できる。接続処理が共通のloweringを再実行することはない。
+
+| 場所 | 責任 |
+| --- | --- |
+| [compiler/mod.rs](compiler/mod.rs) | 共通コンパイル、中間結果、生成処理の共有context |
+| [compiler/emit.rs](compiler/emit.rs) | 最終配置・runtime計画・C出力の組立て |
+| [compiler/features/](compiler/features) | Value・Stmt・Term・Builtin・FiberOp等の機能別処理 |
+| [compiler/foundation/](compiler/foundation) | 型配置、到達可能性、所有権、String buffer、heap・runtime計画 |
+| [compiler/target.rs](compiler/target.rs) | 外部binding、header、検査、adapter、起動処理の接続契約 |
+| [board/](board) | 既存の標準周辺機器adapter、ISR制約、ボード起動処理 |
+| [cnative/](cnative) | 同じ中間結果をホストCで実行する内部試験用の接続 |
+| [tests/separation.rs](tests/separation.rs) | 中間結果の再利用、接続先の独立性、生成Cの実行試験 |
+
+共通コンパイラーは具体的なボード接続をimportしない。C上の `emela_board_*` hook名や生成file名は既存ABIとして維持し、その実装と標準周辺機器bindingの解釈を接続側へ委ねる。`cnative` はlibrary testでのみ有効で、CLIのtargetを追加するものではない。
+
+## 機能と共有計画
+
+各機能はC生成に加え、必要に応じて `string_behavior`、`string_bound`、`result_ownership`、`needs_heap`、`require_runtime` を提供する。例えばString連結では、定数・入力参照・動的bufferという同じ分類を生成・長さ・所有権の判断に使う。
+
+共有のString buffer計画は、その情報から生存期間・slotの再利用・caller出力bufferの伝播を求める。heap計画は型と操作の要求を集約し、runtime計画はhelperの依存を解決して必要なものを一度ずつ生成する。共有計画は個々のBuiltinやFiberOpを直接分岐しない。
+
+Value・Stmt・Term等のdispatcherはvariantを網羅する。新しいvariantの追加時に生成・解析・runtime要求の判断漏れをコンパイル時に検出し、子のIRの走査には共通処理を使う。
+
+## 検証
+
+```sh
+cargo test -p emela-codegen-emb --locked
+cargo run -p emela-codegen-emb --example check_flow_coverage --locked
+```
+
+ホスト接続の実行試験は生成された全C translation unitを `-std=c11 -Wall -Werror` と `-O0` / `-O2` でコンパイルする。closure・managed値・suspend・起動時の返り値の解放・String出力bufferを確認し、ボード接続後にも元の中間結果を再利用できることを検査する。

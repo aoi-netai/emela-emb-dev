@@ -14,3 +14,5 @@ la-arena.workspace = true
 emela-resolve.workspace = true
 emela-syntax.workspace = true
 emela-types.workspace = true
+syn = { version = "2", features = ["full", "visit"] }
+tempfile.workspace = true

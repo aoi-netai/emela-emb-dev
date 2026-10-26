@@ -7,7 +7,7 @@ use emela_lir::{Callee, Function, Module, OnFail, SeqId, Stmt, Term, Value};
 use crate::{Error, ErrorKind};
 
 pub(crate) fn normalize(module: &mut Module) -> Result<(), Vec<Error>> {
-    let reachable = crate::emit::runtime_reachable(module);
+    let reachable = crate::backend::compiler::runtime_reachable(module);
     let mut operations = HashMap::new();
     for &id in &reachable {
         let f = &module.functions[id];

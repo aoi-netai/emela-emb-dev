@@ -410,6 +410,8 @@ dependencies = [
  "emela-syntax",
  "emela-types",
  "la-arena",
+ "syn 2.0.119",
+ "tempfile",
 ]
 
 [[package]]

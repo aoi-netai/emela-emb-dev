@@ -9,18 +9,13 @@ mod const_origins;
 mod const_runtime;
 mod derived;
 pub use derived::{DerivedOperation, derived_binding};
+mod backend;
 mod discarded;
-mod emit;
-mod fiber;
 mod float_parse;
 mod float_to_string;
-mod function_coerce;
 mod heap;
 mod scope_abi;
-mod static_closure;
-mod static_handler;
 mod type_expansion;
-mod type_normalize;
 mod unicode_grapheme;
 mod writer;
 
@@ -296,13 +291,7 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 
 /// Verifies and emits a Flow IR module without running Heap IR passes.
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
-    if flow.stage != emela_lir::Stage::Flow {
-        verify_flow(flow)?;
-    }
-    let mut normalized = flow.clone();
-    type_normalize::normalize(&mut normalized)?;
-    verify_flow(&normalized)?;
-    emit::emit(&normalized, options)
+    backend::compile_flow(flow, options)
 }
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.
@@ -336,7 +325,7 @@ pub fn flow_from_core(core: &emela_core::Module) -> Result<emela_lir::Module, Ve
 
     const_origins::attach(&mut flow, &prepared_consts.groups);
     const_origins::attach_function_groups(&mut flow, &prepared_consts.function_groups);
-    fiber::normalize_infallible_cause_raise(&mut flow);
+    backend::compiler::normalize_infallible_cause_raise(&mut flow);
     verify_flow(&flow)?;
     Ok(flow)
 }

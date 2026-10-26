@@ -9,7 +9,7 @@ pub(crate) type Results = HashMap<FnId, HashSet<VarId>>;
 pub(crate) fn normalize(module: &mut Module) -> Results {
     let mut discarded = Results::new();
     for (function_id, function) in module.functions.iter_mut() {
-        let (positions, _) = crate::emit::function_positions(function);
+        let (positions, _) = crate::backend::compiler::function_positions(function);
         let statements: Vec<_> = function
             .stmts
             .iter()
