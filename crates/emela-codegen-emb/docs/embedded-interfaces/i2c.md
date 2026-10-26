@@ -1,8 +1,19 @@
-# I²Cインターフェース仕様
+# I²Cの機能一覧と操作契約
 
-状態：同期master操作、I²C専用エラー、静的割り込みbindingをstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。検証は[host・レジスタモデル検証](../i2c-validation.md)を参照する。実機の電気特性と通信timingの確認は未実施。以下の「〜する」「〜しない」はhandlerとBSPの操作契約である。
+状態：同期master操作、I²C専用エラー、静的割り込みbindingをstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。検証は[host・レジスタモデル検証](i2c.md#検証)を参照する。実機の電気特性と通信timingの確認は未実施。以下の「〜する」「〜しない」はhandlerとBSPの操作契約である。
 
-共通の型変換・所有権・容量検査は[標準周辺機器bridge](../embedded-peripherals.md)、アプリとボードの責務は[組み込みインターフェース](../embedded-interfaces.md)に従う。[仕様一覧と共通の操作契約案](README.md)も参照する。この文書はI²C固有の契約を追加するものであり、UART・SPIの意味を変更しない。
+共通の型変換・所有権・容量検査は[標準周辺機器bridge](common.md#c-bridge)、アプリとボードの責務は[組み込みインターフェース](README.md)に従う。[機能一覧](README.md)と[共通の操作契約](common.md)も参照する。この文書はI²C固有の契約を追加するものであり、UART・SPIの意味を変更しない。
+
+## 機能一覧
+
+| 機能 | API | 内容 |
+| --- | --- | --- |
+| バス設定 | `configure` | clockとduty cycleを設定する。デバイスアドレスは未シフトの7bit値 |
+| master送受信 | `master_transmit`／`master_receive` | 1つの接続先へ同期転送する |
+| レジスタアクセス | `memory_write`／`memory_read` | 8/16bitのレジスタアドレス、readのRepeated START |
+| 応答確認 | `is_device_ready` | 試行全体で共通の期限を使い、address ACK/NACKを確認する |
+| callbackの接続 | `bind_interrupt` | バスIDと名前付き関数を静的に対応付ける |
+| 割り込み制御 | `enable_interrupt`／`disable_interrupt` | 転送全体の成功・失敗の通知を制御する |
 
 ## 確定したアドレス方針
 
@@ -167,7 +178,7 @@ NACK時: S Addr(W) N P
 | -9 | `Other` |
 | -13 / -14 / -15 | `Nack` / `BusError` / `ArbitrationLost` |
 
-数値・C定数・Emela分類は[単一定義表](../../src/peripheral_status.rs)から生成する。GPIO/UART固有のstatus -10〜-12はI²Cでは`Other`となる。共有bridgeで負のsize・共通word範囲外・容量超過を検出した場合はBSPを呼び出さない。I²C固有の不正引数・非対応・未設定もバス操作前に拒否する。
+数値・C定数・Emela分類は[単一定義表](../../src/backend/board/peripheral_status.rs)から生成する。GPIO/UART固有のstatus -10〜-12はI²Cでは`Other`となる。共有bridgeで負のsize・共通word範囲外・容量超過を検出した場合はBSPを呼び出さない。I²C固有の不正引数・非対応・未設定もバス操作前に拒否する。
 
 通信途中の失敗で、それまでに接続先へ送ったbyteや副作用は取り消せない。BSPと共有handlerは通常の転送を自動再送しない。BSPはバスの所有状態に応じてSTOP・controller停止・ライン解放を行う。arbitration lost時には他のcontrollerの通信を妨げるSTOPを発行しない。バスが回復しない場合は、次の操作も期限内にエラーを返す。独自のbus recoveryが必要なら、その手順をBSPに記載する。
 
@@ -195,15 +206,15 @@ pub enum I2cErrorKind {
 pub error I2cError(kind: I2cErrorKind)
 ```
 
-共通分類は[エラー定義の共通化](README.md#エラー定義の共通化)に従う。`Nack`は転送中に接続先から受けたaddress/data NACK、`BusError`は不正なバス状態・通信手順の異常、`ArbitrationLost`はバス調停の喪失を表す。正常な最終受信byteへのNACKは含めない。`is_device_ready`で全試行のaddress NACKを確認した場合に`False`を返す契約は維持する。
+共通分類は[エラー定義の共通化](common.md#エラー定義の共通化)に従う。`Nack`は転送中に接続先から受けたaddress/data NACK、`BusError`は不正なバス状態・通信手順の異常、`ArbitrationLost`はバス調停の喪失を表す。正常な最終受信byteへのNACKは含めない。`is_device_ready`で全試行のaddress NACKを確認した場合に`False`を返す契約は維持する。
 
 共通statusの単一の定義表からC定数とEmela側の変換を生成し、stdlib・共有handler・生成C ABI・BSPを合わせて更新する。0は成功、-1は`InvalidArgument`、-2は`CapacityExceeded`とし、BSPも-1/-2を返せる。未知の非0 statusは`Other`へ変換する。
 
-controller・pin・IRQの予約と状態は[共通の固定資源表と状態遷移](README.md#状態遷移と通知の確定)に従う。割り込み有効中の再設定は`InvalidState`、進行中の操作との競合は`Busy`、予約資源との競合は`ResourceConflict`とする。設定、binding、割り込み有効化の順に初期化し、再設定前には停止して実行中callbackとbuffer参照の終了を確認する。
+controller・pin・IRQの予約と状態は[共通の固定資源表と状態遷移](common.md#状態遷移と通知の確定)に従う。割り込み有効中の再設定は`InvalidState`、進行中の操作との競合は`Busy`、予約資源との競合は`ResourceConflict`とする。設定、binding、割り込み有効化の順に初期化し、再設定前には停止して実行中callbackとbuffer参照の終了を確認する。
 
 ## 割り込みとハンドラーバインド
 
-同期APIを維持し、転送全体の完了・通信異常を静的binding先へ通知する。[UARTのハンドラーバインド](uart-interface.md#割り込みとハンドラーバインド)と同じ方式で、BSPのドライバーのISRから、bindingしたユーザーのEmela関数を直接呼ぶ。mainへのqueue配送やfiberの起動・再開を経由しない。
+同期APIを維持し、転送全体の完了・通信異常を静的binding先へ通知する。[UARTのハンドラーバインド](uart.md#割り込みとハンドラーバインド)と同じ方式で、BSPのドライバーのISRから、bindingしたユーザーのEmela関数を直接呼ぶ。mainへのqueue配送やfiberの起動・再開を経由しない。
 
 ### 転送手順の隠蔽と通知単位
 
@@ -211,7 +222,7 @@ controller・pin・IRQの予約と状態は[共通の固定資源表と状態遷
 | --- | --- |
 | byteごとの送受信、ACK/NACK制御、通信段階の移行、Repeated START・STOP等の手順 | BSPのI²Cドライバー内部。利用者向けイベントとして公開しない。 |
 | 要求した転送全体の完了、転送中のNACK・bus error・arbitration lost等の通信異常 | I²Cにbindingしたユーザー関数へ通知する。 |
-| センサー等の「測定データができた」という外部通知端子 | [GPIOの割り込み](gpio-interface.md#割り込みハンドラーの静的binding)として扱う。 |
+| センサー等の「測定データができた」という外部通知端子 | [GPIOの割り込み](gpio.md#割り込みハンドラーの静的binding)として扱う。 |
 
 利用者は接続先アドレス・送信データ・受信数等を指定し、割り込みごとの状態遷移を記述しない。1回の要求を処理するためにBSP内部で何度割り込みが発生しても、利用者へは転送全体の結果を通知する。`memory_read`はレジスタアドレス送信・Repeated START・受信をまとめて1件とし、中間段階の完了を別の転送完了として通知しない。
 
@@ -269,11 +280,11 @@ GPIO等のユーザーISRから既存の同期I²C転送を呼ぶことは、待
 ### 静的bindingとISR制約
 
 - binding専用の関数を設け、論理`I2cId`とcaptureのない名前付き関数を静的に解決する。UARTと同じく同じバスへの重複bindingを拒否し、動的な関数登録へ切り替えない。
-- [BSPによるISR専用handlerの静的供給](uart-interface.md#bspによるisr専用handlerの静的供給)を共通に適用する。必要な資源を割り込みの有効化前に準備し、無効化後も実行中のISRがアクセスを終えるまで保持する。
+- [BSPによるISR専用handlerの静的供給](uart.md#bspによるisr専用handlerの静的供給)を共通に適用する。必要な資源を割り込みの有効化前に準備し、無効化後も実行中のISRがアクセスを終えるまで保持する。
 - ユーザー関数には`fails {}`と`IsrSafe`に相当する制約を適用する。heap・参照管理・再帰・suspend・Clock系effect・待機等を禁止し、BSPが提供するISR用操作だけを静的に接続する。
 - 優先度はUART・GPIOと共通の`Low`・`Normal`・`High`の方針に従う。同じバスへの同期呼び出しや再設定をISRから再入させない。
 
-[UARTと共通の静的binding](uart-interface.md#割り込みとハンドラーバインド)をI²Cにも適用する。型検査後に指定を収集し、定数・不変な別名を辿って論理バスIDを解決する。プログラム全体で同じバスへの重複を検出し、通常コードから呼ばれないprivateなユーザー関数も保持してISR検査を自動適用する。BSP向けの生成入口は転送全体の通知契約に合わせて具体化する。
+[UARTと共通の静的binding](uart.md#割り込みとハンドラーバインド)をI²Cにも適用する。型検査後に指定を収集し、定数・不変な別名を辿って論理バスIDを解決する。プログラム全体で同じバスへの重複を検出し、通常コードから呼ばれないprivateなユーザー関数も保持してISR検査を自動適用する。BSP向けの生成入口は転送全体の通知契約に合わせて具体化する。
 
 bindingの実行時検証が成功する前には通知を有効化しない。停止後はcallbackや借用buffer参照が残らず、既に停止している場合の停止は成功する。`enable_interrupt(id, priority)`と`disable_interrupt(id)`を使う。優先度は`Std.Embedded.Interrupt.InterruptPriority`の`Low`・`Normal`・`High`。`Immediate`は公開署名の制約であり、ISR安全性はbackendの到達検査で検証する。
 
@@ -337,7 +348,7 @@ STOP・controller停止は追加2msの期限（ms量子化により実時間で�
 
 ## 現在の実装と確認
 
-stdlib、BoardI2c、生成C ABI、静的binding、共通状態機械、両BSPのdriverを実装した。[検証範囲と再現手順](../i2c-validation.md)に、host生成C、ASan/UBSan、実BSPソースを使うレジスタモデル、C構文検査を記録する。5 MCU × O0/O2のcross build/linkとimage生成も確認した。実機通信、SCL波形、割り込みlatency・最大stackは未確認であり、hostモデルの成功をその代わりにはしない。
+stdlib、BoardI2c、生成C ABI、静的binding、共通状態機械、両BSPのdriverを実装した。[検証範囲と再現手順](i2c.md#検証)に、host生成C、ASan/UBSan、実BSPソースを使うレジスタモデル、C構文検査を記録する。5 MCU × O0/O2のcross build/linkとimage生成も確認した。実機通信、SCL波形、割り込みlatency・最大stackは未確認であり、hostモデルの成功をその代わりにはしない。
 
 共有bridgeは共通word範囲と返却lengthの上限を検査する。要求数すべての成功、8bitの送受信範囲はBSPが保証する。prefixだけの空転送や短いListの成功は返さない。
 
@@ -359,3 +370,51 @@ stdlib、BoardI2c、生成C ABI、静的binding、共通状態機械、両BSPの
 - [ST公式STM32F4 HAL I²C source](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Src/stm32f4xx_hal_i2c.c)：下位APIが7bitアドレスの左シフトを要求する例。
 - [CMSIS-Driver I²Cインターフェース](https://arm-software.github.io/CMSIS_6/main/Driver/group__i2c__interface__gr.html)：転送開始と完了イベントの分離、通信異常の通知、転送中のbuffer保持の契約。
 - [ESP-IDF ESP32-C3 I²C](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c3/api-reference/peripherals/i2c.html)：R/W bitを含まないアドレスと、STOPを挟まないwrite/readの例。
+
+## 検証
+
+### hostでの再現
+
+```sh
+cargo test --locked -p emela-codegen-emb
+cargo test --locked -p emela-core
+cargo test --locked -p emela-cli --test embedded_cli
+```
+
+I²C単独では`cargo test --locked -p emela-codegen-emb --test emit embedded_peripherals::i2c`を使う。C11・C++17のhost compilerとPython 3が必要。
+
+| 試験 | 確認範囲 |
+| --- | --- |
+| 生成CとEmela | 専用エラー全分類・未知status、static ID/const/関数別名、private callback、scalar ABIからの3イベント、operation code変換、ISR内のGPIO write、ISRでのheap確保0 |
+| 言語機能と共通driverの統合 | EmelaからNACK・Timeoutを`escape`で捕捉して次の通信を成功させ、ISR→固定queue→mainで4件の最終結果を取得。応答確認3試行は1通知、失敗時の受信prefixをList化しないこと |
+| compiler拒否 | 動的ID、lambda、重複binding、同期I²C再入、heap、GPIO/UART/I²Cのqueue producer競合、main producer競合 |
+| 共通driver | バス操作前のアドレス・data・size・memory・設定・timeout検証、空転送、設定維持、失敗後の未設定、容量、短い成功を返さないこと、最初の通信異常の保持、復旧状態、通知停止と旧pending排除 |
+| 応答確認・期限 | 初回ACK、NACK後のACK、全試行NACKのFalse、通信異常、trials 0、負timeout、開始前timeout 0、全phase・全試行で共通の期限、最終NACK時の期限切れをFalseにしないこと、Int64上限 |
+| 最終通知 | 検証・空転送・timeout 0では無通知、開始済み要求は1回、応答確認の全試行を1回に集約、同期結果との一致、callback終了後の復帰。hostのISR代替入口で確認 |
+| STM32F4のレジスタモデル | 実BSPのC sourceを実行。7bit address、Bits8/16 prefix、Repeated START、1/2/3/4/32/33/64byte受信、ACK/POSと最終NACK、NACK時のSTOP、address/data NACKを再送しないこと、arbitration lost時のSTOP抑止、STOP失敗と再設定、100kHz/400kHzと16:9のregister設定 |
+| ESP32-C3のレジスタモデル | 実BSPのC sourceを実行。FIFO32byte境界、command batch間のENDでbusを保持、Repeated START、最終byteだけの正常NACK、STOP、NACK/調停/後処理失敗と回復、16:9 timing、START前の期限切れで不要なSTOPを出さないこと、52bit時刻counterのwrap |
+| C構文検査 | センサー使用例から生成したCと両BSP全translation unitを`-std=c11 -Wall -Wextra -Werror -fsyntax-only`で確認 |
+
+共通driverとレジスタモデルはASan/UBSan付きで実行する。レジスタモデルではCPU assemblyと時刻・MMIOを置換する。STOP後のcallbackを本物のNVIC/RISC-V trapで実行したという意味ではない。共通bridgeの従来mockは16bit wordの移送も検査し、I²C固有の8bit検査とは分ける。
+
+### CLIとfirmware build
+
+[センサー使用例](../../../../examples/i2c_sensor/README.md)を通常のCLIで検査・生成し、配布BSPでcross compile/linkしてfirmware imageを作る。実機への書込みは行わない。
+
+```sh
+cargo build --locked -p emela-cli
+export ARM_TOOLCHAIN_PATH=/path/to/arm-none-eabi-toolchain
+export EMELA_ESP32C3_TOOLCHAIN=/path/to/riscv32-esp-elf
+export EMELA_ESPTOOL_PYTHON=/path/to/python-with-esptool-4.8.1
+python3 crates/emela-codegen-emb/tools/i2c_build_matrix.py \
+  --emela target/debug/emela \
+  --output target/i2c-validation
+```
+
+既定はSTM32F407VG/F412ZG/F429ZI/F446RE・ESP32-C3 × O0/O2の10 case。生成C、board資産、compile/link log、firmware、resource reportとhashを出力し、総合`report.json`へまとめる。`--boards`・`--optimizations`で範囲を指定できる。
+
+### 実機確認との境界
+
+実機のSCL/SDA波形、pull-upと配線容量、clock精度、clock stretching、複数controllerの電気的調停、MCU errata、IRQ latency・優先度ネスト、実行時stack high-waterは未確認。レジスタモデルはdriverの手順と境界条件を確認するもので、実デバイスの全レジスタとtimingの証明にはしない。
+
+実機では通常のSTART/Repeated START/STOPと最終NACK、100/400kHz、16:9、通信異常と失敗後の次の要求、ISRからのGPIO変更と同期結果の一致をlogic analyzer等で確認する。callbackと独自のISR専用FFIは有界に実行し、通知IRQの進行を妨げない構成を使う。

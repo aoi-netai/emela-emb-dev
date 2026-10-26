@@ -464,7 +464,7 @@ UART・I²C・SPI の転送は同期 API。`List[Int]` の各要素は転送単�
 |---|---|---|
 | `PeripheralError` | `error PeripheralError(code: Int)` | UART・I²C・SPI で共通の実行時エラー。共有 bridge は `-1` を引数不正、`-2` を転送容量超過に予約し、ほかの非ゼロ値はボード実装が定める |
 
-予約コード、固定転送容量、生成 C API の詳細は [組み込み周辺機器の接続](../../emela-codegen-emb/docs/embedded-peripherals.md) を参照する。
+予約コード、固定転送容量、生成 C API の詳細は [組み込み周辺機器の接続](../../emela-codegen-emb/docs/embedded-interfaces/common.md#c-bridge) を参照する。
 
 ### Std.Embedded.Gpio（`std/embedded/gpio.emel`）
 
@@ -485,13 +485,13 @@ UART・I²C・SPI の転送は同期 API。`List[Int]` の各要素は転送単�
 
 ### Std.Embedded.Interrupt（`std/embedded/interrupt.emel`）
 
-`InterruptPriority`は`Low / Normal / High`。`import Std.Embedded.Interrupt`を使い、GPIOのPinStateと区別して`Interrupt.Normal`のように指定する。STM32F4とESP32-C3の対応pin・状態契約・共有IRQの制約は[GPIO仕様](../../emela-codegen-emb/docs/interface/gpio-interface.md)、確認方法は[Renode試験](../../emela-codegen-emb/docs/gpio-validation.md)を参照する。
+`InterruptPriority`は`Low / Normal / High`。`import Std.Embedded.Interrupt`を使い、GPIOのPinStateと区別して`Interrupt.Normal`のように指定する。STM32F4とESP32-C3の対応pin・状態契約・共有IRQの制約は[GPIO仕様](../../emela-codegen-emb/docs/embedded-interfaces/gpio.md)、確認方法は[Renode試験](../../emela-codegen-emb/docs/embedded-interfaces/gpio.md#検証)を参照する。
 
 ### Std.Embedded.Uart（`std/embedded/uart.emel`）
 
 `UartId` は `Uart0`〜`Uart7`。`UartConfig` は `baud_rate: Int`、`data_bits: UartDataBits`、`stop_bits: UartStopBits`、`parity: Parity`、`direction: UartDirection`、`flow_control: FlowControl`、`oversampling: Oversampling` を保持する。列挙値はそれぞれ `Bits7 / Bits8 / Bits9`、`Half / One / OneAndHalf / Two`、`NoParity / Even / Odd`、`Receive / Transmit / Both`、`NoFlowControl / Rts / Cts / RtsCts`、`By8 / By16`。データ幅にはパリティビットを含めない。
 
-BSP向けの操作契約案と現在の対応範囲は[UARTインターフェース仕様](../../emela-codegen-emb/docs/interface/uart-interface.md)を参照する。
+BSP向けの操作契約案と現在の対応範囲は[UARTインターフェース仕様](../../emela-codegen-emb/docs/embedded-interfaces/uart.md)を参照する。
 
 以下の操作はすべて `fails PeripheralError`。
 
@@ -503,7 +503,7 @@ BSP向けの操作契約案と現在の対応範囲は[UARTインターフェー
 
 ### Std.Embedded.I2c（`std/embedded/i2c.emel`）
 
-マスター操作を提供する。デバイスアドレスはR/W bitを含まない未シフトの7bit値に固定する。`I2cId` は `I2c1 / I2c2 / I2c3`。`I2cConfig` は `clock_speed_hz: Int`、`duty_cycle: I2cDutyCycle` を保持する。`I2cDutyCycle` は `Standard / Fast16To9`、内部のレジスタ・メモリアドレス幅を表す `MemoryAddressSize` は `Bits8 / Bits16`。10bitデバイスアドレスへの対応は、必要な部品が出てきた時点で追加する。[I²Cインターフェース仕様](../../emela-codegen-emb/docs/interface/i2c-interface.md)に確定したアドレス方針と、BSP実装に向けた操作契約の案をまとめる。
+マスター操作を提供する。デバイスアドレスはR/W bitを含まない未シフトの7bit値に固定する。`I2cId` は `I2c1 / I2c2 / I2c3`。`I2cConfig` は `clock_speed_hz: Int`、`duty_cycle: I2cDutyCycle` を保持する。`I2cDutyCycle` は `Standard / Fast16To9`、内部のレジスタ・メモリアドレス幅を表す `MemoryAddressSize` は `Bits8 / Bits16`。10bitデバイスアドレスへの対応は、必要な部品が出てきた時点で追加する。[I²Cインターフェース仕様](../../emela-codegen-emb/docs/embedded-interfaces/i2c.md)に確定したアドレス方針と、BSP実装に向けた操作契約の案をまとめる。
 
 以下の操作はすべて `fails PeripheralError`。
 
@@ -520,7 +520,7 @@ BSP向けの操作契約案と現在の対応範囲は[UARTインターフェー
 
 チップセレクトは GPIO で操作する。`SpiId` は `Spi1`〜`Spi6`。`SpiConfig` は `mode: SpiMode`、`direction: SpiDirection`、`data_size: SpiDataSize`、`polarity: ClockPolarity`、`phase: ClockPhase`、`prescaler: SpiPrescaler`、`bit_order: BitOrder` を保持する。列挙値はそれぞれ `Master / Slave`、`TwoLine / TwoLineReceiveOnly / OneLine`、`Bits8 / Bits16`、`IdleLow / IdleHigh`、`FirstEdge / SecondEdge`、`Div2 / Div4 / Div8 / Div16 / Div32 / Div64 / Div128 / Div256`、`MostSignificantFirst / LeastSignificantFirst`。
 
-BSP向けの操作契約案と現在の対応範囲は[SPIインターフェース仕様](../../emela-codegen-emb/docs/interface/spi-interface.md)を参照する。
+BSP向けの操作契約案と現在の対応範囲は[SPIインターフェース仕様](../../emela-codegen-emb/docs/embedded-interfaces/spi.md)を参照する。
 
 以下の操作はすべて `fails PeripheralError`。
 

@@ -1,8 +1,17 @@
-# GPIOインターフェース仕様
+# GPIOの機能一覧と操作契約
 
 状態：2026-10-24、`GpioConfig`、`GpioError`、静的な割り込みbinding、ISR専用read/writeをstdlib・codegen・STM32F4/ESP32-C3 BSPに実装。従来の`GpioMode`とstatusを返さないC ABIから移行した。旧header・旧BSPとの混在には対応せず、Cとfirmwareを再生成する。
 
-[仕様一覧](README.md)、[共通bridge](../embedded-peripherals.md)、[Renode試験と再実行手順](../gpio-validation.md)も参照する。UARTの拡充と固定容量共有APIは[UART仕様](uart-interface.md)を参照する。I²C・SPIの対応範囲は各仕様を参照する。
+[仕様一覧](README.md)、[共通bridge](common.md#c-bridge)、[Renode試験と再実行手順](gpio.md#検証)も参照する。UARTの拡充と固定容量共有APIは[UART仕様](uart.md)を参照する。I²C・SPIの対応範囲は各仕様を参照する。
+
+## 機能一覧
+
+| 機能 | API | 内容 |
+| --- | --- | --- |
+| ピン設定 | `configure` | Input／Output／Analog、pull、出力初期値を設定する |
+| 入出力 | `read`／`write`／`toggle` | ピン状態の取得、出力、反転 |
+| callbackの接続 | `bind_interrupt` | 論理pinと名前付き関数を静的に対応付ける |
+| 割り込み制御 | `enable_interrupt`／`disable_interrupt` | edge・優先度の設定、有効化・停止 |
 
 ## Emela API
 
@@ -96,7 +105,7 @@ STM32のIDは`port番号 × 16 + pin番号`で、A=0、B=1である。package上
 | Rising / Falling / Both | EXTIで対応 | GPIO edge検出で対応 |
 | Low / Normal / High | NVIC priority 0xC0 / 0x80 / 0x40 | CPU IRQ2 priority 1 / 2 / 3 |
 
-実行を伴う初期受け入れprofileは`stm32f407vg`と`esp32c3`。他profileは同じdriverとchip/package表を使うが、確認方法は[試験記録](../gpio-validation.md)に分ける。SWD/JTAG、水晶、基板上の外付け回路等の用途は実基板に応じて追加予約する必要がある。
+実行を伴う初期受け入れprofileは`stm32f407vg`と`esp32c3`。他profileは同じdriverとchip/package表を使うが、確認方法は[試験記録](gpio.md#検証)に分ける。SWD/JTAG、水晶、基板上の外付け回路等の用途は実基板に応じて追加予約する必要がある。
 
 ## operationの意味
 
@@ -142,7 +151,7 @@ compilerは型検査・具体化後にbindingを集める。pinのliteral、固�
 
 read/writeは`GpioError`で失敗し得るためcallback内で捕捉する。固定エラーの失敗経路を辿り、mainだけで使う文字列付きエラーを理由に固定エラーまでheap必須とは判定しない。mainのList/StringとISRのenum/match・read/writeが共存する。固定のpin値等のconstは、ISR用の純粋な定義を通し、mainの遅延初期化cellへ触れない。
 
-BSPの固定領域とpinはmainで準備する。ISRからmainのList/String/Cell/Stateへの参照を渡さない。固定容量の単一producer・単一consumer受け渡しには、UARTと共通の[WordChannel / try_push / try_pop](uart-interface.md#優先度と情報共有)を使う。
+BSPの固定領域とpinはmainで準備する。ISRからmainのList/String/Cell/Stateへの参照を渡さない。固定容量の単一producer・単一consumer受け渡しには、UARTと共通の[WordChannel / try_push / try_pop](uart.md#優先度と情報共有)を使う。
 
 ## 不正な操作とdefect
 
@@ -184,10 +193,50 @@ Intとenumはint32_t、`EmelaGpioPin`は`int32_t id`のstruct。C modeはInput=0
 
 Cには`GpioConfig`・`GpioEvent`の内部tag/union layoutを公開しない。headerはC境界の型のみを生成し、payload付きenumがmodule内に存在するだけで拒否しない。一般の`@external(c)`の型規則は変更しない。
 
-statusは[単一定義表](../../src/peripheral_status.rs)から共通header定数とGpioErrorKindへの変換を生成する。0=成功、-1=InvalidArgument、-3=NotConfigured、-4=Unsupported、-6=Busy、-7=ResourceConflict、-8=InvalidState、-9および未知値=Other。-2（容量）と-5（timeout）は通信向けの予約で、GPIOには対応する分類を追加しない。
+statusは[単一定義表](../../src/backend/board/peripheral_status.rs)から共通header定数とGpioErrorKindへの変換を生成する。0=成功、-1=InvalidArgument、-3=NotConfigured、-4=Unsupported、-6=Busy、-7=ResourceConflict、-8=InvalidState、-9および未知値=Other。-2（容量）と-5（timeout）は通信向けの予約で、GPIOには対応する分類を追加しない。
 
 ## 確認範囲
 
 host C試験では全config variantの分解、既知/未知status、private callbackとconst/alias、別pinのread/write、固定エラーの捕捉、ISRでheap確保が増えないこと、禁止経路のコンパイル診断を確認する。
 
-Renodeでは外部入力から実IRQへ入り、2pinの共有IRQ、片方だけの停止、Rising/Falling、停止後の再設定、未binding・不正pin・未設定・予約・優先度競合・Analogの対応差を確認する。STM32のopen-drain電気動作は同梱モデルが実装しない。C3はrepositoryの限定モデルであり、ROM/Flash起動・アナログ電圧・IRQ応答時間・優先度の実機での競合を確認したとは扱わない。再実行方法・資源量・実測結果は[試験記録](../gpio-validation.md)に記載する。
+Renodeでは外部入力から実IRQへ入り、2pinの共有IRQ、片方だけの停止、Rising/Falling、停止後の再設定、未binding・不正pin・未設定・予約・優先度競合・Analogの対応差を確認する。STM32のopen-drain電気動作は同梱モデルが実装しない。C3はrepositoryの限定モデルであり、ROM/Flash起動・アナログ電圧・IRQ応答時間・優先度の実機での競合を確認したとは扱わない。再実行方法は[検証](#検証)を参照する。資源の観測値とfirmware hashは実行ごとのreportへ保存する。
+
+## 検証
+
+### モデルと確認範囲
+
+STM32は同梱STM32F4のGPIO/EXTI/NVICモデルにSYSCFG routingを追加し、Flash binaryからresetする。ネットワーク取得だけを行うApplySVD metadataを外し、Flash aliasとMCUのFlash/SRAM容量、reset HSIのSysTick周波数を設定する。BSPの割り込み処理・生成C・callbackは変更しない。
+
+Renode 1.16.1のSTM32 GPIOはOTYPERのopen-drain動作を実装していない。PD12のOTYPER書き込みで出る既知の警告を正確に1件だけ記録し、電気的な解放・外部Lowとの競合を確認済みとはしない。他の警告やエラーは試験失敗とする。
+
+ESP32-C3には[GPIO用テストSoCモデル](../../tools/models/ESP32C3GpioTestSoC.cs)を追加した。native BSPのGPIO、pin matrix、IO_MUX、UART、1ms SysTimer、interrupt matrixの使用範囲をモデル化し、ELFのSRAM entryから既存startupを実行する。汎用RISC-Vコアのmie/mipへcontrollerのenable/pendingを対応付け、プラットフォームIRQ2を登録する。firmwareは引き続きnative MMIOとmtvec mode 1を使い、runnerによるISR関数呼び出し、PCをISRへ移すhook、CLIC modeへの変更は行わない。
+
+このC3モデルは完全なMCUではない。ROM/Flash load、watchdog、アナログ電圧、回路のglitch、IRQ優先度の競合やネスト、物理的な応答時間を保証しない。従来の[QEMUによるROM/Flash確認](../../README.md#同梱bsp)や実機確認とは別の範囲として扱う。C3モデルのレジスタ配置は[ESP-IDF v5.4.1 GPIO定義](https://github.com/espressif/esp-idf/blob/v5.4.1/components/soc/esp32c3/register/soc/gpio_reg.h)と[interrupt定義](https://github.com/espressif/esp-idf/blob/v5.4.1/components/soc/esp32c3/include/soc/interrupts.h)に対応させた。
+
+### 再実行
+
+Rust workspaceのrootでCLIをbuildする。Arm GNU toolchain、Espressif GCC 14.2.0、esptool 4.8.1、Renode 1.16.1は既存の環境を使う。必要なpathは自分の環境に合わせて指定する。
+
+```sh
+cargo build --offline -p emela-cli
+export ARM_TOOLCHAIN_PATH=/path/to/xpack-arm-none-eabi-gcc-13.2.1-1.1
+export EMELA_ESP32C3_TOOLCHAIN=/path/to/riscv32-esp-elf
+# esptool 4.8.1を利用できるPython。未指定なら実行中のPythonを使う。
+export EMELA_ESPTOOL_PYTHON=/path/to/python
+
+python3 crates/emela-codegen-emb/tools/gpio_matrix.py \
+  --emela target/debug/emela \
+  --renode /path/to/renode-1.16.1/renode \
+  --output target/gpio-validation
+```
+
+[matrix runner](../../tools/gpio_matrix.py)はprofileごとの`Pome.toml`・`embedded.toml`・`src/main.emel`を作り、通常のCLIでcheck/buildした後に[GPIO observer runner](../../tools/gpio_probe.py)を起動する。既定は両BSP × O0/O2。`--boards stm32f407vg`や`--optimizations O2`で絞れる。各構成のproject・build・生成C・firmware・Renode/model log・reportと、全体の`report.json`を残す。出力directoryの所有markerとlockを使い、不明な既存directoryを上書きしない。失敗時には成功reportを維持せず、失敗した段階を記録する。
+
+build済みfirmwareだけを再実行する場合：
+
+```sh
+python3 crates/emela-codegen-emb/tools/gpio_probe.py \
+  --firmware-dir target/gpio-validation/stm32f407vg/O2/build/firmware \
+  --renode /path/to/renode-1.16.1/renode \
+  --output target/gpio-observed-f4
+```

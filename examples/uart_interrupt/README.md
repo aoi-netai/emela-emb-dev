@@ -21,4 +21,4 @@ ESP32-C3ではPome.tomlのboardを`esp32c3`へ変更し、LEDのGpioPinを3、Ua
 
 受信値をmainで処理する場合はISRで`Interrupt.try_push(Interrupt.Channel0, value)`を使い、mainで`Interrupt.try_pop`する。容量は16 Intで、pushのFalseが満杯を表す。1つのISR producerと1つのmain consumerを対応させる。キューはmainを自動で再開しない。
 
-[API・対応設定](../../crates/emela-codegen-emb/docs/interface/uart-interface.md)と[Renodeでの検証手順](../../crates/emela-codegen-emb/docs/uart-validation.md)も参照。
+[API・対応設定](../../crates/emela-codegen-emb/docs/embedded-interfaces/uart.md)と[Renodeでの検証手順](../../crates/emela-codegen-emb/docs/embedded-interfaces/uart.md#検証)も参照。

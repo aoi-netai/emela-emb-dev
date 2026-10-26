@@ -1,8 +1,18 @@
-# SPIインターフェース仕様
+# SPIの機能一覧と操作契約
 
-状態：基本SPI、専用エラー、SpiDevice・transaction・CS管理をstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。以下は操作契約であり、実機の波形・電気特性まで確認済みという意味ではない。対応範囲と確認方法は[検証](../spi-validation.md)を参照する。
+状態：基本SPI、専用エラー、SpiDevice・transaction・CS管理をstdlib・C bridge・STM32F4/ESP32-C3 BSPへ実装済み。以下は操作契約であり、実機の波形・電気特性まで確認済みという意味ではない。対応範囲と確認方法は[検証](spi.md#検証)を参照する。
 
-実行文脈、設定、期限、空の転送、容量、エラー、所有権は[共通の操作契約案](README.md)に従う。SPI operationは同期呼び出しであり、Emelaの別fiberへ制御を渡さない。
+実行文脈、設定、期限、空の転送、容量、エラー、所有権は[共通の操作契約](common.md)に従う。SPI operationは同期呼び出しであり、Emelaの別fiberへ制御を渡さない。
+
+## 機能一覧
+
+| 機能 | API | 内容 |
+| --- | --- | --- |
+| バス設定 | `configure` | mode、方向、word幅、clock polarity/phase、bit順、分周を設定する |
+| 同期転送 | `transmit`／`receive`／`transfer` | 送信、dummy付き受信、同時送受信 |
+| CS付きdevice | `create_device` | バス設定・CS・setup/holdを持つdeviceを登録する |
+| transaction | `transaction` | CSを保持した操作列を実行し、Read／Transferの結果を順に返す |
+| 復旧 | `recover` | controller停止と全CSの非選択を確認し、復旧が必要な状態を解除する |
 
 ## Emela API
 
@@ -121,7 +131,7 @@ enumの整数値を下位HALの定数として流用しない。BSPはmode・dir
 
 設定とpin割り当てを検証してから適用し、後の転送に使う。Masterでは設定したidle polarityへSCKを整える。アプリは全接続先のCSを非選択にしてから再設定する。
 
-[固定資源表](README.md#bspの固定資源表)でcontroller・pin・予約資源の競合を検査する。進行中の転送やtransactionとの競合は`Busy`、予約用途との競合は`ResourceConflict`とする。transaction内部の設定切替は取得済みの所有権を使い、バスを二重取得しない。
+[固定資源表](common.md#bspの固定資源表)でcontroller・pin・予約資源の競合を検査する。進行中の転送やtransactionとの競合は`Busy`、予約用途との競合は`ResourceConflict`とする。transaction内部の設定切替は取得済みの所有権を使い、バスを二重取得しない。
 
 ### transmit
 
@@ -143,7 +153,7 @@ SPIにはI²Cのような標準のaddress ACKがない。operationの成功はco
 
 以下は現行の基本SPI APIの契約である。標準の上位APIによるCS管理は、[SpiDeviceとtransaction](#spideviceとtransactionによるcs管理)に記載する。
 
-MasterでのCS有効・無効のレベルとsetup/hold時間は接続先デバイスによる。アプリが[Gpio](gpio-interface.md)でCSを設定し、必要な転送の前後で制御する。SPIのconfigure/transmit/receive/transferはCSを自動変更しない。
+MasterでのCS有効・無効のレベルとsetup/hold時間は接続先デバイスによる。アプリが[Gpio](gpio.md)でCSを設定し、必要な転送の前後で制御する。SPIのconfigure/transmit/receive/transferはCSを自動変更しない。
 
 コマンド送信とデータ受信等、複数operationの間でCSを選択したままにできる。アプリはその間に同じバスを別の接続先へ使わせず、必要な排他を管理する。CSを標準APIで保持したい場合は、後述の`transaction`を使う。
 
@@ -159,7 +169,7 @@ timeout、mode fault、overrun等の異常では、部分的な受信結果を�
 
 ### SPI専用エラー
 
-全基本operationは`SpiError(kind)`、device初期化・transaction・復旧は`SpiTransactionError(primary, cleanup)`を使う。BSPのstatusと分類は[単一定義表](../../src/peripheral_status.rs)から生成する。未知の非0は`Other`となる。
+全基本operationは`SpiError(kind)`、device初期化・transaction・復旧は`SpiTransactionError(primary, cleanup)`を使う。BSPのstatusと分類は[単一定義表](../../src/backend/board/peripheral_status.rs)から生成する。未知の非0は`Other`となる。
 
 | status | 分類 |
 | --- | --- |
@@ -207,6 +217,8 @@ void emela_spi_recover(EmelaSpiId id, EmelaSpiTransactionStatus *status);
 
 operation kindはWRITE=1、READ=2、TRANSFER=3（`EMELA_SPI_OPERATION_*`）。sourceはNONE=0、SPI=1、GPIO=2（`EMELA_SPI_FAILURE_*`）。`status`は最初の失敗、`cleanup_status`はCS解除の失敗を別に保持する。payload付きEmela enumやListの内部layoutはBSPへ渡さない。TX/RX offsetはoperationの順に累積し、WriteはTX、ReadはRX、Transferは両方を使う。bufferは呼出し中だけ借用し、成功時は指定されたRX領域を全て初期化する。
 
+transaction用のC stack配列はdescriptorが`8 × capacity` byte、TX/RXが各`2 × capacity` byteで、合計`12 × capacity` byteを使う。既定容量256では配列だけで3072 byteとなり、ローカル変数と呼び出し先の使用量も加わる。設定容量と生成Cの`.su`・link mapを合わせて評価する。
+
 ## 初期対応BSP
 
 | BSP | 論理ID / controller | SCK / MISO / MOSI | clock・設定 |
@@ -226,7 +238,7 @@ controller停止は追加2msの期限で有界に行い、必要ならresetす�
 
 ## 実装と検証
 
-stdlib、BoardSpi、固定descriptorへの変換、共通driver、両BSP、2デバイスの使用例を提供する。[検証手順](../spi-validation.md)にhost生成C・ASan/UBSan付きレジスタモデル・CLI/firmware buildの範囲を記録する。実機のclock/sample edge、電気的なbit順、GPIO matrixの入力遅延、最大stackは未確認である。
+stdlib、BoardSpi、固定descriptorへの変換、共通driver、両BSP、2デバイスの使用例を提供する。[検証手順](spi.md#検証)にhost生成C・ASan/UBSan付きレジスタモデル・CLI/firmware buildの範囲を記録する。実機のclock/sample edge、電気的なbit順、GPIO matrixの入力遅延、最大stackは未確認である。
 
 共有bridgeは基本転送の共通word範囲と返却長の上限を検査する。短いreceive/transferを成功として返さないことと、設定幅に収まることはBSPが保証する。
 
@@ -294,7 +306,7 @@ CS解除に失敗したバスは復旧が必要な状態へ置き、新たな転
 
 操作列を先に渡し、BSPは最終操作を判別できる形にする。途中のoperation完了でCSを解除せず、低レベルの1 operationの完了とCS解除を含むtransactionの完了を区別する。C境界には固定レイアウトのdescriptor・bufferを渡し、Emelaの`SpiOperation`やListの内部レイアウトを公開しない。
 
-ISRでCSを操作する実装には、[BSP提供のISR専用handlerを静的に接続する方針](uart-interface.md#bspによるisr専用handlerの静的供給)を適用する。pin・操作列・bufferをmain側で準備し、ISRにListの構築・参照管理・解放を要求しない。初版の完成条件は同期transactionの契約であり、最終ISRからのCS解除を必須の実装方法にはしない。
+ISRでCSを操作する実装には、[BSP提供のISR専用handlerを静的に接続する方針](uart.md#bspによるisr専用handlerの静的供給)を適用する。pin・操作列・bufferをmain側で準備し、ISRにListの構築・参照管理・解放を要求しない。初版の完成条件は同期transactionの契約であり、最終ISRからのCS解除を必須の実装方法にはしない。
 
 上位APIと資源管理を両BSPへ接続した。BSP内部は同期pollingで実行し、ISRやfiberへ転送の進行を委ねない。失敗した初期化の予約も、安全なCS解除を確認したrecoverの後だけ解放する。
 
@@ -307,3 +319,49 @@ Hz指定のclock設定、可変dummy cycle、上記の操作列を超える任�
 - [ST公式STM32F4 SPI定義](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Inc/stm32f4xx_hal_spi.h)：mode、direction、data size、CPOL/CPHA、prescaler、bit順。
 - [embedded-halのSPI busとdevice](https://docs.rs/embedded-hal/latest/embedded_hal/spi/index.html#bus-vs-device)：バスとCS付き接続先の区別、transaction中のCS保持とバスの排他、CSのtiming設定。
 - [ESP-IDF ESP32-C3 SPI Master](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c3/api-reference/peripherals/spi_master.html)：SPI modeと信号、CSとtransactionの区別。Emelaの現行APIはCSをGPIOで制御する。
+
+## 検証
+
+### hostでの再現
+
+```sh
+cargo test --locked -p emela-codegen-emb
+cargo test --locked -p emela-core
+cargo test --locked -p emela-cli --test embedded_cli
+```
+
+SPI単独は`cargo test --locked -p emela-codegen-emb --test emit embedded_peripherals::spi`。C11/C++17 compilerとPython 3を使う。
+
+| 対象 | 確認内容 |
+| --- | --- |
+| Emela → bridge → 共通driver | enum/Listで操作列を作り、複数deviceへ送受信し、Read/Transferの結果だけを順序どおりのListへ返す。Writeなし結果、Read(0)/Transfer([])の空List、全ゼロ長・空操作列の無通信。終了後のheap使用量0 |
+| 検証と容量 | 未初期化・不正handle、未設定、重複CS、device数4、負size、8bit範囲、共通word範囲、操作数・総TX数・総RX数の上限。CS選択前の拒否。生成容量1/65,535のC構文検査 |
+| エラーと復旧 | 専用分類・未知status、最初のSPI/GPIO失敗とCS解除失敗の併存、解除だけの失敗、解除失敗後のInvalidState、configureで復旧しないこと、recoverで全CS解除、初期化失敗の予約を安全な回復後だけ解放 |
+| 期限・CS | setup/holdの待機、全operationで共通の期限、最終clock後のCS解除、CSのactive Low/High、別deviceへの切替、引数エラー・timeout 0での無選択 |
+| STM32F4 register model | 実BSPソースを実行。mode 0〜3、8/16bit、両bit順、0/255/65535、1/2/3/31/32/33/64/65 word、TXE/RXNEと最終BSY、dummy 0、transmitの受信値を次へ混入させないこと、全prescaler、ModeFault/Overrun/timeoutと復旧 |
+| ESP32-C3 register model | 実BSPソースを実行。mode 0〜3、8/16bit、両bit順、64byte buffer境界、16bitの明示byte配置、dummy 0、TRANS_DONE後の完了、全prescaler、CS保持と最終clock後のhold、timeoutとreset |
+| ISR検査 | GPIO ISRから同期SPIへの到達をコンパイル時に拒否 |
+| 共通時刻 | UART/I²C/SPI/Clockの時刻取得をBSP内で共通化。I²Cの既存register modelでも52bit wrapと失敗後の再利用を回帰確認 |
+| C翻訳単位 | 使用例から生成したCと両BSPを`-std=c11 -Wall -Wextra -Werror`で構文検査 |
+
+生成Cと共通driverの統合試験はO2・ASan/UBSan付きで実行する。register modelもASan/UBSanを使い、CPU assemblyとMMIO・時刻源を置換する。sample edgeや電気的な波形の実測ではない。
+
+### CLI・cross build
+
+```sh
+cargo build --locked -p emela-cli
+export ARM_TOOLCHAIN_PATH=/path/to/arm-none-eabi-toolchain
+export EMELA_ESP32C3_TOOLCHAIN=/path/to/riscv32-esp-elf
+export EMELA_ESPTOOL_PYTHON=/path/to/python-with-esptool-4.8.1
+python3 crates/emela-codegen-emb/tools/spi_build_matrix.py \
+  --emela target/debug/emela \
+  --output target/spi-validation
+```
+
+[2デバイスの使用例](../../../../examples/spi_devices/README.md)を、通常のCLIでcheck・C生成・cross compile/link・firmware image生成する。既定はSTM32F407VG/F412ZG/F429ZI/F446RE・ESP32-C3 × O0/O2の10 case。Flashへの書込みは行わない。`--boards`・`--optimizations`で絞り込める。出力には生成C、BSP、build log、firmware、静的資源量とhashを含める。
+
+### 実機確認との境界
+
+実機のCPOL/CPHAとsample edge、bit順、SCK精度、MISOの入力遅延、接続先ごとのCS setup/hold、MCU errata、IRQ負荷とstack high-waterは未確認。SPI成功はcontroller側のclock完了であり、接続先の存在・受理やセンサの値の正しさを示さない。
+
+実機ではlogic analyzer等で、2デバイス間のCS排他、最終clockとCS解除、mode 0〜3・8/16bit・両bit順を確認する。基本APIでCSを手動管理する場合は、アプリが再設定前の非選択と失敗時の解除を担当する。SPI APIはmainから同期的に呼び、任意のISRを含む最大実行時間やdefect時の通常cleanupまで保証するものではない。

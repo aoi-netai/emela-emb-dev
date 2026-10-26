@@ -14,4 +14,4 @@ ESP32-C3ではboardを`esp32c3`、CSをGPIO2/GPIO3へ変更する。論理バス
 
 `SpiTransactionError`の`primary`は最初のSPI/GPIOエラー、`cleanup`は別途発生したCS解除エラーを持つ。解除に失敗したバスは`recover`でcontroller停止と全CSの解除が成功するまで使えず、単なる`configure`では復旧しない。
 
-[SPI仕様](../../crates/emela-codegen-emb/docs/interface/spi-interface.md)と[検証範囲](../../crates/emela-codegen-emb/docs/spi-validation.md)を参照する。
+[SPI仕様](../../crates/emela-codegen-emb/docs/embedded-interfaces/spi.md)と[検証範囲](../../crates/emela-codegen-emb/docs/embedded-interfaces/spi.md#検証)を参照する。

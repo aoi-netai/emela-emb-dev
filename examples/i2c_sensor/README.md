@@ -10,6 +10,6 @@ target/debug/emela check examples/i2c_sensor
 target/debug/emela build examples/i2c_sensor
 ```
 
-クロスコンパイルにはBSPのArm toolchainが必要。[I2C仕様](../../crates/emela-codegen-emb/docs/interface/i2c-interface.md)と[検証範囲](../../crates/emela-codegen-emb/docs/i2c-validation.md)を参照する。
+クロスコンパイルにはBSPのArm toolchainが必要。[I2C仕様](../../crates/emela-codegen-emb/docs/embedded-interfaces/i2c.md)と[検証範囲](../../crates/emela-codegen-emb/docs/embedded-interfaces/i2c.md#検証)を参照する。
 
 ESP32-C3では`Pome.toml`のboardを`esp32c3`、LEDを利用可能なGPIO（例：3）へ変更する。論理バスIDは同じ`I2c1`で、SCL=GPIO6、SDA=GPIO7になる。

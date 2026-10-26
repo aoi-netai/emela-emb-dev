@@ -2,7 +2,7 @@
 
 `emela build --target c-embedded`は、ソースを型検査し、多相Coreを組み込みbackendへ渡す。backendが単相化とFlow IRへの変換を行い、組み込みCを生成する。Heap IRは使わない。ボードを選ぶと、同梱BSPによるcross compile・link・Flash image生成まで進める。
 
-言語機能と入力の制約は[実装範囲と対応状況](implementation.md)、標準effectは[組み込みインターフェース](embedded-interfaces.md)、ボードごとのdriver・メモリ・起動方式は[ボードpackage](boards.md)を参照する。CLIへの接続によって、成長型のCore入力、直接の関数値const、汎化effectのAsync具体化に関する既存frontendの制約が解消されるわけではない。
+言語機能と入力の制約は[実装範囲と対応状況](../emela-codegen-emb/src/backend/README.md)、標準effectは[組み込みインターフェース](../emela-codegen-emb/docs/embedded-interfaces/README.md)、ボードごとのdriver・メモリ・起動方式は[ボードpackage](../emela-codegen-emb/README.md#同梱bsp)を参照する。CLIへの接続によって、成長型のCore入力、直接の関数値const、汎化effectのAsync具体化に関する既存frontendの制約が解消されるわけではない。
 
 ## プロジェクトを作る
 
@@ -162,7 +162,7 @@ Hardware = "ports/{board}/hardware.emel"
 
 heapとpoolは別の固定領域であり、使用するruntimeに応じて生成される。実際に必要な容量はアプリの型・同時生存数・targetのC layoutによる。frameの大きさはC compile時にも検査する。上のproject設定は任意のアプリの推奨値や最大使用量を表すものではない。
 
-転送bufferはC stack上の`uint16_t`配列で、送信または受信で`2 × capacity` byte、SPI同時送受信では2配列合計`4 × capacity` byteを使う。SPI transactionではdescriptor・TX/RXの配列で合計`12 × capacity` byteを使う。固定上限でも小さなstackに収まるとは限らない。heap・String・scheduler poolの実行時容量不足はdefect契約に従い、通信APIの転送容量超過は各専用エラーの`CapacityExceeded`になり、SPI transactionでは`primary`へ保持する。詳細は[標準C bridge](embedded-peripherals.md)を参照する。
+転送bufferはC stack上の`uint16_t`配列で、送信または受信で`2 × capacity` byte、SPI同時送受信では2配列合計`4 × capacity` byteを使う。SPI transactionではdescriptor・TX/RXの配列で合計`12 × capacity` byteを使う。固定上限でも小さなstackに収まるとは限らない。heap・String・scheduler poolの実行時容量不足はdefect契約に従い、通信APIの転送容量超過は各専用エラーの`CapacityExceeded`になり、SPI transactionでは`primary`へ保持する。詳細は[標準C bridge](../emela-codegen-emb/docs/embedded-interfaces/common.md#c-bridge)を参照する。
 
 ### 外部Cとの接続
 
@@ -189,7 +189,7 @@ result = "borrowed"
 | `owned` | この生成moduleの固定heapに属する所有値をEmelaへ移す。全managed fieldが契約を満たす必要がある。 |
 | `string-buffer` | 追加のcaller bufferとbyte容量へ書き、そこを指すownerなしStringを返す。String戻り値専用。C側が書込み前に容量を守る。 |
 
-使われないadapter mappingも受け入れる。symbolはCの識別子で、予約語は使えない。実際の引数・戻り値・task結果の所有権は[実装状況の外部ABI契約](implementation.md#4-外部cisrボードとの境界)と生成headerに従う。
+使われないadapter mappingも受け入れる。symbolはCの識別子で、予約語は使えない。実際の引数・戻り値・task結果の所有権は[実装状況の外部ABI契約](../emela-codegen-emb/src/backend/README.md#外部cisrボードとの境界)と生成headerに従う。
 
 `isr_entries = ["function_name"]`と`isr_safe_externals = ["c_symbol"]`も指定できる。backendは指定入口からの到達処理を制限するが、IRQ vectorへの配線やC実装の実行時間を証明する設定ではない。通常のBSPはISRから完了通知だけを行い、Emela入口・heap・schedulerの処理はmain側に置く。
 
@@ -242,18 +242,18 @@ source・依存・設定・生成物の変更、別project／boardの指定、�
 | ESP32-C3 build | Espressif RISC-V toolchain。`riscv32-esp-elf-gcc`等をPATHへ置くか、rootを`EMELA_ESP32C3_TOOLCHAIN`へ指定する。 |
 | ESP32-C3 image／flash | `esptool==4.8.1`を使用Pythonへ導入する。`EMELA_ESPTOOL_PYTHON`でそのPythonを指定できる。例えば`python3 -m pip install esptool==4.8.1`。 |
 
-toolchainの自動取得、物理ボードの接続や配線は行わない。詳細なtool版・BSPの対応機能・emulatorでの再現手順は[STM32F4](../boards/stm32/stm32f4/README.md)、[ESP32-C3](../boards/esp32c3/README.md)、[ボード確認](boards.md)を参照する。Renode／QEMUは通常のCLI build・flashには不要である。
+toolchainの自動取得、物理ボードの接続や配線は行わない。詳細なtool版・BSPの対応機能・emulatorでの再現手順は[STM32F4](../emela-codegen-emb/boards/stm32/stm32f4/README.md)、[ESP32-C3](../emela-codegen-emb/boards/esp32c3/README.md)、[ボード確認](../emela-codegen-emb/README.md#同梱bsp)を参照する。Renode／QEMUは通常のCLI build・flashには不要である。
 
 ## 検証の範囲
 
-CLIのhost回帰試験は、C生成、設定とalias診断、targetとPomeの制限、module置換、library専用project、失敗した再buildによる成功記録の無効化を確認する。Unix上の2件は`EMELA_PYTHON`のtest wrapperで実際のprepare／seal／verifyを呼び、BSPのbuild／flashだけをmock化してCLIからの接続も確認する。Pythonの試験は照合処理を直接呼び、入力・生成物・BSPの変更や追加・削除、build中の変更を検出する。これらはcross toolchainや物理デバイスを使わず、実際のfirmware build・flashやMCU上での動作を検証するものではない。実BSPのFlash起動・IRQ・GPIO・UART・資源の観測は[既存のボードprobe](boards.md)で別に扱う。
+CLIのhost回帰試験は、C生成、設定とalias診断、targetとPomeの制限、module置換、library専用project、失敗した再buildによる成功記録の無効化を確認する。Unix上の2件は`EMELA_PYTHON`のtest wrapperで実際のprepare／seal／verifyを呼び、BSPのbuild／flashだけをmock化してCLIからの接続も確認する。Pythonの試験は照合処理を直接呼び、入力・生成物・BSPの変更や追加・削除、build中の変更を検出する。これらはcross toolchainや物理デバイスを使わず、実際のfirmware build・flashやMCU上での動作を検証するものではない。実BSPのFlash起動・IRQ・GPIO・UART・資源の観測は[既存のボードprobe](../emela-codegen-emb/README.md#同梱bsp)で別に扱う。
 
 | 試験 | 主な確認対象 |
 | --- | --- |
-| [`embedded_cli.rs`](../../emela-cli/tests/embedded_cli.rs) | C-only出力、設定・entry・alias診断、8種類のboard ID、checkとbuildの読取り専用overlay、BuildOnlyのrun/test診断、成功記録の無効化、既存targetへの非干渉。 |
-| [`embedded_dependencies.rs`](../../emela-cli/tests/embedded_dependencies.rs) | ローカル置換した依存のtarget制限を、boardあり／なしとlibrary専用projectで確認する。 |
-| [`embedded_firmware_state.rs`](../../emela-cli/tests/embedded_firmware_state.rs) | Unix上の2件。実CLI・driver・照合処理の接続、変更後のflash拒否、path／portを単一argvとして渡すこと、mock再build失敗後の旧成功記録の無効化。flashはdry-runに限定する。 |
-| [`test_build_state.py`](../tools/test_build_state.py) | 13件。prepare／seal／verify、source・依存・設定・成果物・BSPの追跡、追加assemblyの周辺header、入力の追加・削除、symlinkの名前・実体・循環、seal中の変更拒否。 |
+| [`embedded_cli.rs`](tests/embedded_cli.rs) | C-only出力、設定・entry・alias診断、8種類のboard ID、checkとbuildの読取り専用overlay、BuildOnlyのrun/test診断、成功記録の無効化、既存targetへの非干渉。 |
+| [`embedded_dependencies.rs`](tests/embedded_dependencies.rs) | ローカル置換した依存のtarget制限を、boardあり／なしとlibrary専用projectで確認する。 |
+| [`embedded_firmware_state.rs`](tests/embedded_firmware_state.rs) | Unix上の2件。実CLI・driver・照合処理の接続、変更後のflash拒否、path／portを単一argvとして渡すこと、mock再build失敗後の旧成功記録の無効化。flashはdry-runに限定する。 |
+| [`test_build_state.py`](../emela-codegen-emb/tools/test_build_state.py) | 13件。prepare／seal／verify、source・依存・設定・成果物・BSPの追跡、追加assemblyの周辺header、入力の追加・削除、symlinkの名前・実体・循環、seal中の変更拒否。 |
 
 workspace rootでの再検証コマンドは次のとおり。ここにコマンドがあること自体は、現在のtreeで成功した記録を意味しない。
 

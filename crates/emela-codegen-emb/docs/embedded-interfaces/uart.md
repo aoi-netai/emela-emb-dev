@@ -1,6 +1,17 @@
-# UARTインターフェース仕様
+# UARTの機能一覧と操作契約
 
 状態：2026-10-24、UART専用エラー、同期送受信、受信ユーティリティ、静的割り込みbindingをSTM32F4・ESP32-C3へ実装。利用する言語構文は既存のenum・effect・`Immediate`・`escape`であり、一般のC FFIの型制限は変更しない。
+
+## 機能一覧
+
+| 機能 | API | 内容 |
+| --- | --- | --- |
+| UART設定 | `configure` | 通信速度、データ幅、parity、stop bit等を設定する。対応組合せはBSP表を参照 |
+| 同期送信・固定長受信 | `transmit`／`receive` | 期限内の送信完了、要求数の受信 |
+| 可変長受信・入力破棄 | `receive_some`／`discard_input` | 上限付き受信、取得済み入力の破棄 |
+| 受信方式 | `set_receive_mode` | 通常受信と`InterruptReceive`を選択する |
+| callbackの接続 | `bind_interrupt` | UART IDと名前付き関数を静的に対応付ける |
+| 割り込み制御 | `enable_interrupt`／`disable_interrupt` | 受信・受信異常・送信完了の通知を制御する |
 
 ## 初期対応BSP
 
@@ -144,9 +155,9 @@ callbackと到達する補助関数を専用に具体化し、GPIO read/writeを
 
 Console、Clockのnow/sleep、通常UART、configure/toggle/割り込み制御、State/Cell、heap確保・参照管理、再帰、suspend、未解決の動的呼出しを拒否する。数値・固定サイズenum・固定サイズエラーは利用可。検査はembedded build時に行う。現在のcheck/LSPだけではbackendのISR診断は出ない。
 
-### 静的bindingのコンパイラー実装計画
+### 静的bindingのコンパイラー処理
 
-実装はGPIOとUARTで収集・ID/関数解決・重複検査・ISR特殊化を共有する。callbackは通常呼出しがなくても保持し、BSP用C入口から専用関数を直接呼ぶ。runtime登録は設定検証として残し、関数pointerの動的登録は行わない。I²Cへの適用は後続の作業。
+実装はGPIOとUARTで収集・ID/関数解決・重複検査・ISR特殊化を共有する。callbackは通常呼出しがなくても保持し、BSP用C入口から専用関数を直接呼ぶ。runtime登録は設定検証として残し、関数pointerの動的登録は行わない。I²Cにも同じ静的bindingとISR検査を適用する。
 
 ### 割り込みイベントのC入口
 
@@ -174,10 +185,53 @@ ISRが所有するchannelがある場合、mainの`try_push`も呼び出し先�
 
 ## 現在の実装と必要な確認
 
-[UARTの検証手順・結果](../uart-validation.md)に、host・Renode・未確認項目を記載する。Renodeの8N1試験を、全設定の実機確認とみなさない。STM32F429の別UART配線、RTS/CTS、DMA、行/idle受信、break、RS-485は初版の対象外。
+[検証](#検証)にhost・Renodeの再現手順と確認範囲をまとめる。Renodeの8N1試験を、全設定の実機確認とみなさない。STM32F429の別UART配線、RTS/CTS、DMA、行/idle受信、break、RS-485は初版の対象外。
 
 ## 参照
 
 - [ST公式USART定義](https://github.com/STMicroelectronics/stm32f4xx-hal-driver/blob/master/Inc/stm32f4xx_ll_usart.h)：parityを含むword length、BRR、TC。
 - [ESP-IDF v5.4.1 UARTレジスタ](https://github.com/espressif/esp-idf/blob/v5.4.1/components/soc/esp32c3/register/soc/uart_reg.h)、[UART LL](https://github.com/espressif/esp-idf/blob/v5.4.1/components/hal/esp32c3/include/hal/uart_ll.h)：FIFO、error/TC、XTAL分周。
-- [共通の操作契約](README.md)、[言語仕様](../../../../docs/spec/emela-0.20.md)。
+- [共通の操作契約](common.md)、[言語仕様](../../../../docs/spec/emela-0.20.md)。
+
+## 検証
+
+### 再現手順
+
+開発checkoutのCLIをビルドする。PATH上にある古いEmelaでは追加した標準モジュール/APIを利用できないため、下記ではバイナリを明示する。
+
+```sh
+cargo build --locked -p emela-cli
+export ARM_TOOLCHAIN_PATH=/path/to/arm-none-eabi-toolchain
+export EMELA_ESP32C3_TOOLCHAIN=/path/to/riscv32-esp-elf
+# BSPで指定されたesptool 4.8.1をPythonから利用できる状態にする。
+python3 crates/emela-codegen-emb/tools/uart_matrix.py \
+  --emela target/debug/emela \
+  --renode /path/to/renode-1.16.1/renode \
+  --output target/uart-validation
+```
+
+既定で2 MCU × 2受信方式 × O0/O2の8 caseを生成する。各caseは別のfirmware起動であり、UARTの受信方式を動作中に切り替えない。`--boards`・`--modes`・`--optimizations`で範囲を指定できる。
+
+通常の`emela check`・`emela build`から生成し、BSPをクロスコンパイルして実行する。生成先は`<board>/<mode>/<optimization>/project`・`build`・`observed`。総合`report.json`にfirmware hash、モデル情報、受信方式、観測値、stack、資源量を記録する。PCの書換えやISR関数の直接呼出しによる代用はしない。
+
+### 自動確認の範囲
+
+| 試験 | 確認内容 |
+| --- | --- |
+| host生成C | 3イベント入口、複数error flag、正しいID、同じprivate関数の複数IDへのbinding、callback/ID/関数別名、ISRでのheap確保0、mainのList/String/errorとの共存、status分類 |
+| compiler拒否 | 動的ID・lambda・重複binding、Console等の禁止操作、heap、ISRのpop、複数ISRの同一channel使用、main producerとの競合（高階関数・関数別名・record保存・closure経由を含む）、動的channel |
+| 共通BSP state machine | 実装そのものをhostでコンパイルし、設定維持・方向/受信方式・空転送・負の引数・word幅・32word ring overflow・受信異常・prefix消費・ゼロ期限の無消費・全体期限・TC/timeout競合・失敗後の再利用を確認。ASan/UBSan付き |
+| 共有queue | 16 Intの上限、満杯のFalse、FIFO、channel分離、slot再利用、IRQ lockの保存/復元 |
+| Renode Polling | 0/改行/255の順序、RX IRQ→通常受信ring、要求数不足時の無消費、固定長/receive_some、上限付き破棄、期限切れ後の受信、9600から115200への再設定、Pollingと送信完了通知の併用、GPIO pin予約競合 |
+| Renode InterruptReceive | TC通知後の同期返却、受信→GPIO、size 0も通常受信禁止、ISR→固定queue→main、停止後の入力抑止、旧pendingの除去、再設定時の方式維持、再開、ESP32-C3のparity+framing集合 |
+| GPIO回帰 | 両BSP O2で既存の9 IRQ・18checkpoint、guardを確認 |
+
+UART matrixの合否は8 caseすべてでアプリ結果42、defect 0、stack guard正常、送信wordが正確に`[0, 10, 255]`、イベント数・LED観測値の一致とする。PollingはTC 1回、InterruptReceiveはSTM32F4でTC 1回+RX 4回、ESP32-C3でさらにerror集合1回。空送信からは通知しない。
+
+### モデルと実機確認の境界
+
+STM32F4はRenode標準のUSART1・NVIC・GPIOを使い、Flash binaryからresetする。1.16.1のUSARTはPEIE/EIEを未実装tagとして報告するため、指定した2種類のwarningを各4回（Polling）/各3回（InterruptReceive）だけを照合して記録する。他のwarning/errorは失敗。parity/frame波形は未検証で、TCはモデル上即時になる。
+
+ESP32-C3は`ESP32C3GpioTestSoC.cs`でGPIO/UART1/FIFO/TC・SysTimer・interrupt matrixの必要な部分をモデル化し、generic RV32のSRAMへnative ELFをロードする。TXは115200/8N1相当のword時間を経てTCを発生させる。ROM・Flash boot、実デバイスの全レジスタ、baud/divider・parityの波形、優先度競合・IRQネストを網羅しない。BSPはnative MMIOと通常のtrap vectorを実行する。
+
+実機でのbaud誤差・stop bit・7/9bit・parity・高負荷overflow・割り込み遅延、非代表STM32F4 profileの通信は未確認。RTS/CTS等はUnsupportedとして拒否する。デジタルword注入による成功を、電気特性や全設定の確認済みという意味にはしない。

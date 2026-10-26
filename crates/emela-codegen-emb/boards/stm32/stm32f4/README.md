@@ -33,7 +33,7 @@ F407の総SRAM 192 KiBにはCCM 64 KiBが含まれるため、このpackageが�
 
 ## Rust APIから生成してstandalone buildする
 
-このpackageはRust API・BSP・Pythonのbuild／flash処理を提供する。通常のprojectは[Emela CLIの開発手順](../../../docs/cli-embedded.md)でboardを選び、生成・build・flashを行える。以下はRust APIを使うstandalone手順である。
+このpackageはRust API・BSP・Pythonのbuild／flash処理を提供する。通常のprojectは[Emela CLIの開発手順](../../../../emela-cli/README.md)でboardを選び、生成・build・flashを行える。以下はRust APIを使うstandalone手順である。
 
 repo rootで次のように生成する。`board_probe`は引数なしで`Int`を返す`Async` entryを生成し、GPIOをHigh、Consoleへ`board probe: high`を出力、10ms待機、GPIOをLow、`board probe: low`を出力して42を返す。F446／Nucleo／互換IDではPA5（5）、F407／F412／F429／DiscoveryではPD12（60）を使う。
 
@@ -50,7 +50,7 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py build \
 
 `ARM_TOOLCHAIN_PATH`へtoolchain rootを指定するか、`arm-none-eabi-gcc`・`nm`・`objcopy`・`size`を`PATH`へ置く。生成先には`generated/`と`bsp/`ができる。buildは`artifacts/`へ`firmware.elf`・`firmware.bin`・`firmware.map`・`firmware.json`・`resources.json`と、選択profileから生成したheader・vector・linker scriptを出力する。`--optimization`は`O0`／`O2`を受け付ける。
 
-独自のEmelaソースを使う場合は既存frontendでCoreを作り、`compile`／`compile_flow`とboard package APIを組み合わせて出力する。BSPのentryは引数なし・`Int`戻り値のsuspend関数であり、`generated/emela_embedded_exports.h`に`board_main_start`のaliasが必要になる。生成例と観測方法は[ボード接続と確認](../../../docs/boards.md)を参照する。
+独自のEmelaソースを使う場合は既存frontendでCoreを作り、`compile`／`compile_flow`とboard package APIを組み合わせて出力する。BSPのentryは引数なし・`Int`戻り値のsuspend関数であり、`generated/emela_embedded_exports.h`に`board_main_start`のaliasが必要になる。生成例と観測方法は[ボード接続と確認](../../../README.md#同梱bsp)を参照する。
 
 ## standaloneの書き込み
 
@@ -81,10 +81,10 @@ python3 /tmp/emela-board-stm32f446re/bsp/build.py flash \
 - `configure`は`GpioConfig`のInput／OutputPushPull／OutputOpenDrain／Analog、NoPull／Up／Downを受け入れ、該当portのRCCを有効化する。出力を解放してから指定初期値・出力型を設定し、出力を有効にする。
 - `write`は設定済みoutputに限定しBSRRへ書く。`read`はIDRのpin level、`toggle`はODR latchを使う。
 - ConsoleはprofileのUSARTを115200 baud、8N1へ初期化する。AFRL・AFRHをpinごとに設定し、APB1／APB2の選択を反映する。全profileはHSI・APBのreset値16 MHzを維持する。
-- UARTは`Uart1`=USART1、TX PA9 / RX PA10、Consoleとは別controllerで同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。専用`UartError`を返す。USART1をConsoleに使う`stm32f429zi`では`ResourceConflict`。[対応設定と状態遷移](../../../docs/interface/uart-interface.md)、[検証](../../../docs/uart-validation.md)を参照する。
+- UARTは`Uart1`=USART1、TX PA9 / RX PA10、Consoleとは別controllerで同期送受信・受信ユーティリティ・静的割り込みbindingを提供する。専用`UartError`を返す。USART1をConsoleに使う`stm32f429zi`では`ResourceConflict`。[対応設定と状態遷移](../../../docs/embedded-interfaces/uart.md)、[検証](../../../docs/embedded-interfaces/uart.md#検証)を参照する。
 - GPIOは静的bindingとEXTIのRising/Falling/Bothを実装する。共有IRQの優先度、port間のEXTI入力競合、未bindingでの有効化を検査する。read/writeは生成されたISR専用経路でも使える。
-- I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはPB6/PB7、I2C1・AF4。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../../docs/interface/i2c-interface.md)、[検証](../../../docs/i2c-validation.md)を参照する。
-- SPIは`Spi2`=SPI2、SCK=PB13 / MISO=PB14 / MOSI=PB15、AF5、APB1 16MHz。Master/TwoLine・8/16bit・mode 0〜3・両bit順を実装する。CSは基本APIではアプリが制御し、上位APIでは固定4件のdeviceへ予約してtransaction/recoverで管理する。SPI・GPIO・UART・I²C間のpin競合を拒否する。[対応設定と復旧](../../../docs/interface/spi-interface.md)、[検証](../../../docs/spi-validation.md)を参照する。ADC等のdriverは対象外である。
+- I²Cは`I2c1`で7bit master・8/16bitレジスタ・応答確認・転送全体のISR通知を提供する。SCL/SDAはPB6/PB7、I2C1・AF4。外付けpull-upが必要。GPIOとのpin競合を検査し、共通期限と有界なSTOP/abortを使う。[対応設定・IRQ・復旧](../../../docs/embedded-interfaces/i2c.md)、[検証](../../../docs/embedded-interfaces/i2c.md#検証)を参照する。
+- SPIは`Spi2`=SPI2、SCK=PB13 / MISO=PB14 / MOSI=PB15、AF5、APB1 16MHz。Master/TwoLine・8/16bit・mode 0〜3・両bit順を実装する。CSは基本APIではアプリが制御し、上位APIでは固定4件のdeviceへ予約してtransaction/recoverで管理する。SPI・GPIO・UART・I²C間のpin競合を拒否する。[対応設定と復旧](../../../docs/embedded-interfaces/spi.md)、[検証](../../../docs/embedded-interfaces/spi.md#検証)を参照する。ADC等のdriverは対象外である。
 
 USART pinのAF・RCC操作、GPIO register配置はF4共通である。別シリーズへ同じregister offsetやclock設定を流用しない。
 
@@ -104,7 +104,7 @@ stackは16 KiB、low guardは別に256 byteを予約する。固定heap・fiber�
 
 `board_app_completed`・`board_app_result`・`board_app_failures`・`board_ticks`・`board_notifications`・`board_rejected_notifications`・`board_uart_bytes`、`board_boot_*`と`emela_validation_stack_*`を観測できる。stack paint走査はmainのwork後と終了時に行い、IRQはSPの記録だけとする。
 
-[Renode runner](../../../tools/board_probe_stm32f4.py)はFlash binaryからresetし、GPIOのHigh→Low、Console、10msの実IRQ待機再開、結果42、stack guardを観測する。[matrix runner](../../../tools/board_probe_matrix.py)は登録されたF4 profileとplatformの組合せを実行する。対象と再実行手順は[ボード接続と確認](../../../docs/boards.md)を参照する。ST-Linkによる物理転送とエミュレータの実行結果は別の確認範囲である。
+[Renode runner](../../../tools/board_probe_stm32f4.py)はFlash binaryからresetし、GPIOのHigh→Low、Console、10msの実IRQ待機再開、結果42、stack guardを観測する。[matrix runner](../../../tools/board_probe_matrix.py)は登録されたF4 profileとplatformの組合せを実行する。対象と再実行手順は[ボード接続と確認](../../../README.md#同梱bsp)を参照する。ST-Linkによる物理転送とエミュレータの実行結果は別の確認範囲である。
 
 ## 設定根拠
 
@@ -115,4 +115,50 @@ stackは16 KiB、low guardは別に256 byteを予約する。固定heap・fiber�
 - [ST公式CMSIS device F4](https://github.com/STMicroelectronics/cmsis-device-f4)：MCU別IRQ番号と`Source/Templates/gcc/startup_stm32f*.s`の標準handler名。手元ではSTM32CubeF4 1.28.3の同じ定義で照合した。metadataにはslot番号・識別子という事実データを収録し、HAL/CMSISのコードを同梱しない。
 - [STM32F4 reference manual RM0090](https://www.st.com/resource/en/reference_manual/dm00031020.pdf)、[F412 RM0402](https://www.st.com/resource/en/reference_manual/rm0402-stm32f412-advanced-armbased-32bit-mcus-stmicroelectronics.pdf)、[F446 RM0390](https://www.st.com/resource/en/reference_manual/dm00135183.pdf)：GPIO/RCC/USART、reset clock、SRAM配置。
 
-GPIOの新API・status ABI・ISR制約は[GPIO仕様](../../../docs/interface/gpio-interface.md)、CLIからのRenode試験は[確認手順](../../../docs/gpio-validation.md)を参照する。
+GPIOの新API・status ABI・ISR制約は[GPIO仕様](../../../docs/embedded-interfaces/gpio.md)、CLIからのRenode試験は[確認手順](../../../docs/embedded-interfaces/gpio.md#検証)を参照する。
+
+## Renodeでの起動確認
+
+```sh
+python3 crates/emela-codegen-emb/tools/board_probe_stm32f4.py \
+  --firmware-dir /tmp/emela-board-stm32f446re/artifacts \
+  --output /tmp/emela-f446-observation --platform cpu-f446re \
+  --renode /path/to/renode-1.16.1/renode
+```
+
+Renode 1.16.1のplatform一覧を固定し、7つのF4定義の一覧が変わった場合は拒否する。各sourceのSHA-256をreportへ保存する。ネットワークからSVDを取得しないようmetadataを除き、genericモデルへBOOT0=0のFlash alias、profileのFlash/SRAM容量、reset HSI 16 MHzのSysTickを適用する。モデルを使用するための変換であり、生成Cやfirmwareをテスト用に書き換えない。
+
+- ELFはsymbolの読取りにのみ使い、実行メモリへloadしない。BINをFlashへ置いてCPUをResetする。PC/SP/VTORを観測器から設定しない。
+- `.data` / `.bss` の観測wordをreset前に汚し、startupが初期化したことを確認する。
+- UARTの2行とbyte数、結果42、完了1回、IRQ tick 10回、task通知1回、拒否通知・defect 0を照合する。
+- GPIOのMMIO最終状態に加え、外部LEDと独立receiverへ配線し、High→Lowの2遷移と最終Lowを確認する。
+- Console TX/RXのAF・GPIO mode・RCC enableをprofileと照合する。
+- stackの観測値とguard、固定heap 2048 byte、システムallocatorをlinkしていないことを確認する。stackはpaint/最小SPによる観測値であり、任意の経路の静的な最大値ではない。
+
+monitorの同期ラベルは `renode.log`、非同期のmodel/GPIO logは `model.log` に分離する。ラベルや値の欠落・重複、モデルのwarning/errorがある場合は成功にしない。
+
+### profile/platformのmatrix
+
+```sh
+python3 crates/emela-codegen-emb/tools/board_probe_matrix.py \
+  --probe target/debug/examples/board_probe \
+  --output /tmp/emela-f4-probe-matrix \
+  --renode /path/to/renode-1.16.1/renode \
+  --toolchain /path/to/arm-toolchain --jobs 2
+```
+
+既定ではF4の7 profileをO0/O2でbuildする14件と、次の10 platform構成をO0/O2で観測する20件を対象にする。`--platform`、`--optimization` で対象を絞った場合、reportは実際に選択した範囲を記録する。
+
+| platform指定 | 構成 |
+| --- | --- |
+| `cpu-f407` / `cpu-f412` / `cpu-f429` | 対応するCPU定義 |
+| `discovery` | Discovery board |
+| `discovery-additional-gpios` | Discovery + GPIO fragment |
+| `discovery-bb` | Discovery + baseboard fragment |
+| `discovery-kit` | upstreamの合成kit定義 |
+| `cpu-f446re` / `cpu-f446-compat` / `nucleo-f446re` | generic F4上の各profile |
+
+
+runnerは空のdirectoryか同じrunnerが所有するmarkerのあるdirectoryを使い、lockで排他する。開始時に古い成功reportを無効化し、失敗時もreportとlogを残す。manifestのhashと資源量を検査してから起動し、timeout時には子process groupを停止する。stack値はprobeの観測値であり、任意のアプリの最大値ではない。
+
+runnerの入出力・lock・manifest・timeoutのhost確認は、workspace rootで`python3 crates/emela-codegen-emb/tools/test_board_probe.py`を実行する。firmware起動の検証には各emulatorも必要になる。
