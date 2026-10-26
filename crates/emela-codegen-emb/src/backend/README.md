@@ -36,6 +36,12 @@ compile_flow
 
 Value・Stmt・Term等のdispatcherはvariantを網羅する。新しいvariantの追加時に生成・解析・runtime要求の判断漏れをコンパイル時に検出し、子のIRの走査には共通処理を使う。
 
+## 実装とテストの対応
+
+[実装・テストの自動対応表](../../docs/generated/flow-backend-inventory.md)は、IRの定義IDから機能別の専用入口・追加の処理段階・関連テストへ対応付ける。variantごとの担当と関連テストを明示し、fieldは親の担当との関係を記録する。fieldや共有宣言を独立した実装数・テスト数として数えない。
+
+通常の`cargo test`とCIでは、定義・実装・テストの欠落、生成物の古さ、sync/suspend等の必須経路の根拠を検査する。CIでは実際のテストバイナリーへの登録とignore状態も確認する。設定と生成・検査のコマンドは[crateのREADME](../../README.md#実装とテストの自動検査)を参照する。
+
 ## 検証
 
 ```sh

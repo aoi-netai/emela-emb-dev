@@ -1,0 +1,631 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "owner": "emela_lir::Value",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::Stmt",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::Term",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::Callee",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::OnFail",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::SwitchOn",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::CaseKey",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    },
+    {
+      "owner": "emela_lir::Const",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::Operand",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::PrimOp",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::PrimTy",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::RuntimeOp",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::Repr",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_lir::Stage",
+      "contexts": [
+        "input"
+      ]
+    },
+    {
+      "owner": "emela_core::Builtin",
+      "contexts": [
+        "common"
+      ]
+    },
+    {
+      "owner": "emela_core::FiberOp",
+      "contexts": [
+        "sync",
+        "suspend"
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "id": "reject-runtime",
+      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "symbol": "verify_flow",
+      "owner": "emela_lir::RuntimeOp",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "Flow入口でHeap runtimeを拒否する分岐。役割は設定の宣言。",
+      "only_variants": [
+        "Defect",
+        "DefectTake",
+        "DefectResume",
+        "Yield",
+        "YieldPerform"
+      ]
+    },
+    {
+      "id": "reject-builtin",
+      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "symbol": "verify_flow",
+      "owner": "emela_core::Builtin",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "未lowerのsource builtinをFlow入口で拒否する分岐。",
+      "only_variants": [
+        "Panic",
+        "Todo",
+        "Dbg",
+        "Inspect",
+        "ShowNested",
+        "ShowString",
+        "DebugPrint"
+      ]
+    },
+    {
+      "id": "reject-heap-value",
+      "path": "crates/emela-lir/src/verify.rs",
+      "symbol": "Checker::value",
+      "owner": "emela_lir::Value",
+      "selector": "match",
+      "expression": "v",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "compile_flowから呼ぶ共通LIR verifierのstage検査。stage_at_least呼出しの存在も要求する。",
+      "only_variants": [
+        "MakeClosure",
+        "EnvGet"
+      ],
+      "required_calls": [
+        ".stage_at_least"
+      ],
+      "top_level": true
+    },
+    {
+      "id": "reject-heap-stmt",
+      "path": "crates/emela-lir/src/verify.rs",
+      "symbol": "Checker::stmt",
+      "owner": "emela_lir::Stmt",
+      "selector": "match",
+      "expression": "s",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "compile_flowから呼ぶ共通LIR verifierのstage検査。stage_at_least呼出しの存在も要求する。",
+      "only_variants": [
+        "Dup",
+        "Drop"
+      ],
+      "required_calls": [
+        ".stage_at_least"
+      ]
+    },
+    {
+      "id": "reject-heap-term",
+      "path": "crates/emela-lir/src/verify.rs",
+      "symbol": "Checker::term",
+      "owner": "emela_lir::Term",
+      "selector": "match",
+      "expression": "t",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "compile_flowから呼ぶ共通LIR verifierのstage検査。stage_at_least呼出しの存在も要求する。",
+      "only_variants": [
+        "Unwind"
+      ],
+      "required_calls": [
+        ".stage_at_least"
+      ]
+    },
+    {
+      "id": "reject-heap-failure",
+      "path": "crates/emela-lir/src/verify.rs",
+      "symbol": "Checker::on_fail",
+      "owner": "emela_lir::OnFail",
+      "selector": "match",
+      "expression": "on_fail",
+      "contexts": [
+        "input"
+      ],
+      "role": "reject",
+      "note": "compile_flowから呼ぶ共通LIR verifierのstage検査。stage_at_least呼出しの存在も要求する。",
+      "only_variants": [
+        "Handle"
+      ],
+      "required_calls": [
+        ".stage_at_least"
+      ]
+    },
+    {
+      "id": "sync-stmt",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/statements/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Stmt",
+      "selector": "match",
+      "expression": "statement",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "sync-term",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/terms/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Term",
+      "selector": "match",
+      "expression": "term",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "sync-failure",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/failures.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::OnFail",
+      "selector": "match",
+      "expression": "edge",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-stmt",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/statements/mod.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Stmt",
+      "selector": "match",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-term",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/terms/mod.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Term",
+      "selector": "match",
+      "expression": "term",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-failure",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/failures.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::OnFail",
+      "selector": "match",
+      "expression": "edge",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "value",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Value",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "callee",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Callee",
+      "selector": "match",
+      "expression": "callee",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-direct",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_direct",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-indirect",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_indirect",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-op",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_op",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "fiber",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/fibers/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_core::FiberOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "closure-lowering",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/closure.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Value",
+      "selector": "let_else",
+      "expression": "stmt",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "lower",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。",
+      "only_variants": [
+        "Closure"
+      ]
+    },
+    {
+      "id": "builtin",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/builtins/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_core::Builtin",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "runtime",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/runtime.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::RuntimeOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "constant",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/constants.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Const",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "operand",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/operands.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Operand",
+      "selector": "match",
+      "expression": "operand",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "primitive-type",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/primitive_types.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::PrimTy",
+      "selector": "match",
+      "expression": "ty",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "primitive",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/primitive_operations.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::PrimOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "representation",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/representations.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Repr",
+      "selector": "match",
+      "expression": "repr",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "stage",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/stages.rs",
+      "symbol": "verify",
+      "owner": "emela_lir::Stage",
+      "selector": "match",
+      "expression": "stage",
+      "contexts": [
+        "input"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "switch",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/switches.rs",
+      "symbol": "scrutinee",
+      "owner": "emela_lir::SwitchOn",
+      "selector": "match",
+      "expression": "on",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "case-key",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/case_keys.rs",
+      "symbol": "label",
+      "owner": "emela_lir::CaseKey",
+      "selector": "match",
+      "expression": "key",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    }
+  ],
+  "exclusions": [
+    {
+      "id": "emela_lir::RuntimeOp::Defect",
+      "route": "reject-runtime",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectTake",
+      "route": "reject-runtime",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectResume",
+      "route": "reject-runtime",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::RuntimeOp::Yield",
+      "route": "reject-runtime",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::RuntimeOp::YieldPerform",
+      "route": "reject-runtime",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::Panic",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::Todo",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::Dbg",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::Inspect",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::ShowNested",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::ShowString",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::DebugPrint",
+      "route": "reject-builtin",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::Value::MakeClosure",
+      "route": "reject-heap-value",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::Value::EnvGet",
+      "route": "reject-heap-value",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::Stmt::Dup",
+      "route": "reject-heap-stmt",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::Stmt::Drop",
+      "route": "reject-heap-stmt",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::Term::Unwind",
+      "route": "reject-heap-term",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_lir::OnFail::Handle",
+      "route": "reject-heap-failure",
+      "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    }
+  ]
+}

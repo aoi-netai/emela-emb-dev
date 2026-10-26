@@ -159,21 +159,6 @@ host試験は生成Cの値・制御・所有権・容量defectを確認する。
 
 実装欄のリンクは機能ごとの入口を指す。共有contextと補助関数は [`compiler/mod.rs`](../src/backend/compiler/mod.rs)、配置と所有権は [`foundation/`](../src/backend/compiler/foundation)、全体の分割方針は [backendの構成](../src/backend/README.md) を参照する。所有権・資源・ABIの共通制約は第2〜4節のとおり。source builtinは既存lower先と、Flow入力としての可否を分けて記す。variantが増えたときはこの文書・実装・試験を合わせて更新する。
 
-<!-- flow-audit:Value Const Prim Call Builtin Make Field Tag Tuple TupleGet List ListIsEmpty ListHead ListTail FnRef Closure MakeClosure EnvGet EvLookup EvExtend Handler Fiber IsError AsError Runtime Coerce -->
-<!-- flow-audit:Const Int Int64 Float Bool String Unit -->
-<!-- flow-audit:PrimOp Add Sub Mul Div Rem Neg Not Eq Ne Lt Le Gt Ge -->
-<!-- flow-audit:PrimTy I32 I64 F64 String -->
-<!-- flow-audit:Callee Direct Indirect Op -->
-<!-- flow-audit:Operand Var Const -->
-<!-- flow-audit:Stmt Let If Switch Loop Block Protect Dup Drop -->
-<!-- flow-audit:Term Yield Return Fail Break Recur Defect Unwind Unreachable -->
-<!-- flow-audit:FiberOp Scope Fork Deferred Join Await Interrupt Attempt Complete DeferredAwait Poll CauseKind CauseToString CauseRaise -->
-<!-- flow-audit:OnFail Break Propagate Handle -->
-<!-- flow-audit:SwitchOn Tag Lit -->
-<!-- flow-audit:CaseKey Variant Lit -->
-<!-- flow-audit:Stage Flow ClosuresConverted DefectsExplicit StateMachines RefCounted -->
-<!-- flow-audit:Builtin StringLength StringByteSize StringAppend StringContains StringStartsWith StringEndsWith StringSplit StringChars StringJoin StringTrim StringCodePoints StringFromCodePoint IntToString IntParse IntCheckedAdd IntBitAnd IntBitOr IntBitXor IntBitNot IntShiftLeft IntShiftRight IntShiftRightUnsigned Int64FromInt Int64ToString Int64ToInt Int64BitAnd Int64BitOr Int64BitXor Int64BitNot Int64ShiftLeft Int64ShiftRight Int64ShiftRightUnsigned FloatToString FloatFromInt FloatParse FloatFloor FloatCeil FloatRound FloatTruncate Panic Todo Dbg Inspect ShowNested CellNew CellGet CellSet ShowString DebugPrint -->
-<!-- flow-audit:RuntimeOp ShowString DebugPrint Retire Defect DefectTake DefectResume Hold Unhold Yield YieldPerform -->
 
 ### Value
 
@@ -379,7 +364,7 @@ host試験は生成Cの値・制御・所有権・容量defectを確認する。
 
 ## 7. 対応表の監査と確認範囲
 
-[`coverage_audit.rs`](../tests/coverage_audit.rs) と [`flow_audit_inventory.rs`](../examples/support/flow_audit_inventory.rs) は、本体のenum定義と上記15種類のinventory marker、表示されたvariant名、試験列に書かれた実在の試験名を照合する。この監査は行の欠落や参照切れを見つけるもので、試験の実行結果や意味論の完全性を代わりに証明するものではない。
+この文書は実装範囲と契約の手書きの説明である。定義・実装入口・関連テストの自動照合には[生成された対応表](generated/flow-backend-inventory.md)を使う。[`coverage_audit.rs`](../tests/coverage_audit.rs) は本体のenum定義・`Builtin::ALL`と定義JSONを照合し、[`backend_inventory.rs`](../tests/backend_inventory.rs) と [`implementation_inventory.rs`](../tests/implementation_inventory.rs) は担当・関連テストとsync/suspend等の処理経路を検査する。生成・検査の手順は[crateのREADME](../README.md#実装とテストの自動検査)を参照する。入口・テストの存在と試験の成功・意味論の完全性は別に確認する。
 
 | 確認対象 | 試験の参照 | 主な境界 |
 | --- | --- | --- |

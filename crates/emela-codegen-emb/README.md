@@ -12,6 +12,39 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 `Options`でString容量、固定heap、fiberやtaskのpool容量などを指定します。必要なランタイムとボード接続用のCインターフェースは生成コードに含まれます。
 
+## 実装とテストの自動検査
+
+IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`とCIで検査します。[backendの構成](src/backend/README.md)で説明する機能別の分割に合わせた仕組みです。
+
+| 生成される一覧 | 確認する内容 |
+| --- | --- |
+| [Flow IR定義](docs/generated/flow-ir-inventory.md) | Rust構文から抽出した型・variant・field・宣言hash。新しい定義や形の変更を検出します。 |
+| [実装・テストの対応表](docs/generated/flow-backend-inventory.md) | 定義IDごとの専用入口・処理段階・関連テスト。担当の欠落・重複・定義外ID・存在しない関数やテストを拒否します。 |
+| [構文上の実装候補](docs/generated/flow-implementation-inventory.md) | 指定した生成・変換・拒否処理のAST分岐と呼び出し。wildcardを未列挙variantの根拠には数えません。 |
+| [実行経路との比較](docs/generated/flow-coverage.md) | sync・suspend・入力拒否の必須経路に明示的な根拠があるか。経路の欠落や監査対象enumの登録漏れを拒否します。 |
+
+担当は[`owners.json`](inventory/owners.json)と[`containers.json`](inventory/containers.json)、テストは[`tests.json`](inventory/tests.json)、処理経路は[`flow-implementation-routes.json`](tools/flow-implementation-routes.json)で登録します。variantを追加するときは、担当入口と関連テストも登録してください。テストはtargetと完全な名前で識別し、全件ignoreの関連付けは拒否します。`--check-built`ではコンパイルされたテストバイナリーへの登録とignore状態も照合し、`cfg`等により実際には登録されないテストを検出します。
+
+リポジトリrootから生成します。MarkdownとJSONは同じ抽出結果から作り、生成物を手では編集しません。
+
+```sh
+bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh
+bash crates/emela-codegen-emb/tools/backend-inventory.sh
+bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh
+```
+
+CIと同じ検査は次のとおりです。`--check`は生成物を更新せず、現在のsourceとの差分を検出します。生成されたMarkdownだけの変更もCIの検査対象です。
+
+```sh
+bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh --check
+bash crates/emela-codegen-emb/tools/backend-inventory.sh --check
+bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh --check --require-evidence
+python3 crates/emela-codegen-emb/tools/test-inventory.py --check-built
+cargo test -p emela-codegen-emb --locked
+```
+
+検査器自体にも、variantの追加、実装入口の削除・使い回し、テストの削除・改名・ignore、生成物の陳腐化、wildcardによる根拠の不足を検出する回帰テストがあります。AST抽出はmacro展開や型解決、実装の意味論やテスト内容の十分さを証明するものではありません。検査の成功と、関連テストの実行・コードのreviewは別に確認します。生成された記録のreview状態は自動更新しません。
+
 ## このcrateの範囲
 
 コンパイラー本体、生成ランタイム、検証用のテストとexampleに加え、`Std.Embedded` の共通effectと共有handlerをC ABIへ接続するbridgeを提供します。[組み込みインターフェース](docs/embedded-interfaces.md)と[標準周辺機器bridge](docs/embedded-peripherals.md)に利用方法と所有権・容量の契約をまとめています。[ボードpackageと確認手順](docs/boards.md)では、STM32F4・ESP32-C3のBSP、Rust exampleからのstandalone build/flash、Renode/QEMUによるFlash起動の確認を提供します。

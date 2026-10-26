@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod support;
 
 mod any_data;
+mod binding_metadata;
 mod builtin_audit;
 mod cell;
 mod completion_types;

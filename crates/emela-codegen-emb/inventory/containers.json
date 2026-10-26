@@ -1,0 +1,217 @@
+{
+  "emela_lir::FnId": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "function_name",
+    "role": "schema"
+  },
+  "emela_lir::VarId": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "variable_name",
+    "role": "schema"
+  },
+  "emela_lir::StmtId": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "emit_statement",
+    "role": "schema"
+  },
+  "emela_lir::SeqId": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "emit_compound_sequence",
+    "role": "schema"
+  },
+  "emela_lir::LabelId": {
+    "path": "src/backend/compiler/features/statements/block.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Module": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "compile_flow",
+    "role": "schema"
+  },
+  "emela_lir::Stage": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "verify",
+    "role": "schema"
+  },
+  "emela_lir::Function": {
+    "path": "src/backend/compiler/emit.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::VarData": {
+    "path": "src/backend/compiler/foundation/layouts.rs",
+    "symbol": "TypeLayouts::new",
+    "role": "schema"
+  },
+  "emela_lir::LabelData": {
+    "path": "src/backend/compiler/features/statements/block.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Seq": {
+    "path": "src/backend/compiler/mod.rs",
+    "symbol": "emit_compound_sequence",
+    "role": "schema"
+  },
+  "emela_lir::Term": {
+    "path": "src/backend/compiler/features/terms/mod.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Stmt": {
+    "path": "src/backend/compiler/features/statements/mod.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Suspend": {
+    "path": "src/backend/compiler/features/statements/let_.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::SwitchOn": {
+    "path": "src/backend/compiler/features/switches.rs",
+    "symbol": "scrutinee",
+    "role": "schema"
+  },
+  "emela_lir::Case": {
+    "path": "src/backend/compiler/features/statements/switch.rs",
+    "symbol": "emit_switch",
+    "role": "schema"
+  },
+  "emela_lir::CaseKey": {
+    "path": "src/backend/compiler/features/case_keys.rs",
+    "symbol": "label",
+    "role": "schema"
+  },
+  "emela_lir::Operand": {
+    "path": "src/backend/compiler/features/operands.rs",
+    "symbol": "dispatch",
+    "role": "schema"
+  },
+  "emela_lir::Const": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "dispatch",
+    "role": "schema"
+  },
+  "emela_lir::Value": {
+    "path": "src/backend/compiler/features/values/mod.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::RuntimeOp": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Closure": {
+    "path": "src/backend/compiler/features/values/closure.rs",
+    "symbol": "lower",
+    "role": "schema"
+  },
+  "emela_lir::Callee": {
+    "path": "src/backend/compiler/features/values/call.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::OnFail": {
+    "path": "src/backend/compiler/features/failures.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::PrimOp": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::PrimTy": {
+    "path": "src/backend/compiler/features/primitive_types.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_lir::Repr": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "dispatch",
+    "role": "schema"
+  },
+  "emela_core::Builtin": {
+    "path": "src/backend/compiler/features/builtins/mod.rs",
+    "symbol": "emit",
+    "role": "schema"
+  },
+  "emela_core::External": {
+    "path": "src/backend/compiler/foundation/external.rs",
+    "symbol": "resolve",
+    "role": "schema"
+  },
+  "emela_core::ExternalBinding": {
+    "path": "src/backend/compiler/foundation/external.rs",
+    "symbol": "resolve",
+    "role": "schema"
+  },
+  "emela_core::HostRef": {
+    "path": "src/backend/compiler/features/host_refs.rs",
+    "symbol": "symbol",
+    "role": "schema"
+  },
+  "emela_core::HostModule": {
+    "path": "src/backend/compiler/features/host_modules.rs",
+    "symbol": "symbol",
+    "role": "schema"
+  },
+  "emela_core::EffectDef": {
+    "path": "src/backend/compiler/foundation/layouts.rs",
+    "symbol": "TypeLayouts::collect",
+    "role": "schema"
+  },
+  "emela_core::OpDef": {
+    "path": "src/backend/compiler/foundation/layouts.rs",
+    "symbol": "TypeLayouts::collect",
+    "role": "schema"
+  },
+  "emela_core::EnumDef": {
+    "path": "src/backend/compiler/foundation/layouts.rs",
+    "symbol": "TypeLayouts::collect",
+    "role": "schema"
+  },
+  "emela_core::VariantDef": {
+    "path": "src/backend/compiler/features/variant_fields.rs",
+    "symbol": "types",
+    "role": "schema"
+  },
+  "emela_core::Type": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "repr",
+    "role": "schema"
+  },
+  "emela_core::SetSummary": {
+    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "symbol": "normalize",
+    "role": "schema"
+  },
+  "emela_core::FnSets": {
+    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "symbol": "normalize",
+    "role": "schema"
+  },
+  "emela_core::FnType": {
+    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "symbol": "normalize",
+    "role": "schema"
+  },
+  "emela_core::VariantFields": {
+    "path": "src/backend/compiler/features/variant_fields.rs",
+    "symbol": "arity",
+    "role": "schema"
+  },
+  "emela_core::CtorRef": {
+    "path": "src/backend/compiler/features/values/make.rs",
+    "symbol": "emit_make",
+    "role": "schema"
+  },
+  "emela_core::FiberOp": {
+    "path": "src/backend/compiler/features/fibers/mod.rs",
+    "symbol": "emit",
+    "role": "schema"
+  }
+}
