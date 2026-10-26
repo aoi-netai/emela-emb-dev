@@ -108,417 +108,6 @@
   ],
   "routes": [
     {
-      "id": "sync-stmt",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_statement_inner",
-      "owner": "emela_lir::Stmt",
-      "selector": "match",
-      "expression": "statement",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "sync-value",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_statement_inner",
-      "owner": "emela_lir::Value",
-      "selector": "match",
-      "expression": "value",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "sync-callee",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_statement_inner",
-      "owner": "emela_lir::Callee",
-      "selector": "match",
-      "expression": "value",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "sync-fiber-inline",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_statement_inner",
-      "owner": "emela_core::FiberOp",
-      "selector": "match",
-      "expression": "value",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "sync-term",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_compound_sequence",
-      "owner": "emela_lir::Term",
-      "selector": "match",
-      "expression": "&sequence.term",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "sync-failure",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_call_failure_edge",
-      "owner": "emela_lir::OnFail",
-      "selector": "match",
-      "expression": "edge",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-stmt",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "Graph::sequence",
-      "owner": "emela_lir::Stmt",
-      "selector": "match",
-      "expression": "&function.stmts[id]",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-term",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "Graph::sequence",
-      "owner": "emela_lir::Term",
-      "selector": "match",
-      "expression": "&sequence.term",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-failure",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "Graph::failure",
-      "owner": "emela_lir::OnFail",
-      "selector": "match",
-      "expression": "edge",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-value",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_function",
-      "owner": "emela_lir::Value",
-      "selector": "if",
-      "expression": "statement",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-callee",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_function",
-      "owner": "emela_lir::Callee",
-      "selector": "if",
-      "expression": "statement",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "suspend-fiber",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_function",
-      "owner": "emela_core::FiberOp",
-      "selector": "if",
-      "expression": "statement",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "closure-lowering",
-      "path": "crates/emela-codegen-emb/src/static_closure.rs",
-      "symbol": "lower",
-      "owner": "emela_lir::Value",
-      "selector": "let_else",
-      "expression": "stmt",
-      "contexts": [
-        "sync",
-        "suspend"
-      ],
-      "role": "lower",
-      "note": "Closureを検出しFnRefへ置き換える処理の候補。let-else後の関数本体を記録し、変換先の到達性は証明しない。",
-      "only_variants": [
-        "Closure"
-      ]
-    },
-    {
-      "id": "builtin-expression",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_builtin",
-      "owner": "emela_core::Builtin",
-      "selector": "match",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "arity/result_type/arguments_matchの表を除外し、expressionの生成分岐だけを選択する。",
-      "binding": "expression"
-    },
-    {
-      "id": "builtin-special",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_builtin",
-      "owner": "emela_core::Builtin",
-      "selector": "if",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "早期returnする特殊処理のif分岐。条件を保持する。"
-    },
-    {
-      "id": "cell-special",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_cell_builtin",
-      "owner": "emela_core::Builtin",
-      "selector": "if",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "cell-match",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_cell_builtin",
-      "owner": "emela_core::Builtin",
-      "selector": "match",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "runtime-special",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_runtime",
-      "owner": "emela_lir::RuntimeOp",
-      "selector": "if",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "肯定条件のみ。op != ShowStringによる早期拒否の後の生成は、この抽出方式では拾わない。"
-    },
-    {
-      "id": "constant-expression",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "constant_expression",
-      "owner": "emela_lir::Const",
-      "selector": "match",
-      "expression": "value",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "operand-expression",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "operand_expression",
-      "owner": "emela_lir::Operand",
-      "selector": "match",
-      "expression": "operand",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "primitive-type",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "primitive_expression",
-      "owner": "emela_lir::PrimTy",
-      "selector": "match",
-      "expression": "ty",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "primitive-i32",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "primitive_i32_expression",
-      "owner": "emela_lir::PrimOp",
-      "selector": "match",
-      "expression": "(op, args)",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "I32の組み合わせの候補。PrimOp全型の対応を意味しない。"
-    },
-    {
-      "id": "primitive-i64",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "primitive_i64_expression",
-      "owner": "emela_lir::PrimOp",
-      "selector": "match",
-      "expression": "(op, args)",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "I64の組み合わせの候補。PrimOp全型の対応を意味しない。"
-    },
-    {
-      "id": "primitive-f64",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "primitive_f64_expression",
-      "owner": "emela_lir::PrimOp",
-      "selector": "match",
-      "expression": "(op, args)",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "F64の組み合わせの候補。PrimOp全型の対応を意味しない。"
-    },
-    {
-      "id": "primitive-string",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "primitive_string_expression",
-      "owner": "emela_lir::PrimOp",
-      "selector": "match",
-      "expression": "op",
-      "contexts": [
-        "common"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。",
-      "binding": "comparison"
-    },
-    {
-      "id": "fiber-shared-match",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_fiber_value",
-      "owner": "emela_core::FiberOp",
-      "selector": "match",
-      "expression": "(op, args)",
-      "contexts": [
-        "sync",
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "fiber-shared-if",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_fiber_value",
-      "owner": "emela_core::FiberOp",
-      "selector": "if",
-      "expression": "op",
-      "contexts": [
-        "sync",
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "switch-on-sync",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_switch",
-      "owner": "emela_lir::SwitchOn",
-      "selector": "match",
-      "expression": "on",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "case-key-sync",
-      "path": "crates/emela-codegen-emb/src/emit.rs",
-      "symbol": "emit_switch",
-      "owner": "emela_lir::CaseKey",
-      "selector": "match",
-      "expression": "(&case.key, on)",
-      "contexts": [
-        "sync"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "switch-on-suspend",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_function",
-      "owner": "emela_lir::SwitchOn",
-      "selector": "match",
-      "expression": "*on",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
-      "id": "case-key-suspend",
-      "path": "crates/emela-codegen-emb/src/suspend.rs",
-      "symbol": "emit_function",
-      "owner": "emela_lir::CaseKey",
-      "selector": "match",
-      "expression": "(key, on)",
-      "contexts": [
-        "suspend"
-      ],
-      "role": "emit",
-      "note": "処理の入口として指定した構文上の候補。到達性・対応範囲は未review。"
-    },
-    {
       "id": "reject-runtime",
       "path": "crates/emela-codegen-emb/src/lib.rs",
       "symbol": "verify_flow",
@@ -638,6 +227,313 @@
       "required_calls": [
         ".stage_at_least"
       ]
+    },
+    {
+      "id": "sync-stmt",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/statements/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Stmt",
+      "selector": "match",
+      "expression": "statement",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "sync-term",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/terms/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Term",
+      "selector": "match",
+      "expression": "term",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "sync-failure",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/failures.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::OnFail",
+      "selector": "match",
+      "expression": "edge",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-stmt",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/statements/mod.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Stmt",
+      "selector": "match",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-term",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/terms/mod.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Term",
+      "selector": "match",
+      "expression": "term",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-failure",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/failures.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::OnFail",
+      "selector": "match",
+      "expression": "edge",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "value",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Value",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "callee",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::Callee",
+      "selector": "match",
+      "expression": "callee",
+      "contexts": [
+        "sync"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-direct",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_direct",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-indirect",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_indirect",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "suspend-callee-op",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/call.rs",
+      "symbol": "emit_suspend_op",
+      "owner": "emela_lir::Callee",
+      "selector": "if",
+      "expression": "statement",
+      "contexts": [
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "fiber",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/fibers/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_core::FiberOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "closure-lowering",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/values/closure.rs",
+      "symbol": "lower",
+      "owner": "emela_lir::Value",
+      "selector": "let_else",
+      "expression": "stmt",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "lower",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。",
+      "only_variants": [
+        "Closure"
+      ]
+    },
+    {
+      "id": "builtin",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/builtins/mod.rs",
+      "symbol": "emit",
+      "owner": "emela_core::Builtin",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "runtime",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/runtime.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::RuntimeOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "constant",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/constants.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Const",
+      "selector": "match",
+      "expression": "value",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "operand",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/operands.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Operand",
+      "selector": "match",
+      "expression": "operand",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "primitive-type",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/primitive_types.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::PrimTy",
+      "selector": "match",
+      "expression": "ty",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "primitive",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/primitive_operations.rs",
+      "symbol": "emit",
+      "owner": "emela_lir::PrimOp",
+      "selector": "match",
+      "expression": "op",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "representation",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/representations.rs",
+      "symbol": "dispatch",
+      "owner": "emela_lir::Repr",
+      "selector": "match",
+      "expression": "repr",
+      "contexts": [
+        "common"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "stage",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/stages.rs",
+      "symbol": "verify",
+      "owner": "emela_lir::Stage",
+      "selector": "match",
+      "expression": "stage",
+      "contexts": [
+        "input"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "switch",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/switches.rs",
+      "symbol": "scrutinee",
+      "owner": "emela_lir::SwitchOn",
+      "selector": "match",
+      "expression": "on",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
+    },
+    {
+      "id": "case-key",
+      "path": "crates/emela-codegen-emb/src/backend/compiler/features/case_keys.rs",
+      "symbol": "label",
+      "owner": "emela_lir::CaseKey",
+      "selector": "match",
+      "expression": "key",
+      "contexts": [
+        "sync",
+        "suspend"
+      ],
+      "role": "emit",
+      "note": "本体backendの明示的な担当へのdispatch。構文上の根拠であり動作保証ではない。"
     }
   ],
   "exclusions": [

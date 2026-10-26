@@ -1,5 +1,5 @@
 //! The same programs on the JS and the C target (spec chapter 16: every target gives the same
-//! observable result). Each example project (`examples/*`) and each program of emela-codegen-c's
+//! observable result). Each host example project (`examples/*`) and each program of emela-codegen-c's
 //! tests (`crates/emela-codegen-c/tests/programs/*.emel`) runs on both, and stdout, stderr and the
 //! exit code must agree; the tests of each example must give the same results too. The C runtime
 //! is compiled with its leak check (`-DEMELA_LEAK_CHECK`), so a leaked allocation shows up as a
@@ -14,7 +14,7 @@ use std::process::Command;
 
 use emela_driver::{
     Analysis, CoreC, CoreJs, Input, Lower, LowerTests, OsFs, Output, RunOptions, RunOutput, Target,
-    TestOptions, TestOutcome, cc_command, run, test,
+    TestOptions, TestOutcome, cc_command, project_target, run, test,
 };
 
 /// Examples that do not build on C yet, and the code of the first diagnostic that stops them (no
@@ -187,6 +187,11 @@ fn examples_run_the_same_on_js_and_c() {
     let Some(mut c) = c_backend() else { return };
     let mut failures = Vec::new();
     for (name, dir) in examples() {
+        // Board entry points require MCU peripherals and cannot run on either host target.
+        let input = Input::resolve(&OsFs, &dir).unwrap();
+        if project_target(&OsFs, &input).unwrap() == Some(Target::CEmbedded) {
+            continue;
+        }
         let on_c = in_clean_cwd(|| run_on(&dir, Target::C, &mut c, &name));
         // The examples that do not build on C are not run on JS either: some of them write files
         // in the current directory.

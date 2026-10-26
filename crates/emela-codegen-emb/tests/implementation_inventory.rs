@@ -223,7 +223,7 @@ fn old_implementation_ids_are_orphans_and_candidates_never_become_reviewed() {
 }
 
 #[test]
-fn checked_in_implementation_and_comparison_match_sources_and_keep_gaps_visible() {
+fn checked_in_implementation_and_comparison_match_all_backend_contexts() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -244,13 +244,13 @@ fn checked_in_implementation_and_comparison_match_sources_and_keep_gaps_visible(
     )
     .unwrap();
     assert!(!implementation.fallbacks.is_empty());
-    assert!(
+    assert_eq!(
         coverage
             .summary
             .get("missing_evidence")
             .copied()
-            .unwrap_or(0)
-            > 0
+            .unwrap_or(0),
+        0
     );
     assert!(
         coverage
@@ -258,5 +258,5 @@ fn checked_in_implementation_and_comparison_match_sources_and_keep_gaps_visible(
             .iter()
             .any(|id| id.ends_with(".suspends"))
     );
-    assert!(implementation::require_evidence(&coverage).is_err());
+    implementation::require_evidence(&coverage).unwrap();
 }

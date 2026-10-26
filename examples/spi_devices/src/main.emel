@@ -9,15 +9,55 @@ const BUS = Spi.Spi2
 pub fn main() -> Int use Async {
   with BoardSpi, BoardClock, BoardConsole {
     bus = use Spi.Spi
-    first = Spi.SpiConfig(Spi.Master, Spi.TwoLine, Spi.Bits8, Spi.IdleLow, Spi.FirstEdge, Spi.Div16, Spi.MostSignificantFirst)
-    second = Spi.SpiConfig(Spi.Master, Spi.TwoLine, Spi.Bits16, Spi.IdleHigh, Spi.SecondEdge, Spi.Div32, Spi.LeastSignificantFirst)
+    first = Spi.SpiConfig(
+      Spi.Master,
+      Spi.TwoLine,
+      Spi.Bits8,
+      Spi.IdleLow,
+      Spi.FirstEdge,
+      Spi.Div16,
+      Spi.MostSignificantFirst,
+    )
+    second = Spi.SpiConfig(
+      Spi.Master,
+      Spi.TwoLine,
+      Spi.Bits16,
+      Spi.IdleHigh,
+      Spi.SecondEdge,
+      Spi.Div32,
+      Spi.LeastSignificantFirst,
+    )
     bus.configure(BUS, first)
     bus.transmit(BUS, [], Int64.from_int(0))
-    sensor = bus.create_device(Spi.SpiDeviceConfig(BUS, first, Gpio.GpioPin(16), Gpio.Low, Int64.from_int(2), Int64.from_int(2)))
-    other = bus.create_device(Spi.SpiDeviceConfig(BUS, second, Gpio.GpioPin(17), Gpio.Low, Int64.from_int(1), Int64.from_int(1)))
-    rows = bus.transaction(sensor, [Spi.Write([128]), Spi.Read(2), Spi.Transfer([0])], Int64.from_int(100))
+    sensor = bus.create_device(
+      Spi.SpiDeviceConfig(
+        BUS,
+        first,
+        Gpio.GpioPin(16),
+        Gpio.Low,
+        Int64.from_int(2),
+        Int64.from_int(2),
+      ),
+    )
+    other = bus.create_device(
+      Spi.SpiDeviceConfig(
+        BUS,
+        second,
+        Gpio.GpioPin(17),
+        Gpio.Low,
+        Int64.from_int(1),
+        Int64.from_int(1),
+      ),
+    )
+    rows = bus.transaction(
+      sensor,
+      [Spi.Write([128]), Spi.Read(2), Spi.Transfer([0])],
+      Int64.from_int(100),
+    )
     words = bus.transaction(other, [Spi.Transfer([4660, 65535])], Int64.from_int(100))
-    (use Console).print_line(String.append("SPI receive groups: ", Int.to_string(List.length(rows) + List.length(words))))
+    (use Console).print_line(
+      String.append("SPI receive groups: ", Int.to_string(List.length(rows) + List.length(words))),
+    )
     (use Clock).sleep(10)
     0
   } escape {

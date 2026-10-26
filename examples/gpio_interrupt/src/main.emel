@@ -8,12 +8,11 @@ const INPUT = Gpio.GpioPin(6)
 const LED = Gpio.GpioPin(60)
 
 # GPIOを監視して状態が変わったらLEDの状態を反転させる
-fn on_rising(event: Gpio.GpioEvent) -> () fails {} use {Gpio.Gpio} {
-
+fn on_rising(event: Gpio.GpioEvent) -> () fails {} use { Gpio.Gpio } {
   gpio = use Gpio.Gpio
   {
     next = gpio.read(LED) match {
-      Gpio.Low -> Gpio.High
+      Gpio.Low  -> Gpio.High
       Gpio.High -> Gpio.Low
     }
 
@@ -22,7 +21,6 @@ fn on_rising(event: Gpio.GpioEvent) -> () fails {} use {Gpio.Gpio} {
 }
 
 pub fn main() -> Int use Async {
-
   with BoardGpio, BoardClock {
     clock = use Clock
     gpio = use Gpio.Gpio

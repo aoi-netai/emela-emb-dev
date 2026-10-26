@@ -110,7 +110,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: examples
-      # `emela run` and `emela test` execute the generated JS with node.
+      # Example tests run on JS, including projects whose build target is c-embedded.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -121,7 +121,7 @@ jobs:
           emela="$PWD/target/debug/emela"
           for dir in examples/*/; do
             echo "::group::$dir"
-            (cd "$dir" && "$emela" check && "$emela" test && "$emela" fmt --check)
+            (cd "$dir" && "$emela" check && "$emela" test --target js && "$emela" fmt --check)
             echo "::endgroup::"
           done
 

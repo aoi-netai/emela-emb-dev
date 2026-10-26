@@ -109,8 +109,7 @@
     }
   ],
   "summary": {
-    "candidate_found": 161,
-    "missing_evidence": 37,
+    "candidate_found": 198,
     "rejection_evidence": 18
   },
   "items": [
@@ -123,8 +122,10 @@
       "contexts": [
         {
           "context": "input",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "stage"
+          ]
         }
       ]
     },
@@ -137,8 +138,10 @@
       "contexts": [
         {
           "context": "input",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "stage"
+          ]
         }
       ]
     },
@@ -151,8 +154,10 @@
       "contexts": [
         {
           "context": "input",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "stage"
+          ]
         }
       ]
     },
@@ -165,8 +170,10 @@
       "contexts": [
         {
           "context": "input",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "stage"
+          ]
         }
       ]
     },
@@ -179,8 +186,10 @@
       "contexts": [
         {
           "context": "input",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "stage"
+          ]
         }
       ]
     },
@@ -542,14 +551,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "switch-on-sync"
+            "switch"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "switch-on-suspend"
+            "switch"
           ]
         }
       ]
@@ -565,14 +574,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "switch-on-sync"
+            "switch"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "switch-on-suspend"
+            "switch"
           ]
         }
       ]
@@ -588,14 +597,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "case-key-sync"
+            "case-key"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "case-key-suspend"
+            "case-key"
           ]
         }
       ]
@@ -611,14 +620,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "case-key-sync"
+            "case-key"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "case-key-suspend"
+            "case-key"
           ]
         }
       ]
@@ -634,7 +643,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "operand-expression"
+            "operand"
           ]
         }
       ]
@@ -650,7 +659,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "operand-expression"
+            "operand"
           ]
         }
       ]
@@ -666,7 +675,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -682,7 +691,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -698,7 +707,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -714,7 +723,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -730,7 +739,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -746,7 +755,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant-expression"
+            "constant"
           ]
         }
       ]
@@ -762,13 +771,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -783,13 +794,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -804,14 +817,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-value"
+            "value"
           ]
         }
       ]
@@ -827,13 +840,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -848,13 +863,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -869,13 +886,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -890,13 +909,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -911,13 +932,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -932,13 +955,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -953,13 +978,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -974,13 +1001,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -995,13 +1024,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1016,13 +1047,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1037,13 +1070,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1058,14 +1093,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "closure-lowering"
+            "closure-lowering",
+            "value"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "closure-lowering"
+            "closure-lowering",
+            "value"
           ]
         }
       ]
@@ -1113,13 +1150,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1134,13 +1173,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1155,13 +1196,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1176,14 +1219,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-value"
+            "value"
           ]
         }
       ]
@@ -1199,13 +1242,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1220,13 +1265,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1241,13 +1288,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1262,13 +1311,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-value"
+            "value"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "value"
+          ]
         }
       ]
     },
@@ -1281,8 +1332,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "runtime"
+          ]
         }
       ]
     },
@@ -1297,7 +1350,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime-special"
+            "runtime"
           ]
         }
       ]
@@ -1313,7 +1366,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime-special"
+            "runtime"
           ]
         }
       ]
@@ -1377,7 +1430,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime-special"
+            "runtime"
           ]
         }
       ]
@@ -1393,7 +1446,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime-special"
+            "runtime"
           ]
         }
       ]
@@ -1441,14 +1494,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-callee"
+            "callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee"
+            "suspend-callee-direct"
           ]
         }
       ]
@@ -1464,14 +1517,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-callee"
+            "callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee"
+            "suspend-callee-indirect"
           ]
         }
       ]
@@ -1487,14 +1540,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-callee"
+            "callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee"
+            "suspend-callee-op"
           ]
         }
       ]
@@ -1572,9 +1625,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1590,9 +1641,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1608,9 +1657,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1626,9 +1673,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1644,9 +1689,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1662,9 +1705,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64"
+            "primitive"
           ]
         }
       ]
@@ -1680,7 +1721,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-i32"
+            "primitive"
           ]
         }
       ]
@@ -1696,10 +1737,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1715,10 +1753,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1734,10 +1769,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1753,10 +1785,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1772,10 +1801,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1791,10 +1817,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-f64",
-            "primitive-i32",
-            "primitive-i64",
-            "primitive-string"
+            "primitive"
           ]
         }
       ]
@@ -1872,8 +1895,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "representation"
+          ]
         }
       ]
     },
@@ -1886,8 +1911,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "representation"
+          ]
         }
       ]
     },
@@ -1900,8 +1927,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "representation"
+          ]
         }
       ]
     },
@@ -1914,8 +1943,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "representation"
+          ]
         }
       ]
     },
@@ -1928,8 +1959,10 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "representation"
+          ]
         }
       ]
     },
@@ -1944,7 +1977,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -1960,7 +1993,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -1976,7 +2009,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -1992,7 +2025,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2008,7 +2041,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2024,7 +2057,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2040,7 +2073,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2056,7 +2089,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2072,7 +2105,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2088,7 +2121,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2104,7 +2137,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2120,7 +2153,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2152,7 +2185,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2168,7 +2201,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2184,7 +2217,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2200,7 +2233,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2216,7 +2249,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2232,7 +2265,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2248,7 +2281,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2264,8 +2297,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2281,8 +2313,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2298,8 +2329,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2315,7 +2345,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2331,7 +2361,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2347,7 +2377,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2363,7 +2393,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2379,7 +2409,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2395,7 +2425,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2411,7 +2441,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2427,8 +2457,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2444,8 +2473,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2461,8 +2489,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression",
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2478,7 +2505,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2494,7 +2521,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2510,7 +2537,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special"
+            "builtin"
           ]
         }
       ]
@@ -2526,7 +2553,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2542,7 +2569,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2558,7 +2585,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2574,7 +2601,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-expression"
+            "builtin"
           ]
         }
       ]
@@ -2654,8 +2681,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special",
-            "cell-special"
+            "builtin"
           ]
         }
       ]
@@ -2671,8 +2697,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special",
-            "cell-match"
+            "builtin"
           ]
         }
       ]
@@ -2688,9 +2713,7 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin-special",
-            "cell-match",
-            "cell-special"
+            "builtin"
           ]
         }
       ]
@@ -2736,14 +2759,16 @@
       "contexts": [
         {
           "context": "sync",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2759,14 +2784,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-match"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-match"
+            "fiber"
           ]
         }
       ]
@@ -2782,14 +2807,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-match"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-match"
+            "fiber"
           ]
         }
       ]
@@ -2803,14 +2828,16 @@
       "contexts": [
         {
           "context": "sync",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2824,14 +2851,16 @@
       "contexts": [
         {
           "context": "sync",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2845,14 +2874,16 @@
       "contexts": [
         {
           "context": "sync",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2868,15 +2899,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if",
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2892,14 +2922,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         }
       ]
@@ -2913,14 +2943,16 @@
       "contexts": [
         {
           "context": "sync",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-fiber"
+            "fiber"
           ]
         }
       ]
@@ -2936,14 +2968,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         }
       ]
@@ -2959,14 +2991,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         }
       ]
@@ -2982,14 +3014,14 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber-shared-if"
+            "fiber"
           ]
         }
       ]
@@ -3005,13 +3037,15 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-fiber-inline"
+            "fiber"
           ]
         },
         {
           "context": "suspend",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "fiber"
+          ]
         }
       ]
     }
