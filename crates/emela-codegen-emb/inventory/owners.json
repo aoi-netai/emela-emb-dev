@@ -1,0 +1,938 @@
+{
+  "emela_lir::Value::Const": {
+    "path": "src/backend/compiler/features/values/const_.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Prim": {
+    "path": "src/backend/compiler/features/values/prim.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Call": {
+    "path": "src/backend/compiler/features/values/call.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Builtin": {
+    "path": "src/backend/compiler/features/values/builtin.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Make": {
+    "path": "src/backend/compiler/features/values/make.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Field": {
+    "path": "src/backend/compiler/features/values/field.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Tag": {
+    "path": "src/backend/compiler/features/values/tag.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Tuple": {
+    "path": "src/backend/compiler/features/values/tuple.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::TupleGet": {
+    "path": "src/backend/compiler/features/values/tuple_get.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::List": {
+    "path": "src/backend/compiler/features/values/list.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::ListIsEmpty": {
+    "path": "src/backend/compiler/features/values/list_is_empty.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::ListHead": {
+    "path": "src/backend/compiler/features/values/list_head.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::ListTail": {
+    "path": "src/backend/compiler/features/values/list_tail.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::FnRef": {
+    "path": "src/backend/compiler/features/values/fn_ref.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Closure": {
+    "path": "src/backend/compiler/features/values/closure.rs",
+    "symbol": "lower",
+    "role": "lower"
+  },
+  "emela_lir::Value::MakeClosure": {
+    "path": "src/backend/compiler/features/values/make_closure.rs",
+    "symbol": "emit",
+    "role": "reject"
+  },
+  "emela_lir::Value::EnvGet": {
+    "path": "src/backend/compiler/features/values/env_get.rs",
+    "symbol": "emit",
+    "role": "reject"
+  },
+  "emela_lir::Value::EvLookup": {
+    "path": "src/backend/compiler/features/values/ev_lookup.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::EvExtend": {
+    "path": "src/backend/compiler/features/values/ev_extend.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Handler": {
+    "path": "src/backend/compiler/features/values/handler.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Fiber": {
+    "path": "src/backend/compiler/features/values/fiber.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::IsError": {
+    "path": "src/backend/compiler/features/values/is_error.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::AsError": {
+    "path": "src/backend/compiler/features/values/as_error.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Runtime": {
+    "path": "src/backend/compiler/features/values/runtime.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Value::Coerce": {
+    "path": "src/backend/compiler/features/values/coerce.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_lir::Stmt::Let": {
+    "path": "src/backend/compiler/features/statements/let_.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::If": {
+    "path": "src/backend/compiler/features/statements/if_.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Switch": {
+    "path": "src/backend/compiler/features/statements/switch.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Loop": {
+    "path": "src/backend/compiler/features/statements/loop_.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Block": {
+    "path": "src/backend/compiler/features/statements/block.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Protect": {
+    "path": "src/backend/compiler/features/statements/protect.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Dup": {
+    "path": "src/backend/compiler/features/statements/dup.rs",
+    "symbol": "emit",
+    "role": "reject",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Stmt::Drop": {
+    "path": "src/backend/compiler/features/statements/drop.rs",
+    "symbol": "emit",
+    "role": "reject",
+    "lower_symbol": "lower"
+  },
+  "emela_core::Builtin::StringLength": {
+    "path": "src/backend/compiler/features/builtins/string_length.rs",
+    "symbol": "string_length",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringByteSize": {
+    "path": "src/backend/compiler/features/builtins/string_byte_size.rs",
+    "symbol": "string_byte_size",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringAppend": {
+    "path": "src/backend/compiler/features/builtins/string_append.rs",
+    "symbol": "string_append",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringContains": {
+    "path": "src/backend/compiler/features/builtins/string_contains.rs",
+    "symbol": "string_contains",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringStartsWith": {
+    "path": "src/backend/compiler/features/builtins/string_starts_with.rs",
+    "symbol": "string_starts_with",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringEndsWith": {
+    "path": "src/backend/compiler/features/builtins/string_ends_with.rs",
+    "symbol": "string_ends_with",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringSplit": {
+    "path": "src/backend/compiler/features/builtins/string_split.rs",
+    "symbol": "string_split",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringChars": {
+    "path": "src/backend/compiler/features/builtins/string_chars.rs",
+    "symbol": "string_chars",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringJoin": {
+    "path": "src/backend/compiler/features/builtins/string_join.rs",
+    "symbol": "string_join",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringTrim": {
+    "path": "src/backend/compiler/features/builtins/string_trim.rs",
+    "symbol": "string_trim",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringCodePoints": {
+    "path": "src/backend/compiler/features/builtins/string_code_points.rs",
+    "symbol": "string_code_points",
+    "role": "emit"
+  },
+  "emela_core::Builtin::StringFromCodePoint": {
+    "path": "src/backend/compiler/features/builtins/string_from_code_point.rs",
+    "symbol": "string_from_code_point",
+    "role": "emit"
+  },
+  "emela_core::Builtin::ShowNested": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "show_nested",
+    "role": "reject"
+  },
+  "emela_core::Builtin::IntToString": {
+    "path": "src/backend/compiler/features/builtins/int_to_string.rs",
+    "symbol": "int_to_string",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntParse": {
+    "path": "src/backend/compiler/features/builtins/int_parse.rs",
+    "symbol": "int_parse",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntCheckedAdd": {
+    "path": "src/backend/compiler/features/builtins/int_checked_add.rs",
+    "symbol": "int_checked_add",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntBitAnd": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_bit_and",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntBitOr": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_bit_or",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntBitXor": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_bit_xor",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntBitNot": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_bit_not",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntShiftLeft": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_shift_left",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntShiftRight": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_shift_right",
+    "role": "emit"
+  },
+  "emela_core::Builtin::IntShiftRightUnsigned": {
+    "path": "src/backend/compiler/features/builtins/integer.rs",
+    "symbol": "int_shift_right_unsigned",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64FromInt": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_from_int",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64ToString": {
+    "path": "src/backend/compiler/features/builtins/int64_to_string.rs",
+    "symbol": "int64_to_string",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64ToInt": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_to_int",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64BitAnd": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_bit_and",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64BitOr": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_bit_or",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64BitXor": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_bit_xor",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64BitNot": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_bit_not",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64ShiftLeft": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_shift_left",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64ShiftRight": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_shift_right",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Int64ShiftRightUnsigned": {
+    "path": "src/backend/compiler/features/builtins/integer64.rs",
+    "symbol": "int64_shift_right_unsigned",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatToString": {
+    "path": "src/backend/compiler/features/builtins/float_to_string.rs",
+    "symbol": "float_to_string",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatFromInt": {
+    "path": "src/backend/compiler/features/builtins/float.rs",
+    "symbol": "float_from_int",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatParse": {
+    "path": "src/backend/compiler/features/builtins/float_parse.rs",
+    "symbol": "float_parse",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatFloor": {
+    "path": "src/backend/compiler/features/builtins/float.rs",
+    "symbol": "float_floor",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatCeil": {
+    "path": "src/backend/compiler/features/builtins/float.rs",
+    "symbol": "float_ceil",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatRound": {
+    "path": "src/backend/compiler/features/builtins/float.rs",
+    "symbol": "float_round",
+    "role": "emit"
+  },
+  "emela_core::Builtin::FloatTruncate": {
+    "path": "src/backend/compiler/features/builtins/float.rs",
+    "symbol": "float_truncate",
+    "role": "emit"
+  },
+  "emela_core::Builtin::Panic": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "panic",
+    "role": "reject"
+  },
+  "emela_core::Builtin::Todo": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "todo",
+    "role": "reject"
+  },
+  "emela_core::Builtin::Dbg": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "dbg",
+    "role": "reject"
+  },
+  "emela_core::Builtin::Inspect": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "inspect",
+    "role": "reject"
+  },
+  "emela_core::Builtin::CellNew": {
+    "path": "src/backend/compiler/features/builtins/cells.rs",
+    "symbol": "cell_new",
+    "role": "emit"
+  },
+  "emela_core::Builtin::CellGet": {
+    "path": "src/backend/compiler/features/builtins/cells.rs",
+    "symbol": "cell_get",
+    "role": "emit"
+  },
+  "emela_core::Builtin::CellSet": {
+    "path": "src/backend/compiler/features/builtins/cells.rs",
+    "symbol": "cell_set",
+    "role": "emit"
+  },
+  "emela_core::Builtin::ShowString": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "show_string",
+    "role": "reject"
+  },
+  "emela_core::Builtin::DebugPrint": {
+    "path": "src/backend/compiler/features/builtins/rejected.rs",
+    "symbol": "debug_print",
+    "role": "reject"
+  },
+  "emela_lir::Const::Int": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "int_value",
+    "role": "emit"
+  },
+  "emela_lir::Const::Int64": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "int64_value",
+    "role": "emit"
+  },
+  "emela_lir::Const::Float": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "float_value",
+    "role": "emit"
+  },
+  "emela_lir::Const::Bool": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "bool_value",
+    "role": "emit"
+  },
+  "emela_lir::Const::String": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "string_value",
+    "role": "emit"
+  },
+  "emela_lir::Const::Unit": {
+    "path": "src/backend/compiler/features/constants.rs",
+    "symbol": "unit_value",
+    "role": "emit"
+  },
+  "emela_lir::Operand::Var": {
+    "path": "src/backend/compiler/features/operands.rs",
+    "symbol": "var_value",
+    "role": "emit"
+  },
+  "emela_lir::Operand::Const": {
+    "path": "src/backend/compiler/features/operands.rs",
+    "symbol": "const_value",
+    "role": "emit"
+  },
+  "emela_lir::Repr::I32": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "i32_value",
+    "role": "metadata"
+  },
+  "emela_lir::Repr::I64": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "i64_value",
+    "role": "metadata"
+  },
+  "emela_lir::Repr::F64": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "f64_value",
+    "role": "metadata"
+  },
+  "emela_lir::Repr::Ref": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "ref_value",
+    "role": "metadata"
+  },
+  "emela_lir::Repr::Void": {
+    "path": "src/backend/compiler/features/representations.rs",
+    "symbol": "void_value",
+    "role": "metadata"
+  },
+  "emela_lir::PrimOp::Add": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_add",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Sub": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_sub",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Mul": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_mul",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Div": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_div",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Rem": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_rem",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Neg": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_neg",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Not": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_not",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Eq": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_eq",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Ne": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_ne",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Lt": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_lt",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Le": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_le",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Gt": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_gt",
+    "role": "emit"
+  },
+  "emela_lir::PrimOp::Ge": {
+    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "symbol": "prim_ge",
+    "role": "emit"
+  },
+  "emela_lir::PrimTy::I32": {
+    "path": "src/backend/compiler/features/primitive_types.rs",
+    "symbol": "i32_expression",
+    "role": "emit"
+  },
+  "emela_lir::PrimTy::I64": {
+    "path": "src/backend/compiler/features/primitive_types.rs",
+    "symbol": "i64_expression",
+    "role": "emit"
+  },
+  "emela_lir::PrimTy::F64": {
+    "path": "src/backend/compiler/features/primitive_types.rs",
+    "symbol": "f64_expression",
+    "role": "emit"
+  },
+  "emela_lir::PrimTy::String": {
+    "path": "src/backend/compiler/features/primitive_types.rs",
+    "symbol": "string_expression",
+    "role": "emit"
+  },
+  "emela_lir::Term::Yield": {
+    "path": "src/backend/compiler/features/terms/yield.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Return": {
+    "path": "src/backend/compiler/features/terms/return_.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Fail": {
+    "path": "src/backend/compiler/features/terms/fail.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Break": {
+    "path": "src/backend/compiler/features/terms/break.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Recur": {
+    "path": "src/backend/compiler/features/terms/recur.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Defect": {
+    "path": "src/backend/compiler/features/terms/defect.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Unwind": {
+    "path": "src/backend/compiler/features/terms/unwind.rs",
+    "symbol": "emit",
+    "role": "reject",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::Term::Unreachable": {
+    "path": "src/backend/compiler/features/terms/unreachable.rs",
+    "symbol": "emit",
+    "role": "emit",
+    "lower_symbol": "lower"
+  },
+  "emela_lir::OnFail::Break": {
+    "path": "src/backend/compiler/features/failures.rs",
+    "symbol": "break_edge",
+    "role": "emit"
+  },
+  "emela_lir::OnFail::Propagate": {
+    "path": "src/backend/compiler/features/failures.rs",
+    "symbol": "propagate_edge",
+    "role": "emit"
+  },
+  "emela_lir::OnFail::Handle": {
+    "path": "src/backend/compiler/features/failures.rs",
+    "symbol": "handle_edge",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::ShowString": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "emit_show_string",
+    "role": "emit"
+  },
+  "emela_lir::RuntimeOp::DebugPrint": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "debug_print",
+    "role": "emit"
+  },
+  "emela_lir::RuntimeOp::Retire": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "retire",
+    "role": "emit"
+  },
+  "emela_lir::RuntimeOp::Defect": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "defect",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::DefectTake": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "defect_take",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::DefectResume": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "defect_resume",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::Hold": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "hold",
+    "role": "emit"
+  },
+  "emela_lir::RuntimeOp::Unhold": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "unhold",
+    "role": "emit"
+  },
+  "emela_lir::RuntimeOp::Yield": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "yield_operation",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::YieldPerform": {
+    "path": "src/backend/compiler/features/runtime.rs",
+    "symbol": "yield_perform",
+    "role": "reject"
+  },
+  "emela_lir::Callee::Direct": {
+    "path": "src/backend/compiler/features/values/call.rs",
+    "symbol": "emit_direct",
+    "role": "emit"
+  },
+  "emela_lir::Callee::Indirect": {
+    "path": "src/backend/compiler/features/values/call.rs",
+    "symbol": "emit_indirect",
+    "role": "emit"
+  },
+  "emela_lir::Callee::Op": {
+    "path": "src/backend/compiler/features/values/call.rs",
+    "symbol": "emit_op",
+    "role": "emit"
+  },
+  "emela_lir::Stage::Flow": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "flow",
+    "role": "input"
+  },
+  "emela_lir::Stage::ClosuresConverted": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "closures_converted",
+    "role": "reject"
+  },
+  "emela_lir::Stage::DefectsExplicit": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "defects_explicit",
+    "role": "reject"
+  },
+  "emela_lir::Stage::StateMachines": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "state_machines",
+    "role": "reject"
+  },
+  "emela_lir::Stage::RefCounted": {
+    "path": "src/backend/compiler/features/stages.rs",
+    "symbol": "ref_counted",
+    "role": "reject"
+  },
+  "emela_lir::SwitchOn::Tag": {
+    "path": "src/backend/compiler/features/switches.rs",
+    "symbol": "tag_scrutinee",
+    "role": "emit"
+  },
+  "emela_lir::SwitchOn::Lit": {
+    "path": "src/backend/compiler/features/switches.rs",
+    "symbol": "lit_scrutinee",
+    "role": "emit"
+  },
+  "emela_lir::CaseKey::Variant": {
+    "path": "src/backend/compiler/features/case_keys.rs",
+    "symbol": "variant_label",
+    "role": "emit"
+  },
+  "emela_lir::CaseKey::Lit": {
+    "path": "src/backend/compiler/features/case_keys.rs",
+    "symbol": "lit_label",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Scope": {
+    "path": "src/backend/compiler/features/fibers/scope.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Fork": {
+    "path": "src/backend/compiler/features/fibers/fork.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Deferred": {
+    "path": "src/backend/compiler/features/fibers/deferred.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Join": {
+    "path": "src/backend/compiler/features/fibers/join.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Await": {
+    "path": "src/backend/compiler/features/fibers/await.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Interrupt": {
+    "path": "src/backend/compiler/features/fibers/interrupt.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Attempt": {
+    "path": "src/backend/compiler/features/fibers/attempt.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Complete": {
+    "path": "src/backend/compiler/features/fibers/complete.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::DeferredAwait": {
+    "path": "src/backend/compiler/features/fibers/deferred_await.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::Poll": {
+    "path": "src/backend/compiler/features/fibers/poll.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::CauseKind": {
+    "path": "src/backend/compiler/features/fibers/cause_kind.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::CauseToString": {
+    "path": "src/backend/compiler/features/fibers/cause_to_string.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::FiberOp::CauseRaise": {
+    "path": "src/backend/compiler/features/fibers/cause_raise.rs",
+    "symbol": "emit",
+    "role": "emit"
+  },
+  "emela_core::Type::Int": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "int_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Int64": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "int64_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Float": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "float_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Bool": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "bool_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::String": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "string_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Unit": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "unit_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Never": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "never_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Tuple": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "tuple_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::List": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "list_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Enum": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "enum_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Param": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "param_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Fn": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "fn_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Handler": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "handler_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Evidence": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "evidence_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Cell": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "cell_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::FiberScope": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "fiber_scope_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Any": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "any_repr",
+    "role": "metadata"
+  },
+  "emela_core::Type::Set": {
+    "path": "src/backend/compiler/features/types.rs",
+    "symbol": "set_repr",
+    "role": "metadata"
+  },
+  "emela_core::HostRef::Global": {
+    "path": "src/backend/compiler/features/host_refs.rs",
+    "symbol": "global",
+    "role": "metadata"
+  },
+  "emela_core::HostRef::Import": {
+    "path": "src/backend/compiler/features/host_refs.rs",
+    "symbol": "import",
+    "role": "metadata"
+  },
+  "emela_core::HostModule::Named": {
+    "path": "src/backend/compiler/features/host_modules.rs",
+    "symbol": "named",
+    "role": "metadata"
+  },
+  "emela_core::HostModule::File": {
+    "path": "src/backend/compiler/features/host_modules.rs",
+    "symbol": "file",
+    "role": "metadata"
+  },
+  "emela_core::HostModule::Bundled": {
+    "path": "src/backend/compiler/features/host_modules.rs",
+    "symbol": "bundled",
+    "role": "metadata"
+  },
+  "emela_core::VariantFields::Unit": {
+    "path": "src/backend/compiler/features/variant_fields.rs",
+    "symbol": "unit",
+    "role": "metadata"
+  },
+  "emela_core::VariantFields::Positional": {
+    "path": "src/backend/compiler/features/variant_fields.rs",
+    "symbol": "positional",
+    "role": "metadata"
+  },
+  "emela_core::VariantFields::Named": {
+    "path": "src/backend/compiler/features/variant_fields.rs",
+    "symbol": "named",
+    "role": "metadata"
+  }
+}
