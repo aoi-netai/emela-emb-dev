@@ -66,6 +66,11 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Embedded backend inventory and compiled test references
+        run: |
+          bash crates/emela-codegen-emb/tools/backend-inventory.sh --check
+          bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh --check --require-evidence
+          python3 crates/emela-codegen-emb/tools/test-inventory.py --check-built
 
   test:
     needs: changes
