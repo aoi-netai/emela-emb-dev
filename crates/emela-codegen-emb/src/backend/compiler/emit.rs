@@ -805,7 +805,7 @@ pub(in crate::backend) fn emit(
     }
 
     target.emit_helpers(&connection, &target_headers, &mut source);
-    Ok(Output {
+    let mut output = Output {
         exports: flow
             .functions
             .iter()
@@ -834,5 +834,9 @@ pub(in crate::backend) fn emit(
         .into_iter()
         .chain(target_headers)
         .collect(),
-    })
+    };
+    output
+        .refresh_manifest()
+        .map_err(|error| vec![Error::from(error)])?;
+    Ok(output)
 }

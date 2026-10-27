@@ -74,5 +74,8 @@ pub(super) fn link(compiled: &CompiledModule, options: &Options) -> Result<Outpu
         path: "emela_native_platform.c".into(),
         contents: include_str!("platform.c").into(),
     });
+    output
+        .refresh_manifest()
+        .map_err(|error| vec![Error::from(error)])?;
     Ok(output)
 }

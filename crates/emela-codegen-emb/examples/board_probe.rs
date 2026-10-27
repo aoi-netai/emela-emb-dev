@@ -149,7 +149,7 @@ fn run() -> Result<(), String> {
         .with_task_capacity(2)
         .with_event_capacity(2)
         .with_deferred_capacity(1);
-    let output = compile(&core, &options).map_err(|errors| {
+    let mut output = compile(&core, &options).map_err(|errors| {
         errors
             .iter()
             .map(ToString::to_string)
@@ -165,6 +165,13 @@ fn run() -> Result<(), String> {
         "#ifndef EMELA_EMBEDDED_EXPORTS_H\n#define EMELA_EMBEDDED_EXPORTS_H\n#include \"emela_embedded.h\"\n#define board_main_start {}\n#endif\n",
         main.c_symbol
     );
+    output.files.push(emela_codegen_emb::GeneratedFile {
+        path: emela_codegen_emb::artifact::ALIASES_HEADER.into(),
+        contents: aliases,
+    });
+    output
+        .refresh_manifest()
+        .map_err(|error| error.to_string())?;
     let parent = arguments
         .output
         .parent()
@@ -184,7 +191,6 @@ fn run() -> Result<(), String> {
     for file in output.files {
         write(&generated, &file.path, file.contents.as_bytes())?;
     }
-    write(&generated, "emela_embedded_exports.h", aliases.as_bytes())?;
     for asset in package.assets {
         write(&bsp, asset.name, asset.contents)?;
     }

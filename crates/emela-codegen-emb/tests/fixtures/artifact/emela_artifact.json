@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "abi_version": 1,
+  "files": [
+    {"path": "module.c", "role": "source"},
+    {"path": "support/value.c", "role": "source"},
+    {"path": "emela_embedded.h", "role": "public_header"},
+    {"path": "emela_board.h", "role": "platform_header"},
+    {"path": "emela_embedded_exports.h", "role": "aliases_header"},
+    {"path": "include/value.h", "role": "header"}
+  ]
+}

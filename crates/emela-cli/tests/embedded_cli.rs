@@ -64,6 +64,7 @@ fn c_only_build_emits_headers_and_aliases_without_a_main_or_native_compiler() {
             "emela_embedded.h",
             "emela_board.h",
             "emela_embedded_exports.h",
+            "emela_artifact.json",
         ] {
             assert!(output.join(file).is_file(), "{file}");
         }
@@ -76,6 +77,70 @@ fn c_only_build_emits_headers_and_aliases_without_a_main_or_native_compiler() {
         assert!(!output.join("firmware").exists());
         assert!(!output.join("bsp").exists());
     }
+}
+
+#[test]
+fn generated_artifact_builds_without_the_original_emela_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "Pome.toml", "");
+    write(root, "src/main.emel", "pub fn answer() -> Int { 42 }\n");
+    write(
+        root,
+        "embedded.toml",
+        "[exports]\nboard_answer = \"answer\"\n",
+    );
+    succeeds(
+        root,
+        &[
+            "build",
+            "--target",
+            "c-embedded",
+            "--embedded-config",
+            "embedded.toml",
+        ],
+    );
+    std::fs::remove_dir_all(root.join("src")).unwrap();
+    write(
+        root,
+        "consumer.c",
+        "#include \"emela_embedded_exports.h\"\nint main(void) { return board_answer() == INT32_C(42) ? 0 : 1; }\n",
+    );
+    let reader = Path::new(env!("CARGO_MANIFEST_DIR")).join("../emela-codegen-emb/boards");
+    let result = Command::new("python3")
+        .args([
+            "-B",
+            "-c",
+            r#"
+from pathlib import Path
+import subprocess
+import sys
+sys.path.insert(0, sys.argv[1])
+from artifact_manifest import include_directories, load_manifest
+generated, project = map(Path, sys.argv[2:])
+inputs = load_manifest(generated, require_aliases=True)
+assert inputs['aliases_header'] == [generated / 'emela_embedded_exports.h']
+for optimization in ['O0', 'O2']:
+    executable = project / ('consumer-' + optimization)
+    subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-' + optimization,
+                    *['-I' + str(path) for path in sorted(include_directories(inputs))],
+                    *inputs['source'], project / 'consumer.c', '-lm', '-o', executable],
+                   check=True, timeout=30)
+    subprocess.run([executable], check=True, timeout=5)
+"#,
+        ])
+        .arg(reader)
+        .arg(root.join("target/emela/c-embedded"))
+        .arg(root)
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 #[test]

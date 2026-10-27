@@ -247,7 +247,7 @@
           "name": "backend::separation_tests::board_and_native_entries_supply_dynamic_string_output_buffers",
           "path": "src/backend/tests/separation.rs",
           "symbol": "board_and_native_entries_supply_dynamic_string_output_buffers",
-          "line": 369,
+          "line": 375,
           "ignored": false
         },
         {
@@ -255,7 +255,7 @@
           "name": "backend::separation_tests::string_plans_preserve_aliases_while_other_buffers_and_calls_are_live",
           "path": "src/backend/tests/separation.rs",
           "symbol": "string_plans_preserve_aliases_while_other_buffers_and_calls_are_live",
-          "line": 487,
+          "line": 493,
           "ignored": false
         }
       ],
@@ -1461,7 +1461,7 @@
           "name": "backend::separation_tests::board_and_native_entries_supply_dynamic_string_output_buffers",
           "path": "src/backend/tests/separation.rs",
           "symbol": "board_and_native_entries_supply_dynamic_string_output_buffers",
-          "line": 369,
+          "line": 375,
           "ignored": false
         }
       ],
@@ -2069,7 +2069,7 @@
           "name": "backend::separation_tests::string_plans_preserve_aliases_while_other_buffers_and_calls_are_live",
           "path": "src/backend/tests/separation.rs",
           "symbol": "string_plans_preserve_aliases_while_other_buffers_and_calls_are_live",
-          "line": 487,
+          "line": 493,
           "ignored": false
         }
       ],
@@ -6112,8 +6112,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6131,8 +6131,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6150,8 +6150,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6169,8 +6169,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6188,8 +6188,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6207,8 +6207,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6226,8 +6226,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6245,8 +6245,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6264,8 +6264,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6283,8 +6283,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6302,8 +6302,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6321,8 +6321,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6340,8 +6340,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6359,8 +6359,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6378,8 +6378,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -6397,8 +6397,8 @@
         "path": "src/backend/compiler/emit.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 838,
-        "body_sha256": "1c3de27f5891c00d4a047f78b082427a305ef826599f6b25939ff817d1a1ecec"
+        "end_line": 842,
+        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
       },
       "phase_entries": [],
       "tests": [],
@@ -10856,7 +10856,7 @@
           "name": "backend::separation_tests::common_closure_lowering_is_shared_and_native_managed_values_run",
           "path": "src/backend/tests/separation.rs",
           "symbol": "common_closure_lowering_is_shared_and_native_managed_values_run",
-          "line": 100,
+          "line": 106,
           "ignored": false
         }
       ],
@@ -11257,7 +11257,7 @@
           "name": "backend::separation_tests::common_closure_lowering_is_shared_and_native_managed_values_run",
           "path": "src/backend/tests/separation.rs",
           "symbol": "common_closure_lowering_is_shared_and_native_managed_values_run",
-          "line": 100,
+          "line": 106,
           "ignored": false
         }
       ],
@@ -11285,7 +11285,7 @@
           "name": "backend::separation_tests::common_closure_lowering_is_shared_and_native_managed_values_run",
           "path": "src/backend/tests/separation.rs",
           "symbol": "common_closure_lowering_is_shared_and_native_managed_values_run",
-          "line": 100,
+          "line": 106,
           "ignored": false
         }
       ],

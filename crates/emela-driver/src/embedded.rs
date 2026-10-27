@@ -16,7 +16,7 @@ use crate::source::FileSystem;
 /// The generated C translation unit, compiled separately by the board toolchain.
 pub const EMBEDDED_ENTRY_FILE: &str = "emela_embedded.c";
 /// Stable board-facing aliases for selected generated public entry points.
-pub const EMBEDDED_EXPORTS_FILE: &str = "emela_embedded_exports.h";
+pub const EMBEDDED_EXPORTS_FILE: &str = emela_codegen_emb::artifact::ALIASES_HEADER;
 
 /// Optional TOML settings for the embedded C backend; omitted values use backend defaults.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -311,7 +311,7 @@ impl Backend<emela_core::Module> for CoreEmbedded {
         _: &Analysis,
     ) -> Result<BuildOutput, Vec<Diagnostic>> {
         self.config.validate().map_err(|error| vec![error])?;
-        let output = compile(module, &self.config.options()).map_err(|errors| {
+        let mut output = compile(module, &self.config.options()).map_err(|errors| {
             errors
                 .into_iter()
                 .map(|error| match error.kind {
@@ -324,12 +324,18 @@ impl Backend<emela_core::Module> for CoreEmbedded {
             .config
             .exports_header(module, &output.exports)
             .map_err(|error| vec![error])?;
-        let mut files: Vec<_> = output
+        output.files.push(emela_codegen_emb::GeneratedFile {
+            path: EMBEDDED_EXPORTS_FILE.into(),
+            contents: aliases,
+        });
+        output
+            .refresh_manifest()
+            .map_err(|error| vec![Diagnostic::error(error.to_string())])?;
+        let files = output
             .files
             .into_iter()
             .map(|file| OutputFile::new(file.path, file.contents))
             .collect();
-        files.push(OutputFile::new(EMBEDDED_EXPORTS_FILE, aliases));
         Ok(BuildOutput {
             files,
             entry: EMBEDDED_ENTRY_FILE.into(),

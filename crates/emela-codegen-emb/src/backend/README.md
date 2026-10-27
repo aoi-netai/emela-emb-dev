@@ -30,6 +30,8 @@ compile_flow
 
 ## 機能と共有計画
 
+最終`Output`には[生成Cとビルドの契約](../../docs/artifact-contract.md)を表す`emela_artifact.json`を含める。後段のBSPはこの入力一覧とC headerを読み、Flow IRや`CompiledModule`に依存しない。C生成に使う接続先`Target`と、生成後のtoolchain実行の境界は別である。
+
 各機能はC生成に加え、必要に応じて `string_behavior`、`string_bound`、`result_ownership`、`needs_heap`、`require_runtime` を提供する。例えばString連結では、定数・入力参照・動的bufferという同じ分類を生成・長さ・所有権の判断に使う。
 
 共有のString buffer計画は、その情報から生存期間・slotの再利用・caller出力bufferの伝播を求める。heap計画は型と操作の要求を集約し、runtime計画はhelperの依存を解決して必要なものを一度ずつ生成する。共有計画は個々のBuiltinやFiberOpを直接分岐しない。

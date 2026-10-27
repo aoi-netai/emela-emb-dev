@@ -12,6 +12,8 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 `Options`でString容量、固定heap、fiberやtaskのpool容量などを指定します。必要なランタイムとボード接続用のCインターフェースは生成コードに含まれます。
 
+[生成Cとビルドの契約](docs/artifact-contract.md)は`emela_artifact.json`で生成ファイルの役割と形式・ABIの版を定義します。BSPはこのmanifestからCを選び、Emela sourceやIRを使わずにビルドします。生成後にCやheaderを追加するRust利用側は、保存前に`Output::refresh_manifest()`で一覧を更新します。生成・固定CによるBSP入力・CLI接続を個別に試験します。
+
 ## 実装とテストの自動検査
 
 IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`とCIで検査します。[backendの構成](src/backend/README.md)で説明する機能別の分割に合わせた仕組みです。

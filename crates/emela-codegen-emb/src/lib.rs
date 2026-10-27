@@ -3,6 +3,7 @@
 //! This crate verifies Flow IR and emits C with fixed-capacity memory and feature-specific
 //! runtimes without running Heap IR passes. A convenience entry also lowers ordinary Core IR.
 
+pub mod artifact;
 pub mod boards;
 mod const_eval;
 mod const_origins;
@@ -224,7 +225,7 @@ impl Options {
     }
 }
 
-/// Generated files and public entry points returned by the backend.
+/// Generated C, headers, their artifact manifest, and public entry points.
 #[derive(Debug, Clone, Default)]
 pub struct Output {
     /// Files keyed by their path relative to the generated output directory.
@@ -266,6 +267,8 @@ pub enum ErrorKind {
     Unsupported,
     /// Backend options are outside their documented range.
     InvalidOptions,
+    /// Generated files do not satisfy the C artifact contract.
+    InvalidOutput,
 }
 
 /// An error encountered while preparing a module for embedded code generation.

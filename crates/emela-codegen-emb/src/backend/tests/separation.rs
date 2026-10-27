@@ -34,6 +34,9 @@ fn export(output: &crate::Output, name: &str) -> String {
 /// Compile every produced translation unit, including the native platform implementation.
 /// A deadline also verifies that the native entry returns instead of entering the board idle loop.
 fn run_native(output: &crate::Output, harness: &str) {
+    use crate::artifact::{FileRole, MANIFEST_FILE, Manifest};
+    let manifest = Manifest::from_json(contents(output, MANIFEST_FILE)).unwrap();
+    assert_eq!(manifest, Manifest::from_files(&output.files).unwrap());
     let temp = tempfile::tempdir().unwrap();
     for file in &output.files {
         fs::write(temp.path().join(&file.path), &file.contents).unwrap();
@@ -44,8 +47,8 @@ fn run_native(output: &crate::Output, harness: &str) {
         let mut cc = Command::new("cc");
         cc.args(["-std=c11", "-Wall", "-Werror", optimization, "-I"])
             .arg(temp.path());
-        for file in &output.files {
-            if file.path.ends_with(".c") {
+        for file in &manifest.files {
+            if file.role == FileRole::Source {
                 cc.arg(temp.path().join(&file.path));
             }
         }
@@ -86,6 +89,9 @@ fn compiled_empty_module_can_be_linked_for_both_environments() {
     let board_output = board::link(&compiled, &options).unwrap();
     let native_output = cnative::link(&compiled, &options).unwrap();
     for file in &board_output.files {
+        if file.path == crate::artifact::MANIFEST_FILE {
+            continue;
+        }
         assert_eq!(&file.contents, contents(&native_output, &file.path));
     }
     assert!(
