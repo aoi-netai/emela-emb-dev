@@ -83,7 +83,7 @@ workspace内でCLIを起動する場合は、例えば`cargo run --locked -p eme
 | 出力先 | `--out-dir`、次に`<project>/target/emela/c-embedded/<board>`。boardなしは末尾のboard directoryを付けない。 |
 | firmware最適化 | `[embedded].optimization`の`O0`または`O2`。既定は`O2`。 |
 
-boardを選んだ状態で、明示したtargetまたは`[build].target`が`js`・`c`・`wasm`なら診断する。`--embedded-config`も`c-embedded`専用である。既存の`js`・`c`・`wasm`のbuildは、組み込み用runtime設定ファイルやmodule置換を読み込まない。
+`--board`を指定した状態で、明示したtargetまたは`[build].target`が`js`・`c`・`wasm`なら診断する。`[embedded].board`はtargetが`c-embedded`のときだけ使い、`js`・`c`・`wasm`のbuildでは無視する。このとき以前のfirmwareの成功記録は残る。`--embedded-config`も`c-embedded`専用である。既存の`js`・`c`・`wasm`のbuildは、組み込み用runtime設定ファイルやmodule置換を読み込まない。
 
 `[embedded].config`・`sources`・`modules`の相対pathはproject directory基準、`--embedded-config`と`--out-dir`の相対pathはコマンドを実行したdirectory基準である。`embedded.toml`の自動探索は行わない。単独ファイル入力にはprojectの`[embedded]`設定がないため、必要なboardと設定をflagで指定する。
 
@@ -135,7 +135,7 @@ Hardware = "ports/{board}/hardware.emel"
 
 この拡張を使う場合は`device.c`と選択boardのmoduleファイルも利用者が用意する。`sources`は追加のC／assemblyファイル（`.c`・`.S`・`.s`）であり、依存PomeのC実装をlinkする場合も明示する。
 
-`modules`はmodule名を物理ファイルへ対応付け、pathの`{board}`を選択board IDに置換する。例えば`Hardware`は`src/hardware.emel`、`DevicePort`は`src/device_port.emel`に見える。source filesystemの読取りだけを置換し、元のEmelaファイル、Flow IR、生成Cを書き換えない。`emela check device --board esp32c3`も同じ置換を使う。LSP・`doc`・hostの`run`はこの置換を適用しない。
+`modules`はmodule名を物理ファイルへ対応付け、pathの`{board}`を選択board IDに置換する。例えば`Hardware`は`src/hardware.emel`、`DevicePort`は`src/device_port.emel`に見える。source filesystemの読取りだけを置換し、元のEmelaファイル、Flow IR、生成Cを書き換えない。`emela check device --board esp32c3`も同じ置換を使う。boardを選んでいないときは、pathに`{board}`を含む置換を適用せず、source rootのmoduleをそのまま読む。LSP・`doc`・hostの`run`はこの置換を適用しない。
 
 ### Pome依存
 

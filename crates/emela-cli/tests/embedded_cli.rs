@@ -327,3 +327,47 @@ fn host_library_builds_ignore_unused_embedded_runtime_and_module_paths() {
         assert!(!root.join("target").exists(), "library-only {target}");
     }
 }
+
+#[test]
+fn a_host_target_skips_the_configured_board_and_keeps_its_firmware() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "Pome.toml", "[embedded]\nboard = \"stm32f446re\"\n");
+    write(root, "src/main.emel", "pub fn main() -> Int { 42 }\n");
+    let state = "target/emela/c-embedded/stm32f446re/board-build.json";
+    write(root, state, "old successful record\n");
+    succeeds(root, &["build", "--target", "js"]);
+    assert!(root.join("target/emela/js/main.mjs").is_file());
+    assert!(root.join(state).exists());
+    fails(
+        root,
+        &["build", "--board", "stm32f446re", "--target", "js"],
+        "requires target `c-embedded`",
+    );
+    assert!(root.join(state).exists());
+}
+
+#[test]
+fn board_overlays_are_skipped_without_a_board() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "Pome.toml",
+        "[embedded.modules]\nDevice = \"ports/{board}/device.emel\"\n",
+    );
+    write(
+        root,
+        "src/main.emel",
+        "import Device\npub fn answer() -> Int { Device.read() }\n",
+    );
+    write(root, "src/device.emel", "pub fn read() -> Int { 0 }\n");
+    write(
+        root,
+        "ports/esp32c3/device.emel",
+        "pub fn read() -> Missing { missing }\n",
+    );
+    succeeds(root, &["check"]);
+    succeeds(root, &["build", "--target", "c-embedded"]);
+    fails(root, &["check", "--board", "esp32c3"], "Missing");
+}

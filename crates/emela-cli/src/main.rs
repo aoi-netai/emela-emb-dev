@@ -324,14 +324,14 @@ fn check(path: &Path, board: Option<String>) -> ExitCode {
     report(&analysis)
 }
 
-/// The target: `--target`, else `[build].target` of Pome.toml (spec 4.7), else js. `None` after
-/// printing E0232 for an unknown target in Pome.toml.
+/// The target: `--target`, else `[build].target` of Pome.toml (spec 4.7), else `default`. `None`
+/// after printing E0232 for an unknown target in Pome.toml.
 /// Also `None` after printing E0238 when a dependency does not support the target (spec 4.7).
-fn resolve_target(input: &Input, flag: Option<TargetArg>) -> Option<Target> {
+fn resolve_target(input: &Input, flag: Option<TargetArg>, default: Target) -> Option<Target> {
     let target = match flag {
         Some(flag) => flag.into(),
         None => match emela_driver::project_target(&OsFs, input) {
-            Ok(target) => target.unwrap_or_default(),
+            Ok(target) => target.unwrap_or(default),
             Err(diagnostic) => {
                 print_diagnostics(&[diagnostic], &SourceDb::new());
                 return None;
@@ -356,10 +356,29 @@ fn build(
     let Some(input) = resolve_input(&OsFs, path, false) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
-    let project = match EmbeddedProject::read(&input).and_then(|project| project.select(board)) {
+    let board_flag = board.is_some();
+    let mut project = match EmbeddedProject::read(&input).and_then(|project| project.select(board))
+    {
         Ok(project) => project,
         Err(diagnostic) => return report_error(diagnostic),
     };
+    let default = if project.board_id().is_some() {
+        Target::CEmbedded
+    } else {
+        Target::default()
+    };
+    let Some(target) = resolve_target(&input, target, default) else {
+        return ExitCode::from(DIAGNOSTIC_FAILURE);
+    };
+    // `[embedded].board` applies only to `c-embedded`; `--board` asks for it explicitly.
+    if target != Target::CEmbedded {
+        if board_flag {
+            return report_error(Diagnostic::error(
+                "a selected embedded board requires target `c-embedded`",
+            ));
+        }
+        project.board = None;
+    }
     if project.board_id().is_some()
         && let Err(diagnostic) = project.invalidate(
             &out_dir
@@ -369,32 +388,6 @@ fn build(
     {
         return report_error(diagnostic);
     }
-    let target = if project.board_id().is_some() {
-        let configured = match emela_driver::project_target(&OsFs, &input) {
-            Ok(target) => target,
-            Err(diagnostic) => return report_error(diagnostic),
-        };
-        let target = target
-            .map(Target::from)
-            .or(configured)
-            .unwrap_or(Target::CEmbedded);
-        if target != Target::CEmbedded {
-            return report_error(Diagnostic::error(
-                "a selected embedded board requires target `c-embedded`",
-            ));
-        }
-        let unsupported = emela_driver::check_dependency_targets(&input.dependencies, target);
-        if !unsupported.is_empty() {
-            print_diagnostics(&unsupported, &SourceDb::new());
-            return ExitCode::from(DIAGNOSTIC_FAILURE);
-        }
-        target
-    } else {
-        let Some(target) = resolve_target(&input, target) else {
-            return ExitCode::from(DIAGNOSTIC_FAILURE);
-        };
-        target
-    };
     if embedded_config.is_some() && target != Target::CEmbedded {
         print_diagnostics(
             &[Diagnostic::error(
@@ -519,7 +512,7 @@ fn run(
     let Some(input) = resolve_input(&OsFs, path, false) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
-    let Some(target) = resolve_target(&input, target) else {
+    let Some(target) = resolve_target(&input, target, Target::default()) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let options = RunOptions {
@@ -587,7 +580,7 @@ fn test(
     let Some(input) = resolve_input(&OsFs, path, true) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
-    let Some(target) = resolve_target(&input, target) else {
+    let Some(target) = resolve_target(&input, target, Target::default()) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
     };
     let options = TestOptions {
