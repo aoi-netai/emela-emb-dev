@@ -41,7 +41,7 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
-      "sha256": "48b4c1785fa4d9ddc3c93195a8bb563875b4e93bd52bbfc69f98d58d01cffe8e"
+      "sha256": "2a736b91d3ef0c5c04178b83820497f89a06895ffd1a7b4f1a2e08cc9058c051"
     },
     {
       "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
@@ -57,7 +57,7 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
-      "sha256": "d4a5ad03f3e079c892e9a18fc36cc6894fad486204f15aaf6ac699612ff35aff"
+      "sha256": "1ce26dc783cceaddc5f9a69f0e1c7d7a8025e9897ef32b1b7c72de7149898be5"
     },
     {
       "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",

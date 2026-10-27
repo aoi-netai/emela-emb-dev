@@ -1,6 +1,6 @@
 //! Resource and ABI planning over the independent lower contract.
 use crate::contract::ExportedFunction;
-use crate::contract::abi::{AggregateKind, CLayoutPlan as TypeLayouts, FunctionAdapterLayout};
+use crate::contract::abi::{AggregateKind, FunctionAdapterLayout, LayoutBuilder as TypeLayouts};
 use crate::contract::ir::*;
 use crate::contract::lowered::{ConstOutcome, LoweredModule as CompiledModule};
 use crate::contract::operations::*;
@@ -526,7 +526,7 @@ pub(super) fn prepare<'a>(
             )?,
         );
     }
-    layouts::freeze(&mut layouts);
+    let layouts = layouts::freeze(layouts);
     Ok(PlannedModule {
         metadata,
         aliases,

@@ -466,7 +466,7 @@ impl LayoutEmission for CLayoutPlan<'_> {
         }
         for layout in &self.shapes.handler_layouts {
             let kind = self.handler_kind(layout.effect);
-            let handler_type = Self::handler_type_name(layout.effect);
+            let handler_type = crate::semantics::abi::handler_type_name(layout.effect);
             writer.line(&format!("case UINT32_C({kind}):"));
             writer.begin_block("");
             writer.line(&format!(
@@ -668,7 +668,7 @@ impl LayoutEmission for CLayoutPlan<'_> {
         for layout in &self.shapes.handler_layouts {
             writer.line(&format!(
                 "typedef struct {} {{",
-                Self::handler_type_name(layout.effect)
+                crate::semantics::abi::handler_type_name(layout.effect)
             ));
             writer.line("  int32_t active;");
             writer.line("  const char *released_message;");
@@ -689,7 +689,10 @@ impl LayoutEmission for CLayoutPlan<'_> {
                     writer.line(&format!("  {} op_{index};", self.c_type(operation)));
                 }
             }
-            writer.line(&format!("}} {};", Self::handler_type_name(layout.effect)));
+            writer.line(&format!(
+                "}} {};",
+                crate::semantics::abi::handler_type_name(layout.effect)
+            ));
             writer.blank();
         }
     }

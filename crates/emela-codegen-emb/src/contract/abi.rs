@@ -63,11 +63,33 @@ pub(crate) struct RuntimeValues {
     pub(crate) managed_error_payloads: bool,
 }
 
-pub(crate) struct CLayoutPlan<'a> {
+/// Mutable ABI data used only while planning.
+pub(crate) struct LayoutBuilder<'a> {
     pub(crate) shapes: TypeShapes<'a>,
     pub(crate) functions: FunctionAbis,
     pub(crate) runtime: RuntimeValues,
     pub(crate) properties: Option<LayoutProperties>,
+}
+
+/// A layout whose cached properties have been finalized for emission.
+pub(crate) struct CLayoutPlan<'a> {
+    builder: LayoutBuilder<'a>,
+}
+
+impl<'a> LayoutBuilder<'a> {
+    pub(crate) fn finish(mut self, properties: LayoutProperties) -> CLayoutPlan<'a> {
+        assert!(self.properties.is_none());
+        self.properties = Some(properties);
+        CLayoutPlan { builder: self }
+    }
+}
+
+impl<'a> std::ops::Deref for CLayoutPlan<'a> {
+    type Target = LayoutBuilder<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.builder
+    }
 }
 pub(crate) struct LayoutProperties {
     pub(crate) types: Vec<TypeProperties>,

@@ -31,7 +31,7 @@ pub(in crate::backend::compiler::plan) trait LayoutPreparation<'a>:
         states: &mut HashMap<TypeId, u8>,
     ) -> Result<(), Vec<Error>>;
 }
-impl<'a> LayoutPreparation<'a> for CLayoutPlan<'a> {
+impl<'a> LayoutPreparation<'a> for LayoutBuilder<'a> {
     fn new(
         flow: &'a crate::contract::ir::Program,
         emitted: &HashSet<FnId>,
@@ -813,7 +813,7 @@ impl<'a> LayoutPreparation<'a> for CLayoutPlan<'a> {
     }
 }
 
-pub(super) fn freeze(layouts: &mut CLayoutPlan<'_>) {
+pub(super) fn freeze(layouts: LayoutBuilder<'_>) -> CLayoutPlan<'_> {
     assert!(layouts.properties.is_none());
     let types = (0..layouts.shapes.types.len())
         .map(|index| {
@@ -829,9 +829,9 @@ pub(super) fn freeze(layouts: &mut CLayoutPlan<'_>) {
         .collect();
     let cell_cycles = layouts.has_cell_cycles();
     let error_declarations = layouts.error_declaration_dependencies();
-    layouts.properties = Some(LayoutProperties {
+    layouts.finish(LayoutProperties {
         types,
         cell_cycles,
         error_declarations,
-    });
+    })
 }

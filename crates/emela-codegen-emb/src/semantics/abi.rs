@@ -36,7 +36,6 @@ pub(crate) trait LayoutRead: Sized {
     fn any_box_kind(&self) -> u32;
     fn closure_environment_kind(&self, index: usize) -> u32;
     fn aggregate_helper_index(&self, ty: TypeId) -> Option<usize>;
-    fn handler_type_name(effect: EffectId) -> String;
     fn runtime_value_kind_base(&self) -> u32;
     fn function_adapter_kind(&self, index: usize) -> u32;
     fn resume_kind(&self) -> u32;
@@ -49,7 +48,7 @@ pub(crate) trait LayoutRead: Sized {
     fn error_declaration_dependencies(&self) -> HashSet<usize>;
     fn has_inline_string(&self, ty: TypeId) -> bool;
 }
-impl LayoutRead for CLayoutPlan<'_> {
+impl LayoutRead for LayoutBuilder<'_> {
     fn has_child_waits(&self) -> bool {
         !self.runtime.child_join_types.is_empty()
             || !self.runtime.child_await_types.is_empty()
@@ -370,10 +369,6 @@ impl LayoutRead for CLayoutPlan<'_> {
         self.is_managed_value(ty).then_some(index)
     }
 
-    fn handler_type_name(effect: EffectId) -> String {
-        format!("emela_handler_{}", u32::from(effect.into_raw()))
-    }
-
     fn runtime_value_kind_base(&self) -> u32 {
         if self.functions.closure_environments.is_empty() {
             self.string_owner_kind() + 1
@@ -472,7 +467,11 @@ impl LayoutRead for CLayoutPlan<'_> {
     }
 }
 
-pub(crate) fn option_payload_type(layouts: &CLayoutPlan<'_>, ty: TypeId) -> Option<TypeId> {
+pub(crate) fn handler_type_name(effect: EffectId) -> String {
+    format!("emela_handler_{}", u32::from(effect.into_raw()))
+}
+
+pub(crate) fn option_payload_type(layouts: &LayoutBuilder<'_>, ty: TypeId) -> Option<TypeId> {
     let Type::Enum(enum_id, _) = layouts.shapes.types[ty] else {
         return None;
     };
@@ -495,7 +494,7 @@ pub(crate) fn scalar(types: &TypeTable, ty: TypeId) -> bool {
     )
 }
 
-pub(crate) fn bridge_fields(layouts: &CLayoutPlan<'_>, ty: TypeId) -> Vec<Vec<TypeId>> {
+pub(crate) fn bridge_fields(layouts: &LayoutBuilder<'_>, ty: TypeId) -> Vec<Vec<TypeId>> {
     let Some(&index) = layouts.shapes.aggregate_ids.get(&ty) else {
         return vec![];
     };

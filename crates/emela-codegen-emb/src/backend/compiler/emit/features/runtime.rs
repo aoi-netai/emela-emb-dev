@@ -122,7 +122,7 @@ pub(in crate::backend::compiler::emit) fn retire(
         let expression = variable_name(handler);
         let pointer = format!(
             "(({} *){expression})",
-            TypeLayouts::handler_type_name(effect)
+            crate::semantics::abi::handler_type_name(effect)
         );
         writer.begin_block(&format!("if ({expression} == NULL)"));
         writer.line(

@@ -681,7 +681,7 @@ pub(in crate::backend::compiler::emit) fn emit_handler_operation_call(
         ));
     };
     let handler_expression = variable_name(handler);
-    let handler_type = TypeLayouts::handler_type_name(effect);
+    let handler_type = crate::semantics::abi::handler_type_name(effect);
     let handler_pointer = format!("(({handler_type} *){handler_expression})");
     writer.begin_block(&format!("if ({handler_expression} == NULL)"));
     writer

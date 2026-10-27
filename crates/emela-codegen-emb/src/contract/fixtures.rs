@@ -1,7 +1,7 @@
 //! Hand-authored boundary fixtures. They do not invoke any compiler stage.
 use crate::contract::{
     Options,
-    abi::{CLayoutPlan, FunctionAbis, LayoutProperties, RuntimeValues, TypeShapes},
+    abi::{FunctionAbis, LayoutBuilder, LayoutProperties, RuntimeValues, TypeShapes},
     ir::{Definitions, Program},
     lowered::LoweredModule,
     planned::PlannedModule,
@@ -48,16 +48,17 @@ pub(crate) fn planned(module: &LoweredModule) -> PlannedModule<'_> {
         any_box_types: Default::default(),
         any_box_ids: Default::default(),
     };
-    let layouts = CLayoutPlan {
+    let layouts = LayoutBuilder {
         shapes,
         functions: FunctionAbis::default(),
         runtime: RuntimeValues::default(),
-        properties: Some(LayoutProperties {
-            types: vec![],
-            cell_cycles: false,
-            error_declarations: Default::default(),
-        }),
-    };
+        properties: None,
+    }
+    .finish(LayoutProperties {
+        types: vec![],
+        cell_cycles: false,
+        error_declarations: Default::default(),
+    });
     PlannedModule {
         metadata: Default::default(),
         aliases: Default::default(),

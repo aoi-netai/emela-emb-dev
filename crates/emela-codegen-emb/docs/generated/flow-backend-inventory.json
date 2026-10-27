@@ -2206,7 +2206,7 @@
       "observed_definition_sha256": "07685e3248f4d6b854c7cecdcf28d2df8bc08268e6473e8f176a58450648ff4d",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2225,7 +2225,7 @@
       "observed_definition_sha256": "d2f18db7d5ec762aa622cfea37cb2d252d0a586ed60216f72d321ec73042c85f",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2244,7 +2244,7 @@
       "observed_definition_sha256": "29a460bff1ba46ba095a57ba72dd939a9f74ba4f47aff37ced3e7e0d18bf5449",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2263,7 +2263,7 @@
       "observed_definition_sha256": "8caf90acc3a26360cc8d305deee8c80e2d1ab6420743e83c4ec1a49e90ab63e4",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2282,7 +2282,7 @@
       "observed_definition_sha256": "72710f777d07e50bd610aee5302dcb8f5c8c82893b5f2ba1971dfabe58db0e3d",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2301,7 +2301,7 @@
       "observed_definition_sha256": "f2687750b43efcb1e765ac9c626f7492d2b048c3d45afa6c0dd7c320699835db",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2320,7 +2320,7 @@
       "observed_definition_sha256": "2ccfa1905b725f3f765c7314b671c6590cbc3faf06f6d9686ffc81caf254f93e",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2339,7 +2339,7 @@
       "observed_definition_sha256": "1cf9e65222edb0cd63ffe0521d77c56da4ac531a3e2ca566eb27410cbd019b71",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2358,7 +2358,7 @@
       "observed_definition_sha256": "eeaecd275044dd4063416025e0079e161e7a28f8b082db49d93ae3ea4499f6f5",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2377,7 +2377,7 @@
       "observed_definition_sha256": "72710f777d07e50bd610aee5302dcb8f5c8c82893b5f2ba1971dfabe58db0e3d",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2396,7 +2396,7 @@
       "observed_definition_sha256": "778f1c94c639b7647e6dd6bc156fe71389bb0718430758d136ee4433a411e628",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -2415,7 +2415,7 @@
       "observed_definition_sha256": "5584625485925c8e9ee1074a015974ee5b5ec7fcda658536c98761b7b70a0255",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3775,7 +3775,7 @@
       "observed_definition_sha256": "0a13545ad24a587cfd59de1535d8bb92b3e1a5b16d790b0b1bb809f4c6138b6a",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3794,7 +3794,7 @@
       "observed_definition_sha256": "4de11bcdc644430d7ba933045b41c18e12b363ca5424f57079ee31352c61f617",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3813,7 +3813,7 @@
       "observed_definition_sha256": "72710f777d07e50bd610aee5302dcb8f5c8c82893b5f2ba1971dfabe58db0e3d",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3832,7 +3832,7 @@
       "observed_definition_sha256": "22e8cfe0c1999e3a0401d269063a37c4a3333d8f47bb8dce7110bbfcd9c1d9e4",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3851,7 +3851,7 @@
       "observed_definition_sha256": "46e9a2f2de63363e7aed81a1e63cec2430e7d3a705646b76a805487e9f471063",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3870,7 +3870,7 @@
       "observed_definition_sha256": "83a399ba65e8531a754a51bf2287b679bcde5cfffa08e1e2325361f3d54b8a2d",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -3889,7 +3889,7 @@
       "observed_definition_sha256": "87661556a13b96d03b0553e8e1e9693d5ebc923be5826fedab27f9157e71be8e",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::collect",
+        "symbol": "LayoutBuilder::collect",
         "line": 698,
         "end_line": 813,
         "body_sha256": "73cc12274babaadf12162584967d65d3ac19498d78d28ed87757f8f0561a6460"
@@ -8513,7 +8513,7 @@
         "symbol": "retire",
         "line": 81,
         "end_line": 136,
-        "body_sha256": "dd3ef2951ccf61c908a9291aa684f5b5cb9b8f908f60aed879219b771c29ed24"
+        "body_sha256": "92a92106675399ecb300f405352178d8f36478dd14443554641c8b24ef57c4f9"
       },
       "phase_entries": [
         {
@@ -14143,7 +14143,7 @@
       "observed_definition_sha256": "8b3ab1bd8b23f03339220dcd02f81539079b06e9bbf52ea99ba44e1ee2f0ecac",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::new",
+        "symbol": "LayoutBuilder::new",
         "line": 35,
         "end_line": 587,
         "body_sha256": "5c7f3d46a6af9837df5297a192e0af7dcc029da927dbde8df3fa5b16047070a5"
@@ -14162,7 +14162,7 @@
       "observed_definition_sha256": "8b13d0b8de0a22c61f59f1350b16db6877d1b6f7a2518cb2b2129ded1fcd8836",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::new",
+        "symbol": "LayoutBuilder::new",
         "line": 35,
         "end_line": 587,
         "body_sha256": "5c7f3d46a6af9837df5297a192e0af7dcc029da927dbde8df3fa5b16047070a5"
@@ -14181,7 +14181,7 @@
       "observed_definition_sha256": "ac9b638167eb812931e1a2ebdb41df3c74a1da18cb2c7c33bd5eb878b4b1a472",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::new",
+        "symbol": "LayoutBuilder::new",
         "line": 35,
         "end_line": 587,
         "body_sha256": "5c7f3d46a6af9837df5297a192e0af7dcc029da927dbde8df3fa5b16047070a5"
@@ -14200,7 +14200,7 @@
       "observed_definition_sha256": "dfd9f5d84020bac6a8cca702c7d74e9dfd82fa59b8ed008607986d160fb7f7aa",
       "entry": {
         "path": "src/backend/compiler/plan/layouts.rs",
-        "symbol": "CLayoutPlan::new",
+        "symbol": "LayoutBuilder::new",
         "line": 35,
         "end_line": 587,
         "body_sha256": "5c7f3d46a6af9837df5297a192e0af7dcc029da927dbde8df3fa5b16047070a5"

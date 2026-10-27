@@ -1,6 +1,6 @@
 //! Core type representation decisions; allocation and ABI planning share TypeLayouts.
 use crate::contract::{
-    abi::CLayoutPlan as TypeLayouts,
+    abi::LayoutBuilder as TypeLayouts,
     ir::{Repr, Type},
 };
 use crate::semantics::abi::LayoutRead;

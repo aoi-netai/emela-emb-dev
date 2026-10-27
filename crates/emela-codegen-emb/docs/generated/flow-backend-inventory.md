@@ -63,18 +63,18 @@
 | `emela_core::CtorRef` | shared_declaration / schema | `emela_core::CtorRef` | [emit_make](../../src/backend/compiler/emit/features/values/make.rs#L20) |  |  |
 | `emela_core::CtorRef.enum_id` | member_of_declaration / schema | `emela_core::CtorRef` | [emit_make](../../src/backend/compiler/emit/features/values/make.rs#L20) |  |  |
 | `emela_core::CtorRef.variant` | member_of_declaration / schema | `emela_core::CtorRef` | [emit_make](../../src/backend/compiler/emit/features/values/make.rs#L20) |  |  |
-| `emela_core::EffectDef` | shared_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EffectDef.args` | member_of_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EffectDef.decl` | member_of_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EffectDef.label_of` | member_of_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EffectDef.name` | member_of_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EffectDef.ops` | member_of_declaration / schema | `emela_core::EffectDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef` | shared_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef.error` | member_of_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef.external` | member_of_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef.name` | member_of_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef.params` | member_of_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::EnumDef.variants` | member_of_declaration / schema | `emela_core::EnumDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef` | shared_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef.args` | member_of_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef.decl` | member_of_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef.label_of` | member_of_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef.name` | member_of_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EffectDef.ops` | member_of_declaration / schema | `emela_core::EffectDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef` | shared_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef.error` | member_of_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef.external` | member_of_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef.name` | member_of_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef.params` | member_of_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::EnumDef.variants` | member_of_declaration / schema | `emela_core::EnumDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
 | `emela_core::External` | shared_declaration / schema | `emela_core::External` | [resolve](../../src/backend/compiler/plan/external.rs#L20) |  |  |
 | `emela_core::External.bindings` | member_of_declaration / schema | `emela_core::External` | [resolve](../../src/backend/compiler/plan/external.rs#L20) |  |  |
 | `emela_core::ExternalBinding` | shared_declaration / schema | `emela_core::ExternalBinding` | [resolve](../../src/backend/compiler/plan/external.rs#L20) |  |  |
@@ -122,13 +122,13 @@
 | `emela_core::HostRef::Import` | variant_entry / metadata | `emela_core::HostRef::Import` | [import](../../src/semantics/host_refs.rs#L10) |  | [emit::binding_metadata::imported_c_bindings_preserve_symbols_for_named_file_and_bundled_modules](../../tests/binding_metadata/mod.rs#L5) |
 | `emela_core::HostRef::Import.module` | member_of_variant / metadata | `emela_core::HostRef::Import` | [import](../../src/semantics/host_refs.rs#L10) |  | [emit::binding_metadata::imported_c_bindings_preserve_symbols_for_named_file_and_bundled_modules](../../tests/binding_metadata/mod.rs#L5) |
 | `emela_core::HostRef::Import.name` | member_of_variant / metadata | `emela_core::HostRef::Import` | [import](../../src/semantics/host_refs.rs#L10) |  | [emit::binding_metadata::imported_c_bindings_preserve_symbols_for_named_file_and_bundled_modules](../../tests/binding_metadata/mod.rs#L5) |
-| `emela_core::OpDef` | shared_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.fails` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.name` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.params` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.ret` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.suspend` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
-| `emela_core::OpDef.type_params` | member_of_declaration / schema | `emela_core::OpDef` | [CLayoutPlan::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef` | shared_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.fails` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.name` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.params` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.ret` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.suspend` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
+| `emela_core::OpDef.type_params` | member_of_declaration / schema | `emela_core::OpDef` | [LayoutBuilder::collect](../../src/backend/compiler/plan/layouts.rs#L698) |  |  |
 | `emela_core::SetSummary` | shared_declaration / schema | `emela_core::SetSummary` | [normalize](../../src/backend/compiler/lower/type_normalize.rs#L9) |  |  |
 | `emela_core::SetSummary.ev` | member_of_declaration / schema | `emela_core::SetSummary` | [normalize](../../src/backend/compiler/lower/type_normalize.rs#L9) |  |  |
 | `emela_core::SetSummary.fails` | member_of_declaration / schema | `emela_core::SetSummary` | [normalize](../../src/backend/compiler/lower/type_normalize.rs#L9) |  |  |
@@ -420,8 +420,8 @@
 | `emela_lir::Value::TupleGet` | variant_entry / emit | `emela_lir::Value::TupleGet` | [emit](../../src/backend/compiler/emit/features/values/tuple_get.rs#L3) | [result_ownership](../../src/backend/compiler/plan/operations/values/tuple_get.rs#L3) | [emit::reads_tuple_fields_and_ignores_unit_projections](../../tests/emit.rs#L4653) |
 | `emela_lir::Value::TupleGet.base` | member_of_variant / emit | `emela_lir::Value::TupleGet` | [emit](../../src/backend/compiler/emit/features/values/tuple_get.rs#L3) | [result_ownership](../../src/backend/compiler/plan/operations/values/tuple_get.rs#L3) | [emit::reads_tuple_fields_and_ignores_unit_projections](../../tests/emit.rs#L4653) |
 | `emela_lir::Value::TupleGet.index` | member_of_variant / emit | `emela_lir::Value::TupleGet` | [emit](../../src/backend/compiler/emit/features/values/tuple_get.rs#L3) | [result_ownership](../../src/backend/compiler/plan/operations/values/tuple_get.rs#L3) | [emit::reads_tuple_fields_and_ignores_unit_projections](../../tests/emit.rs#L4653) |
-| `emela_lir::VarData` | shared_declaration / schema | `emela_lir::VarData` | [CLayoutPlan::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
-| `emela_lir::VarData.hint` | member_of_declaration / schema | `emela_lir::VarData` | [CLayoutPlan::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
-| `emela_lir::VarData.repr` | member_of_declaration / schema | `emela_lir::VarData` | [CLayoutPlan::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
-| `emela_lir::VarData.ty` | member_of_declaration / schema | `emela_lir::VarData` | [CLayoutPlan::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
+| `emela_lir::VarData` | shared_declaration / schema | `emela_lir::VarData` | [LayoutBuilder::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
+| `emela_lir::VarData.hint` | member_of_declaration / schema | `emela_lir::VarData` | [LayoutBuilder::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
+| `emela_lir::VarData.repr` | member_of_declaration / schema | `emela_lir::VarData` | [LayoutBuilder::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
+| `emela_lir::VarData.ty` | member_of_declaration / schema | `emela_lir::VarData` | [LayoutBuilder::new](../../src/backend/compiler/plan/layouts.rs#L35) |  |  |
 | `emela_lir::VarId` | shared_declaration / schema | `emela_lir::VarId` | [variable_name](../../src/semantics/c.rs#L103) |  |  |

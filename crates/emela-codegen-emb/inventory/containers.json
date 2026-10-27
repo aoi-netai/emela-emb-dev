@@ -41,7 +41,7 @@
   },
   "emela_lir::VarData": {
     "path": "src/backend/compiler/plan/layouts.rs",
-    "symbol": "CLayoutPlan::new",
+    "symbol": "LayoutBuilder::new",
     "role": "schema"
   },
   "emela_lir::LabelData": {
@@ -269,17 +269,17 @@
   },
   "emela_core::EffectDef": {
     "path": "src/backend/compiler/plan/layouts.rs",
-    "symbol": "CLayoutPlan::collect",
+    "symbol": "LayoutBuilder::collect",
     "role": "schema"
   },
   "emela_core::OpDef": {
     "path": "src/backend/compiler/plan/layouts.rs",
-    "symbol": "CLayoutPlan::collect",
+    "symbol": "LayoutBuilder::collect",
     "role": "schema"
   },
   "emela_core::EnumDef": {
     "path": "src/backend/compiler/plan/layouts.rs",
-    "symbol": "CLayoutPlan::collect",
+    "symbol": "LayoutBuilder::collect",
     "role": "schema"
   },
   "emela_core::VariantDef": {

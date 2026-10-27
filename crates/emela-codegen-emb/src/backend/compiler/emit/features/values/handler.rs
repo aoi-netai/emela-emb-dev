@@ -56,7 +56,7 @@ pub(in crate::backend::compiler::emit) fn emit_handler_value(
             "Handler operation types do not match its runtime layout",
         ));
     }
-    let handler_type = TypeLayouts::handler_type_name(effect);
+    let handler_type = crate::semantics::abi::handler_type_name(effect);
     let destination = variable_name(dst);
     let kind = layouts.handler_kind(effect);
     writer.assign(

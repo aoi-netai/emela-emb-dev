@@ -1101,7 +1101,7 @@ pub(super) fn emit_operation(
     let resume_ty = *ft.params.last().expect("resume parameter");
     let pointer = format!(
         "(({} *){})",
-        TypeLayouts::handler_type_name(effect),
+        crate::semantics::abi::handler_type_name(effect),
         variable_name(handler)
     );
     writer.line(&format!(

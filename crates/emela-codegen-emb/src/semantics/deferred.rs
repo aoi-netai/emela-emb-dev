@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::contract::abi::CLayoutPlan as TypeLayouts;
+use crate::contract::abi::LayoutBuilder as TypeLayouts;
 use crate::contract::ir::*;
 use crate::semantics::{
     abi::LayoutRead,
