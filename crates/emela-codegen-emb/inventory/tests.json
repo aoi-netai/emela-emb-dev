@@ -86,7 +86,7 @@
   "emela_lir::Value::Closure": [
     {
       "target": "lib",
-      "name": "backend::separation_tests::common_closure_lowering_is_shared_and_native_managed_values_run"
+      "name": "compiler::separation_tests::common_closure_lowering_is_shared_and_native_managed_values_run"
     }
   ],
   "emela_lir::Value::MakeClosure": [
@@ -234,7 +234,7 @@
   "emela_core::Builtin::StringTrim": [
     {
       "target": "lib",
-      "name": "backend::separation_tests::string_plans_preserve_aliases_while_other_buffers_and_calls_are_live"
+      "name": "compiler::separation_tests::string_plans_preserve_aliases_while_other_buffers_and_calls_are_live"
     }
   ],
   "emela_core::Builtin::StringCodePoints": [
@@ -258,7 +258,7 @@
   "emela_core::Builtin::IntToString": [
     {
       "target": "lib",
-      "name": "backend::separation_tests::common_entries_supply_dynamic_string_output_buffers"
+      "name": "compiler::separation_tests::common_entries_supply_dynamic_string_output_buffers"
     }
   ],
   "emela_core::Builtin::IntParse": [

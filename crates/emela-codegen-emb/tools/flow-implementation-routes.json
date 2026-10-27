@@ -245,7 +245,7 @@
     },
     {
       "id": "sync-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Stmt",
       "selector": "match",
@@ -259,7 +259,7 @@
     },
     {
       "id": "sync-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Term",
       "selector": "match",
@@ -273,7 +273,7 @@
     },
     {
       "id": "sync-failure",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
       "symbol": "emit",
       "owner": "emela_lir::OnFail",
       "selector": "match",
@@ -287,7 +287,7 @@
     },
     {
       "id": "suspend-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
       "symbol": "lower",
       "owner": "emela_lir::Stmt",
       "selector": "match",
@@ -301,7 +301,7 @@
     },
     {
       "id": "suspend-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
       "symbol": "lower",
       "owner": "emela_lir::Term",
       "selector": "match",
@@ -315,7 +315,7 @@
     },
     {
       "id": "suspend-failure",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
       "symbol": "lower",
       "owner": "emela_lir::OnFail",
       "selector": "match",
@@ -329,7 +329,7 @@
     },
     {
       "id": "value",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Value",
       "selector": "match",
@@ -344,7 +344,7 @@
     },
     {
       "id": "callee",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit",
       "owner": "emela_lir::Callee",
       "selector": "match",
@@ -358,7 +358,7 @@
     },
     {
       "id": "suspend-callee-direct",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_direct",
       "owner": "emela_lir::Callee",
       "selector": "if",
@@ -372,7 +372,7 @@
     },
     {
       "id": "suspend-callee-indirect",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_indirect",
       "owner": "emela_lir::Callee",
       "selector": "if",
@@ -386,7 +386,7 @@
     },
     {
       "id": "suspend-callee-op",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_op",
       "owner": "emela_lir::Callee",
       "selector": "if",
@@ -400,7 +400,7 @@
     },
     {
       "id": "fiber",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
       "symbol": "emit",
       "owner": "emela_core::FiberOp",
       "selector": "match",
@@ -415,7 +415,7 @@
     },
     {
       "id": "closure-lowering",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/closure.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/closure.rs",
       "symbol": "lower",
       "owner": "emela_lir::Value",
       "selector": "let_else",
@@ -432,7 +432,7 @@
     },
     {
       "id": "builtin",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
       "symbol": "emit",
       "owner": "emela_core::Builtin",
       "selector": "match",
@@ -446,7 +446,7 @@
     },
     {
       "id": "runtime",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
       "symbol": "emit",
       "owner": "emela_lir::RuntimeOp",
       "selector": "match",
@@ -460,7 +460,7 @@
     },
     {
       "id": "constant",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
       "symbol": "dispatch",
       "owner": "emela_lir::Const",
       "selector": "match",
@@ -474,7 +474,7 @@
     },
     {
       "id": "operand",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/operands.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/operands.rs",
       "symbol": "dispatch",
       "owner": "emela_lir::Operand",
       "selector": "match",
@@ -488,7 +488,7 @@
     },
     {
       "id": "primitive-type",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
       "symbol": "emit",
       "owner": "emela_lir::PrimTy",
       "selector": "match",
@@ -502,7 +502,7 @@
     },
     {
       "id": "primitive",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
       "symbol": "emit",
       "owner": "emela_lir::PrimOp",
       "selector": "match",
@@ -530,7 +530,7 @@
     },
     {
       "id": "stage",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
       "symbol": "verify",
       "owner": "emela_lir::Stage",
       "selector": "match",
@@ -543,7 +543,7 @@
     },
     {
       "id": "switch",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/switches.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/switches.rs",
       "symbol": "scrutinee",
       "owner": "emela_lir::SwitchOn",
       "selector": "match",
@@ -558,7 +558,7 @@
     },
     {
       "id": "case-key",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/case_keys.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
       "symbol": "label",
       "owner": "emela_lir::CaseKey",
       "selector": "match",
@@ -573,7 +573,7 @@
     },
     {
       "id": "upstream-adapter-value",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_value",
       "owner": "emela_lir::Value",
       "selector": "match",
@@ -587,7 +587,7 @@
     },
     {
       "id": "upstream-adapter-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_stmt",
       "owner": "emela_lir::Stmt",
       "selector": "match",
@@ -601,7 +601,7 @@
     },
     {
       "id": "upstream-adapter-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_term",
       "owner": "emela_lir::Term",
       "selector": "match",
@@ -615,7 +615,7 @@
     },
     {
       "id": "upstream-adapter-callee",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_callee",
       "owner": "emela_lir::Callee",
       "selector": "match",
@@ -629,7 +629,7 @@
     },
     {
       "id": "upstream-adapter-onfail",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_on_fail",
       "owner": "emela_lir::OnFail",
       "selector": "match",
@@ -643,7 +643,7 @@
     },
     {
       "id": "upstream-adapter-switchon",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_switch_on",
       "owner": "emela_lir::SwitchOn",
       "selector": "match",
@@ -657,7 +657,7 @@
     },
     {
       "id": "upstream-adapter-casekey",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_case_key",
       "owner": "emela_lir::CaseKey",
       "selector": "match",
@@ -671,7 +671,7 @@
     },
     {
       "id": "upstream-adapter-const",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_const",
       "owner": "emela_lir::Const",
       "selector": "match",
@@ -684,7 +684,7 @@
     },
     {
       "id": "upstream-adapter-operand",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_operand",
       "owner": "emela_lir::Operand",
       "selector": "match",
@@ -697,7 +697,7 @@
     },
     {
       "id": "upstream-adapter-primop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_prim_op",
       "owner": "emela_lir::PrimOp",
       "selector": "match",
@@ -710,7 +710,7 @@
     },
     {
       "id": "upstream-adapter-primty",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_prim_ty",
       "owner": "emela_lir::PrimTy",
       "selector": "match",
@@ -723,7 +723,7 @@
     },
     {
       "id": "upstream-adapter-runtimeop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_runtime_op",
       "owner": "emela_lir::RuntimeOp",
       "selector": "match",
@@ -736,7 +736,7 @@
     },
     {
       "id": "upstream-adapter-repr",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_repr",
       "owner": "emela_lir::Repr",
       "selector": "match",
@@ -749,7 +749,7 @@
     },
     {
       "id": "upstream-adapter-builtin",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_builtin",
       "owner": "emela_core::Builtin",
       "selector": "match",
@@ -762,7 +762,7 @@
     },
     {
       "id": "upstream-adapter-fiberop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_fiber_op",
       "owner": "emela_core::FiberOp",
       "selector": "match",

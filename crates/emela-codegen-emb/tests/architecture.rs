@@ -17,7 +17,7 @@ impl ContractDependencies {
             _ => names.iter().any(|name| {
                 matches!(
                     *name,
-                    "emela_core" | "emela_lir" | "backend" | "input" | "writer"
+                    "emela_core" | "emela_lir" | "compiler" | "input" | "writer"
                 )
             }),
         };
@@ -121,8 +121,8 @@ fn contract_guard_rejects_aliases_grouped_imports_and_indirect_source_includes()
     for source in [
         "use emela_lir::Module as Program;",
         "use std::{collections::HashMap, fs as storage};",
-        "pub use crate::{backend::compiler as implementation};",
-        "type Layout = crate::backend::compiler::SomeLayout;",
+        "pub use crate::{compiler as implementation};",
+        "type Layout = crate::compiler::SomeLayout;",
         "use super::implementation;",
         "use crate::contract::*;",
         "include!(\"../backend/implementation.rs\");",
@@ -150,7 +150,7 @@ impl StageDependencies {
             ]
             .contains(module),
             ["emela_core" | "emela_lir", ..] => self.stage != "lower",
-            ["crate", "backend", "compiler", stage, ..] => *stage != self.stage,
+            ["crate", "compiler", stage, ..] => *stage != self.stage,
             ["crate", module, ..] => match *module {
                 "contract" | "semantics" => false,
                 "input" => self.stage != "lower" || parts.get(2) != Some(&"upstream"),
@@ -263,7 +263,7 @@ fn stages_use_only_contracts_and_explicit_pure_shared_libraries() {
         let directory = if stage == "connection" {
             root.join("src/platform")
         } else {
-            root.join("src/backend/compiler").join(stage)
+            root.join("src/compiler").join(stage)
         };
         let mut pending = vec![directory.clone()];
         while let Some(path) = pending.pop() {
@@ -310,10 +310,10 @@ fn stages_use_only_contracts_and_explicit_pure_shared_libraries() {
 fn stage_guard_rejects_reexports_effect_aliases_and_cross_stage_relative_imports() {
     for source in [
         "use std::{env as settings};",
-        "pub use crate::backend::compiler::*;",
+        "pub use crate::compiler::*;",
         "use super::super::lower as previous;",
         "use emela_lir::Module as Program;",
-        "type Plan=crate::backend::compiler::plan::Hidden;",
+        "type Plan=crate::compiler::plan::Hidden;",
         "include!(\"hidden.rs\");",
     ] {
         let mut guard = StageDependencies {

@@ -4,88 +4,88 @@
   "backend": "emela-codegen-emb",
   "config": {
     "path": "crates/emela-codegen-emb/tools/flow-implementation-routes.json",
-    "sha256": "981f4fbf3d656a2ef23f7e7baddbd848409b995220c95a17ec00a6d2dd760857"
+    "sha256": "562bb1f3f656ee0864044525df5a315d68682fd57cddab6333257d001015ea88"
   },
   "sources": [
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
-      "sha256": "db8e3de51d0505d8132f50648e0be30f10aaa39e7328f8397ff70396f91a8851"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
+      "sha256": "382bf3e8a7a4ff20a5c75b1dc40c61bff40368c08d3f0f49ff4b19b913a8a368"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/case_keys.rs",
-      "sha256": "aa9b7a1c255afb1b99fbd8722a07d6999878e53484c98108ce21f61713baee30"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
+      "sha256": "5448c34a4972d2c76a2afdf77616824b0ab2063a647cc756a9f1f2ed0b189b5c"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
-      "sha256": "6586ba268d35b9b1ffa1042ffe0003e64f29f625635ebe7002327e77239eeaf4"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
+      "sha256": "410468318d06197ab536c20c6a3d593e5a3c4af3bafd71461956b1f288133159"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
-      "sha256": "02b3534eaf2cdc108686bd1981c2e89dea65d2e7e2ea90a5fd5cc9fe6da8b102"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
+      "sha256": "a87ed5678091947495d63bd6aa26f618f1893a95415a472cafcd8bc6f3ac7280"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
-      "sha256": "d22cd5fbe85168e93e063fc5657f696558d4af7920d6ecb8ee51787b0d5cebba"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
+      "sha256": "0e294981446bdb438fbafdec54ab9587ddf035b06f4c89fd8711d0ac8c27b084"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/operands.rs",
-      "sha256": "69ec6ab58ca87aa6be8f6e3b2852495362cbbecd10ff5a60aae9ae3fac2766e8"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/operands.rs",
+      "sha256": "5ec85350ee88d30e7366f81bf109869d1ec804f27e26288de825e8ae11c7e8f7"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
-      "sha256": "358aef72b80c31d365b1d7e8312745b8fe79bb89517ac843732734cec1035d1b"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
+      "sha256": "278df9c77b64dff57e9d63af54cf2d7641cff2f63ecadd15c68ea32517256710"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
-      "sha256": "f610dd1db0418b09c06857529ca8c30ea7fd1cd76b0dceeff7678124099d108e"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
+      "sha256": "4e67fc09ddac1ba990d895c6e8138cfcfdc0c626eda7f9ddafe629023b8a9f8d"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
-      "sha256": "2a736b91d3ef0c5c04178b83820497f89a06895ffd1a7b4f1a2e08cc9058c051"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
+      "sha256": "7a82fdcdf3206fdf5e93437ccb9795534d4e52ea43337ecfd085a7522ae5df5a"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
-      "sha256": "de8cb7ea48bdc0410e2b514b18ed08ae3a8399e84bbc49cfbe8caacc9cd203c6"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
+      "sha256": "c87ad99b1223840a8228e1728c69f408992c268001d6f61e30b97f69ef85b9ef"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/switches.rs",
-      "sha256": "0cc36e2d86a704d15225f3b4e90a1d1a4faa192ab22a336f35f8bf61538bedee"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/switches.rs",
+      "sha256": "303568c09fac01248b47b8438a6f03244408caee932aeb03a685eb120b73d257"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
-      "sha256": "44981a60b4bfd9b8d4bb9836b263d67a08eda7fe58491edbd18ac93cb37e16df"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
+      "sha256": "9874c3c375e69fa4b4a9c677afc366b2c5f570d42a1b6d8ec5de6275ee2e5b0a"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
-      "sha256": "1ce26dc783cceaddc5f9a69f0e1c7d7a8025e9897ef32b1b7c72de7149898be5"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
+      "sha256": "c91fe03a03818c8b28b8556f8adef8fb69a59a8204c1c2fcab4484dcd4a805a5"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
-      "sha256": "08b25ee665912dd7d35cf2f8b1f536938a3db51f351d67827ac1b27a3bb95557"
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
+      "sha256": "455536988829f0db6d4262cdebe028f3d95ad52e585c442274a16dc79adb32ca"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "sha256": "9bdc64aa56b2bef9d21578c84f443441403b1b7392fd0c905fc6e6ed4a9c7ad7"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/closure.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/closure.rs",
       "sha256": "13b2f4990a475c3704073f16710a1afee479a64522d24c6e28f0c2e80f660f24"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-      "sha256": "410ccc18b8e715d13015a690687e821a94561ce600d52fb73f0067182e7f5e8a"
+      "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+      "sha256": "7301d2cddd600b6ac559bfb945f83380b3815cfa4b3a06464cc7973adb230c19"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
-      "sha256": "cfd0994f5d328a1da704e722e26e83ccc57e709c79c3edf760e47a9906aceb1a"
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
+      "sha256": "e07cda26bed3268058ce01510a6e0c99f1f5d7bd15b93a14feb05107764700a9"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
-      "sha256": "d4f242ccb3e38b6a3777af016e029303981bf4b898bc68bb03edc2dd542c7226"
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
+      "sha256": "b58c7e7b7a3a8ddc5441ded72eb69a4468fe40676e0eb9eda48e5d6fa8548636"
     },
     {
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
-      "sha256": "5d185221c8288444e49ca6340e413958f20ff881cb8a3a53b66af6136dc866e5"
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
+      "sha256": "9abbc7eaea12799eabd488d0ba57ab8bce2efec1a5c0c1a55508a123add47114"
     },
     {
       "path": "crates/emela-codegen-emb/src/contract/ir.rs",
@@ -247,7 +247,7 @@
     },
     {
       "id": "sync-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Stmt",
       "representation_owner": "crate::contract::ir::Stmt",
@@ -265,7 +265,7 @@
     },
     {
       "id": "sync-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Term",
       "representation_owner": "crate::contract::ir::Term",
@@ -283,7 +283,7 @@
     },
     {
       "id": "sync-failure",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
       "symbol": "emit",
       "owner": "emela_lir::OnFail",
       "representation_owner": "crate::contract::ir::OnFail",
@@ -301,7 +301,7 @@
     },
     {
       "id": "suspend-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
       "symbol": "lower",
       "owner": "emela_lir::Stmt",
       "representation_owner": "crate::contract::ir::Stmt",
@@ -319,7 +319,7 @@
     },
     {
       "id": "suspend-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
       "symbol": "lower",
       "owner": "emela_lir::Term",
       "representation_owner": "crate::contract::ir::Term",
@@ -337,7 +337,7 @@
     },
     {
       "id": "suspend-failure",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
       "symbol": "lower",
       "owner": "emela_lir::OnFail",
       "representation_owner": "crate::contract::ir::OnFail",
@@ -355,7 +355,7 @@
     },
     {
       "id": "value",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
       "symbol": "emit",
       "owner": "emela_lir::Value",
       "representation_owner": "crate::contract::ir::Value",
@@ -374,7 +374,7 @@
     },
     {
       "id": "callee",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit",
       "owner": "emela_lir::Callee",
       "representation_owner": "crate::contract::ir::Callee",
@@ -392,7 +392,7 @@
     },
     {
       "id": "suspend-callee-direct",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_direct",
       "owner": "emela_lir::Callee",
       "representation_owner": "crate::contract::ir::Callee",
@@ -410,7 +410,7 @@
     },
     {
       "id": "suspend-callee-indirect",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_indirect",
       "owner": "emela_lir::Callee",
       "representation_owner": "crate::contract::ir::Callee",
@@ -428,7 +428,7 @@
     },
     {
       "id": "suspend-callee-op",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
       "symbol": "emit_suspend_op",
       "owner": "emela_lir::Callee",
       "representation_owner": "crate::contract::ir::Callee",
@@ -446,7 +446,7 @@
     },
     {
       "id": "fiber",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
       "symbol": "emit",
       "owner": "emela_core::FiberOp",
       "representation_owner": "crate::contract::ir::FiberOp",
@@ -465,7 +465,7 @@
     },
     {
       "id": "closure-lowering",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/closure.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/closure.rs",
       "symbol": "lower",
       "owner": "emela_lir::Value",
       "representation_owner": null,
@@ -486,7 +486,7 @@
     },
     {
       "id": "builtin",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
       "symbol": "emit",
       "owner": "emela_core::Builtin",
       "representation_owner": "crate::contract::ir::Builtin",
@@ -504,7 +504,7 @@
     },
     {
       "id": "runtime",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
       "symbol": "emit",
       "owner": "emela_lir::RuntimeOp",
       "representation_owner": "crate::contract::ir::RuntimeOp",
@@ -522,7 +522,7 @@
     },
     {
       "id": "constant",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
       "symbol": "dispatch",
       "owner": "emela_lir::Const",
       "representation_owner": "crate::contract::ir::Const",
@@ -540,7 +540,7 @@
     },
     {
       "id": "operand",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/operands.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/operands.rs",
       "symbol": "dispatch",
       "owner": "emela_lir::Operand",
       "representation_owner": "crate::contract::ir::Operand",
@@ -558,7 +558,7 @@
     },
     {
       "id": "primitive-type",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
       "symbol": "emit",
       "owner": "emela_lir::PrimTy",
       "representation_owner": "crate::contract::ir::PrimTy",
@@ -576,7 +576,7 @@
     },
     {
       "id": "primitive",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
       "symbol": "emit",
       "owner": "emela_lir::PrimOp",
       "representation_owner": "crate::contract::ir::PrimOp",
@@ -612,7 +612,7 @@
     },
     {
       "id": "stage",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
       "symbol": "verify",
       "owner": "emela_lir::Stage",
       "representation_owner": null,
@@ -630,7 +630,7 @@
     },
     {
       "id": "switch",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/switches.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/switches.rs",
       "symbol": "scrutinee",
       "owner": "emela_lir::SwitchOn",
       "representation_owner": "crate::contract::ir::SwitchOn",
@@ -649,7 +649,7 @@
     },
     {
       "id": "case-key",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/case_keys.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
       "symbol": "label",
       "owner": "emela_lir::CaseKey",
       "representation_owner": "crate::contract::ir::CaseKey",
@@ -668,7 +668,7 @@
     },
     {
       "id": "upstream-adapter-value",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_value",
       "owner": "emela_lir::Value",
       "representation_owner": null,
@@ -687,7 +687,7 @@
     },
     {
       "id": "upstream-adapter-stmt",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_stmt",
       "owner": "emela_lir::Stmt",
       "representation_owner": null,
@@ -706,7 +706,7 @@
     },
     {
       "id": "upstream-adapter-term",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_term",
       "owner": "emela_lir::Term",
       "representation_owner": null,
@@ -725,7 +725,7 @@
     },
     {
       "id": "upstream-adapter-callee",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_callee",
       "owner": "emela_lir::Callee",
       "representation_owner": null,
@@ -744,7 +744,7 @@
     },
     {
       "id": "upstream-adapter-onfail",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_on_fail",
       "owner": "emela_lir::OnFail",
       "representation_owner": null,
@@ -763,7 +763,7 @@
     },
     {
       "id": "upstream-adapter-switchon",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_switch_on",
       "owner": "emela_lir::SwitchOn",
       "representation_owner": null,
@@ -782,7 +782,7 @@
     },
     {
       "id": "upstream-adapter-casekey",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_case_key",
       "owner": "emela_lir::CaseKey",
       "representation_owner": null,
@@ -801,7 +801,7 @@
     },
     {
       "id": "upstream-adapter-const",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_const",
       "owner": "emela_lir::Const",
       "representation_owner": null,
@@ -819,7 +819,7 @@
     },
     {
       "id": "upstream-adapter-operand",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_operand",
       "owner": "emela_lir::Operand",
       "representation_owner": null,
@@ -837,7 +837,7 @@
     },
     {
       "id": "upstream-adapter-primop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_prim_op",
       "owner": "emela_lir::PrimOp",
       "representation_owner": null,
@@ -855,7 +855,7 @@
     },
     {
       "id": "upstream-adapter-primty",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_prim_ty",
       "owner": "emela_lir::PrimTy",
       "representation_owner": null,
@@ -873,7 +873,7 @@
     },
     {
       "id": "upstream-adapter-runtimeop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_runtime_op",
       "owner": "emela_lir::RuntimeOp",
       "representation_owner": null,
@@ -891,7 +891,7 @@
     },
     {
       "id": "upstream-adapter-repr",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_repr",
       "owner": "emela_lir::Repr",
       "representation_owner": null,
@@ -909,7 +909,7 @@
     },
     {
       "id": "upstream-adapter-builtin",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_builtin",
       "owner": "emela_core::Builtin",
       "representation_owner": null,
@@ -927,7 +927,7 @@
     },
     {
       "id": "upstream-adapter-fiberop",
-      "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+      "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
       "symbol": "adapt_fiber_op",
       "owner": "emela_core::FiberOp",
       "representation_owner": null,
@@ -960,7 +960,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 82,
             "end_line": 82
           },
@@ -980,7 +980,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 106,
             "end_line": 106
           },
@@ -1007,7 +1007,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 81,
             "end_line": 81
           },
@@ -1027,7 +1027,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 105,
             "end_line": 105
           },
@@ -1054,7 +1054,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 83,
             "end_line": 83
           },
@@ -1074,7 +1074,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 107,
             "end_line": 107
           },
@@ -1121,7 +1121,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 79,
             "end_line": 79
           },
@@ -1141,7 +1141,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 103,
             "end_line": 103
           },
@@ -1188,7 +1188,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 85,
             "end_line": 85
           },
@@ -1208,7 +1208,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 109,
             "end_line": 109
           },
@@ -1235,7 +1235,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 74,
             "end_line": 74
           },
@@ -1255,7 +1255,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 98,
             "end_line": 98
           },
@@ -1282,7 +1282,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 73,
             "end_line": 73
           },
@@ -1302,7 +1302,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 97,
             "end_line": 97
           },
@@ -1329,7 +1329,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 71,
             "end_line": 71
           },
@@ -1349,7 +1349,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 95,
             "end_line": 95
           },
@@ -1376,7 +1376,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 72,
             "end_line": 72
           },
@@ -1396,7 +1396,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 96,
             "end_line": 96
           },
@@ -1423,7 +1423,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 75,
             "end_line": 75
           },
@@ -1443,7 +1443,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 99,
             "end_line": 99
           },
@@ -1470,7 +1470,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 70,
             "end_line": 70
           },
@@ -1490,7 +1490,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 94,
             "end_line": 94
           },
@@ -1517,7 +1517,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 76,
             "end_line": 76
           },
@@ -1537,7 +1537,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 100,
             "end_line": 100
           },
@@ -1584,7 +1584,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 80,
             "end_line": 80
           },
@@ -1604,7 +1604,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 104,
             "end_line": 104
           },
@@ -1631,7 +1631,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 61,
             "end_line": 61
           },
@@ -1651,7 +1651,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 87,
             "end_line": 87
           },
@@ -1678,7 +1678,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 64,
             "end_line": 64
           },
@@ -1698,7 +1698,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 90,
             "end_line": 90
           },
@@ -1725,7 +1725,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 62,
             "end_line": 62
           },
@@ -1745,7 +1745,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 88,
             "end_line": 88
           },
@@ -1772,7 +1772,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 63,
             "end_line": 63
           },
@@ -1792,7 +1792,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 89,
             "end_line": 89
           },
@@ -1819,7 +1819,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 58,
             "end_line": 58
           },
@@ -1839,7 +1839,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 84,
             "end_line": 84
           },
@@ -1866,7 +1866,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 65,
             "end_line": 65
           },
@@ -1886,7 +1886,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 91,
             "end_line": 91
           },
@@ -1913,7 +1913,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 66,
             "end_line": 66
           },
@@ -1933,7 +1933,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 92,
             "end_line": 92
           },
@@ -1960,7 +1960,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 67,
             "end_line": 69
           },
@@ -1980,7 +1980,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 93,
             "end_line": 93
           },
@@ -2007,7 +2007,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 60,
             "end_line": 60
           },
@@ -2027,7 +2027,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 86,
             "end_line": 86
           },
@@ -2054,7 +2054,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 59,
             "end_line": 59
           },
@@ -2074,7 +2074,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 85,
             "end_line": 85
           },
@@ -2101,7 +2101,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 51,
             "end_line": 51
           },
@@ -2121,7 +2121,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 77,
             "end_line": 77
           },
@@ -2148,7 +2148,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 54,
             "end_line": 54
           },
@@ -2168,7 +2168,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 80,
             "end_line": 80
           },
@@ -2195,7 +2195,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 52,
             "end_line": 52
           },
@@ -2215,7 +2215,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 78,
             "end_line": 78
           },
@@ -2242,7 +2242,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 53,
             "end_line": 53
           },
@@ -2262,7 +2262,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 79,
             "end_line": 79
           },
@@ -2289,7 +2289,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 50,
             "end_line": 50
           },
@@ -2309,7 +2309,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 76,
             "end_line": 76
           },
@@ -2336,7 +2336,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 49,
             "end_line": 49
           },
@@ -2356,7 +2356,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 75,
             "end_line": 75
           },
@@ -2383,7 +2383,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 55,
             "end_line": 55
           },
@@ -2403,7 +2403,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 81,
             "end_line": 81
           },
@@ -2430,7 +2430,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 56,
             "end_line": 56
           },
@@ -2450,7 +2450,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 82,
             "end_line": 82
           },
@@ -2477,7 +2477,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 57,
             "end_line": 57
           },
@@ -2497,7 +2497,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 83,
             "end_line": 83
           },
@@ -2524,7 +2524,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 48,
             "end_line": 48
           },
@@ -2544,7 +2544,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 74,
             "end_line": 74
           },
@@ -2591,7 +2591,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 77,
             "end_line": 77
           },
@@ -2611,7 +2611,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 101,
             "end_line": 101
           },
@@ -2658,7 +2658,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 47,
             "end_line": 47
           },
@@ -2678,7 +2678,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 73,
             "end_line": 73
           },
@@ -2725,7 +2725,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 84,
             "end_line": 84
           },
@@ -2745,7 +2745,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 108,
             "end_line": 108
           },
@@ -2772,7 +2772,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 35,
             "end_line": 35
           },
@@ -2792,7 +2792,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 63,
             "end_line": 63
           },
@@ -2819,7 +2819,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 34,
             "end_line": 34
           },
@@ -2839,7 +2839,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 62,
             "end_line": 62
           },
@@ -2866,7 +2866,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 40,
             "end_line": 40
           },
@@ -2886,7 +2886,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 68,
             "end_line": 68
           },
@@ -2913,7 +2913,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 43,
             "end_line": 43
           },
@@ -2933,7 +2933,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 71,
             "end_line": 71
           },
@@ -2960,7 +2960,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 36,
             "end_line": 36
           },
@@ -2980,7 +2980,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 64,
             "end_line": 64
           },
@@ -3007,7 +3007,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 38,
             "end_line": 38
           },
@@ -3027,7 +3027,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 66,
             "end_line": 66
           },
@@ -3054,7 +3054,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 44,
             "end_line": 46
           },
@@ -3074,7 +3074,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 72,
             "end_line": 72
           },
@@ -3101,7 +3101,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 41,
             "end_line": 41
           },
@@ -3121,7 +3121,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 69,
             "end_line": 69
           },
@@ -3148,7 +3148,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 33,
             "end_line": 33
           },
@@ -3168,7 +3168,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 61,
             "end_line": 61
           },
@@ -3195,7 +3195,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 39,
             "end_line": 39
           },
@@ -3215,7 +3215,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 67,
             "end_line": 67
           },
@@ -3242,7 +3242,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 37,
             "end_line": 37
           },
@@ -3262,7 +3262,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 65,
             "end_line": 65
           },
@@ -3289,7 +3289,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 42,
             "end_line": 42
           },
@@ -3309,7 +3309,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 70,
             "end_line": 70
           },
@@ -3356,7 +3356,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/builtins/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
             "line": 78,
             "end_line": 78
           },
@@ -3376,7 +3376,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 102,
             "end_line": 102
           },
@@ -3404,7 +3404,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 30,
             "end_line": 30
           },
@@ -3425,7 +3425,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 181,
             "end_line": 184
           },
@@ -3455,7 +3455,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 28,
             "end_line": 28
           },
@@ -3476,7 +3476,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 179,
             "end_line": 179
           },
@@ -3506,7 +3506,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 34,
             "end_line": 34
           },
@@ -3527,7 +3527,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 188,
             "end_line": 188
           },
@@ -3557,7 +3557,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 36,
             "end_line": 36
           },
@@ -3578,7 +3578,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 190,
             "end_line": 190
           },
@@ -3606,7 +3606,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 35,
             "end_line": 35
           },
@@ -3627,7 +3627,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 189,
             "end_line": 189
           },
@@ -3655,7 +3655,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 31,
             "end_line": 31
           },
@@ -3676,7 +3676,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 185,
             "end_line": 185
           },
@@ -3704,7 +3704,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 26,
             "end_line": 26
           },
@@ -3725,7 +3725,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 177,
             "end_line": 177
           },
@@ -3753,7 +3753,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 32,
             "end_line": 32
           },
@@ -3774,7 +3774,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 186,
             "end_line": 186
           },
@@ -3802,7 +3802,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 25,
             "end_line": 25
           },
@@ -3823,7 +3823,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 176,
             "end_line": 176
           },
@@ -3851,7 +3851,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 29,
             "end_line": 29
           },
@@ -3872,7 +3872,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 180,
             "end_line": 180
           },
@@ -3900,7 +3900,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 27,
             "end_line": 27
           },
@@ -3921,7 +3921,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 178,
             "end_line": 178
           },
@@ -3949,7 +3949,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 33,
             "end_line": 33
           },
@@ -3970,7 +3970,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 187,
             "end_line": 187
           },
@@ -3998,7 +3998,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/fibers/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/fibers/mod.rs",
             "line": 24,
             "end_line": 24
           },
@@ -4019,7 +4019,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 175,
             "end_line": 175
           },
@@ -4046,7 +4046,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 257,
             "end_line": 257
           },
@@ -4066,7 +4066,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 387,
             "end_line": 464
           },
@@ -4106,7 +4106,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 338,
             "end_line": 338
           },
@@ -4136,7 +4136,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 258,
             "end_line": 258
           },
@@ -4156,7 +4156,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 327,
             "end_line": 368
           },
@@ -4191,7 +4191,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 339,
             "end_line": 339
           },
@@ -4221,7 +4221,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 259,
             "end_line": 259
           },
@@ -4241,7 +4241,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/call.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/call.rs",
             "line": 271,
             "end_line": 316
           },
@@ -4270,7 +4270,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 340,
             "end_line": 348
           },
@@ -4300,7 +4300,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/case_keys.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
             "line": 69,
             "end_line": 69
           },
@@ -4321,7 +4321,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 363,
             "end_line": 363
           },
@@ -4352,7 +4352,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/case_keys.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
             "line": 68,
             "end_line": 68
           },
@@ -4373,7 +4373,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 362,
             "end_line": 362
           },
@@ -4402,7 +4402,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 67,
             "end_line": 67
           },
@@ -4422,7 +4422,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 387,
             "end_line": 387
           },
@@ -4451,7 +4451,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 66,
             "end_line": 66
           },
@@ -4471,7 +4471,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 386,
             "end_line": 386
           },
@@ -4500,7 +4500,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 64,
             "end_line": 64
           },
@@ -4520,7 +4520,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 384,
             "end_line": 384
           },
@@ -4549,7 +4549,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 65,
             "end_line": 65
           },
@@ -4569,7 +4569,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 385,
             "end_line": 385
           },
@@ -4598,7 +4598,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 68,
             "end_line": 68
           },
@@ -4618,7 +4618,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 388,
             "end_line": 388
           },
@@ -4648,7 +4648,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/constants.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/constants.rs",
             "line": 69,
             "end_line": 69
           },
@@ -4668,7 +4668,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 389,
             "end_line": 389
           },
@@ -4695,7 +4695,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
             "line": 132,
             "end_line": 132
           },
@@ -4715,7 +4715,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
             "line": 68,
             "end_line": 68
           },
@@ -4736,7 +4736,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 457,
             "end_line": 457
           },
@@ -4790,7 +4790,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
             "line": 134,
             "end_line": 134
           },
@@ -4810,7 +4810,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
             "line": 70,
             "end_line": 70
           },
@@ -4831,7 +4831,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 459,
             "end_line": 462
           },
@@ -4860,7 +4860,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/failures.rs",
             "line": 133,
             "end_line": 133
           },
@@ -4880,7 +4880,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/failures.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/failures.rs",
             "line": 69,
             "end_line": 69
           },
@@ -4901,7 +4901,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 458,
             "end_line": 458
           },
@@ -4928,9 +4928,9 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/operands.rs",
-            "line": 23,
-            "end_line": 23
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/operands.rs",
+            "line": 17,
+            "end_line": 17
           },
           "symbol": "dispatch",
           "pattern": "Operand :: Const (..)",
@@ -4948,7 +4948,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 469,
             "end_line": 469
           },
@@ -4978,9 +4978,9 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/operands.rs",
-            "line": 22,
-            "end_line": 22
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/operands.rs",
+            "line": 16,
+            "end_line": 16
           },
           "symbol": "dispatch",
           "pattern": "Operand :: Var (..)",
@@ -4998,7 +4998,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 468,
             "end_line": 468
           },
@@ -5028,7 +5028,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 12,
             "end_line": 12
           },
@@ -5048,7 +5048,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 475,
             "end_line": 475
           },
@@ -5075,7 +5075,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 15,
             "end_line": 15
           },
@@ -5095,7 +5095,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 478,
             "end_line": 478
           },
@@ -5122,7 +5122,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 19,
             "end_line": 19
           },
@@ -5142,7 +5142,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 482,
             "end_line": 482
           },
@@ -5169,7 +5169,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 24,
             "end_line": 24
           },
@@ -5189,7 +5189,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 487,
             "end_line": 487
           },
@@ -5216,7 +5216,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 23,
             "end_line": 23
           },
@@ -5236,7 +5236,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 486,
             "end_line": 486
           },
@@ -5263,7 +5263,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 22,
             "end_line": 22
           },
@@ -5283,7 +5283,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 485,
             "end_line": 485
           },
@@ -5310,7 +5310,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 21,
             "end_line": 21
           },
@@ -5330,7 +5330,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 484,
             "end_line": 484
           },
@@ -5357,7 +5357,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 14,
             "end_line": 14
           },
@@ -5377,7 +5377,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 477,
             "end_line": 477
           },
@@ -5404,7 +5404,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 20,
             "end_line": 20
           },
@@ -5424,7 +5424,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 483,
             "end_line": 483
           },
@@ -5451,7 +5451,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 17,
             "end_line": 17
           },
@@ -5471,7 +5471,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 480,
             "end_line": 480
           },
@@ -5498,7 +5498,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 18,
             "end_line": 18
           },
@@ -5518,7 +5518,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 481,
             "end_line": 481
           },
@@ -5545,7 +5545,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 16,
             "end_line": 16
           },
@@ -5565,7 +5565,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 479,
             "end_line": 479
           },
@@ -5592,7 +5592,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_operations.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
             "line": 13,
             "end_line": 13
           },
@@ -5612,7 +5612,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 476,
             "end_line": 476
           },
@@ -5639,7 +5639,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
             "line": 34,
             "end_line": 34
           },
@@ -5659,7 +5659,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 495,
             "end_line": 495
           },
@@ -5686,7 +5686,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
             "line": 32,
             "end_line": 32
           },
@@ -5706,7 +5706,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 493,
             "end_line": 493
           },
@@ -5733,7 +5733,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
             "line": 33,
             "end_line": 33
           },
@@ -5753,7 +5753,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 494,
             "end_line": 494
           },
@@ -5780,7 +5780,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/primitive_types.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
             "line": 35,
             "end_line": 35
           },
@@ -5800,7 +5800,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 496,
             "end_line": 496
           },
@@ -5847,7 +5847,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 724,
             "end_line": 724
           },
@@ -5894,7 +5894,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 722,
             "end_line": 722
           },
@@ -5941,7 +5941,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 723,
             "end_line": 723
           },
@@ -5988,7 +5988,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 725,
             "end_line": 725
           },
@@ -6035,7 +6035,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 726,
             "end_line": 726
           },
@@ -6062,7 +6062,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 243,
             "end_line": 243
           },
@@ -6082,7 +6082,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 503,
             "end_line": 503
           },
@@ -6129,7 +6129,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 245,
             "end_line": 245
           },
@@ -6149,7 +6149,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 505,
             "end_line": 505
           },
@@ -6196,7 +6196,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 247,
             "end_line": 247
           },
@@ -6216,7 +6216,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 507,
             "end_line": 507
           },
@@ -6263,7 +6263,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 246,
             "end_line": 246
           },
@@ -6283,7 +6283,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 506,
             "end_line": 506
           },
@@ -6310,7 +6310,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 248,
             "end_line": 248
           },
@@ -6330,7 +6330,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 508,
             "end_line": 508
           },
@@ -6357,7 +6357,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 244,
             "end_line": 244
           },
@@ -6377,7 +6377,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 504,
             "end_line": 504
           },
@@ -6404,7 +6404,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 242,
             "end_line": 242
           },
@@ -6424,7 +6424,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 502,
             "end_line": 502
           },
@@ -6451,7 +6451,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 249,
             "end_line": 249
           },
@@ -6471,7 +6471,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 509,
             "end_line": 509
           },
@@ -6518,7 +6518,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 250,
             "end_line": 250
           },
@@ -6538,7 +6538,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 510,
             "end_line": 510
           },
@@ -6585,7 +6585,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/runtime.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
             "line": 251,
             "end_line": 251
           },
@@ -6605,7 +6605,7 @@
             "common"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 511,
             "end_line": 511
           },
@@ -6632,9 +6632,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-            "line": 36,
-            "end_line": 36
+            "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+            "line": 34,
+            "end_line": 34
           },
           "symbol": "verify",
           "pattern": "emela_lir :: Stage :: ClosuresConverted",
@@ -6661,9 +6661,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-            "line": 37,
-            "end_line": 37
+            "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+            "line": 35,
+            "end_line": 35
           },
           "symbol": "verify",
           "pattern": "emela_lir :: Stage :: DefectsExplicit",
@@ -6690,9 +6690,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-            "line": 35,
-            "end_line": 35
+            "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+            "line": 33,
+            "end_line": 33
           },
           "symbol": "verify",
           "pattern": "emela_lir :: Stage :: Flow",
@@ -6719,9 +6719,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-            "line": 39,
-            "end_line": 39
+            "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+            "line": 37,
+            "end_line": 37
           },
           "symbol": "verify",
           "pattern": "emela_lir :: Stage :: RefCounted",
@@ -6748,9 +6748,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/stages.rs",
-            "line": 38,
-            "end_line": 38
+            "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
+            "line": 36,
+            "end_line": 36
           },
           "symbol": "verify",
           "pattern": "emela_lir :: Stage :: StateMachines",
@@ -6777,7 +6777,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 19,
             "end_line": 19
           },
@@ -6797,7 +6797,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 14,
             "end_line": 14
           },
@@ -6818,7 +6818,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 569,
             "end_line": 573
           },
@@ -6871,7 +6871,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 22,
             "end_line": 22
           },
@@ -6891,7 +6891,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 17,
             "end_line": 17
           },
@@ -6912,7 +6912,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 580,
             "end_line": 580
           },
@@ -6964,7 +6964,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 21,
             "end_line": 21
           },
@@ -6984,7 +6984,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 16,
             "end_line": 16
           },
@@ -7005,7 +7005,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 579,
             "end_line": 579
           },
@@ -7035,7 +7035,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 16,
             "end_line": 16
           },
@@ -7055,7 +7055,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 11,
             "end_line": 11
           },
@@ -7076,7 +7076,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 536,
             "end_line": 546
           },
@@ -7108,7 +7108,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 15,
             "end_line": 15
           },
@@ -7128,7 +7128,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 10,
             "end_line": 10
           },
@@ -7149,7 +7149,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 525,
             "end_line": 535
           },
@@ -7181,7 +7181,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 18,
             "end_line": 18
           },
@@ -7201,7 +7201,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 13,
             "end_line": 13
           },
@@ -7222,7 +7222,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 558,
             "end_line": 568
           },
@@ -7255,7 +7255,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 20,
             "end_line": 20
           },
@@ -7275,7 +7275,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 15,
             "end_line": 15
           },
@@ -7296,7 +7296,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 574,
             "end_line": 578
           },
@@ -7327,7 +7327,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
             "line": 17,
             "end_line": 17
           },
@@ -7347,7 +7347,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/statements/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/statements/mod.rs",
             "line": 12,
             "end_line": 12
           },
@@ -7368,7 +7368,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 547,
             "end_line": 557
           },
@@ -7403,7 +7403,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/switches.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/switches.rs",
             "line": 56,
             "end_line": 56
           },
@@ -7424,7 +7424,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 595,
             "end_line": 595
           },
@@ -7455,7 +7455,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/switches.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/switches.rs",
             "line": 55,
             "end_line": 55
           },
@@ -7476,7 +7476,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 594,
             "end_line": 594
           },
@@ -7506,7 +7506,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 19,
             "end_line": 19
           },
@@ -7526,7 +7526,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 13,
             "end_line": 13
           },
@@ -7547,7 +7547,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 604,
             "end_line": 607
           },
@@ -7578,7 +7578,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 21,
             "end_line": 21
           },
@@ -7598,7 +7598,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 15,
             "end_line": 15
           },
@@ -7619,7 +7619,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 611,
             "end_line": 611
           },
@@ -7649,7 +7649,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 18,
             "end_line": 18
           },
@@ -7669,7 +7669,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 12,
             "end_line": 12
           },
@@ -7690,7 +7690,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 603,
             "end_line": 603
           },
@@ -7720,7 +7720,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 20,
             "end_line": 20
           },
@@ -7740,7 +7740,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 14,
             "end_line": 14
           },
@@ -7761,7 +7761,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 608,
             "end_line": 610
           },
@@ -7793,7 +7793,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 17,
             "end_line": 17
           },
@@ -7813,7 +7813,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 11,
             "end_line": 11
           },
@@ -7834,7 +7834,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 602,
             "end_line": 602
           },
@@ -7865,7 +7865,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 23,
             "end_line": 23
           },
@@ -7885,7 +7885,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 17,
             "end_line": 17
           },
@@ -7906,7 +7906,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 613,
             "end_line": 613
           },
@@ -7955,7 +7955,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 22,
             "end_line": 22
           },
@@ -7975,7 +7975,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 16,
             "end_line": 16
           },
@@ -7996,7 +7996,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 612,
             "end_line": 612
           },
@@ -8023,7 +8023,7 @@
             "sync"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/terms/mod.rs",
             "line": 16,
             "end_line": 16
           },
@@ -8043,7 +8043,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/plan/operations/terms/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/plan/operations/terms/mod.rs",
             "line": 10,
             "end_line": 10
           },
@@ -8064,7 +8064,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 601,
             "end_line": 601
           },
@@ -8096,7 +8096,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 56,
             "end_line": 56
           },
@@ -8117,7 +8117,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 699,
             "end_line": 702
           },
@@ -8147,7 +8147,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 37,
             "end_line": 37
           },
@@ -8168,7 +8168,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 636,
             "end_line": 639
           },
@@ -8201,7 +8201,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 36,
             "end_line": 36
           },
@@ -8222,7 +8222,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 625,
             "end_line": 635
           },
@@ -8256,7 +8256,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 48,
             "end_line": 48
           },
@@ -8277,7 +8277,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/closure.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/closure.rs",
             "line": 60,
             "end_line": 67
           },
@@ -8327,7 +8327,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 665,
             "end_line": 665
           },
@@ -8359,7 +8359,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 58,
             "end_line": 58
           },
@@ -8380,7 +8380,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 707,
             "end_line": 707
           },
@@ -8411,7 +8411,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 34,
             "end_line": 34
           },
@@ -8432,7 +8432,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 619,
             "end_line": 619
           },
@@ -8494,7 +8494,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 50,
             "end_line": 50
           },
@@ -8515,7 +8515,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 670,
             "end_line": 673
           },
@@ -8545,7 +8545,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 52,
             "end_line": 52
           },
@@ -8566,7 +8566,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 678,
             "end_line": 684
           },
@@ -8600,7 +8600,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 51,
             "end_line": 51
           },
@@ -8621,7 +8621,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 674,
             "end_line": 677
           },
@@ -8651,7 +8651,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 54,
             "end_line": 54
           },
@@ -8672,7 +8672,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 690,
             "end_line": 694
           },
@@ -8706,7 +8706,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 39,
             "end_line": 39
           },
@@ -8727,7 +8727,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 644,
             "end_line": 648
           },
@@ -8758,7 +8758,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 47,
             "end_line": 47
           },
@@ -8779,7 +8779,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 664,
             "end_line": 664
           },
@@ -8810,7 +8810,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 53,
             "end_line": 53
           },
@@ -8831,7 +8831,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 685,
             "end_line": 689
           },
@@ -8865,7 +8865,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 55,
             "end_line": 55
           },
@@ -8886,7 +8886,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 695,
             "end_line": 698
           },
@@ -8916,7 +8916,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 43,
             "end_line": 43
           },
@@ -8937,7 +8937,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 657,
             "end_line": 660
           },
@@ -8970,7 +8970,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 45,
             "end_line": 45
           },
@@ -8991,7 +8991,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 662,
             "end_line": 662
           },
@@ -9022,7 +9022,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 44,
             "end_line": 44
           },
@@ -9043,7 +9043,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 661,
             "end_line": 661
           },
@@ -9074,7 +9074,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 46,
             "end_line": 46
           },
@@ -9095,7 +9095,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 663,
             "end_line": 663
           },
@@ -9126,7 +9126,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 38,
             "end_line": 38
           },
@@ -9147,7 +9147,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 640,
             "end_line": 643
           },
@@ -9201,7 +9201,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 49,
             "end_line": 49
           },
@@ -9222,7 +9222,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 666,
             "end_line": 669
           },
@@ -9255,7 +9255,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 35,
             "end_line": 35
           },
@@ -9276,7 +9276,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 620,
             "end_line": 624
           },
@@ -9310,7 +9310,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 57,
             "end_line": 57
           },
@@ -9331,7 +9331,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 703,
             "end_line": 706
           },
@@ -9364,7 +9364,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 40,
             "end_line": 40
           },
@@ -9385,7 +9385,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 649,
             "end_line": 649
           },
@@ -9416,7 +9416,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 41,
             "end_line": 41
           },
@@ -9437,7 +9437,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 650,
             "end_line": 652
           },
@@ -9470,7 +9470,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/emit/features/values/mod.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/values/mod.rs",
             "line": 42,
             "end_line": 42
           },
@@ -9491,7 +9491,7 @@
             "suspend"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/backend/compiler/lower/adapter.rs",
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
             "line": 653,
             "end_line": 656
           },

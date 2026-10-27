@@ -7,7 +7,7 @@ pub mod artifact;
 pub mod boards;
 pub use contract::DerivedOperation;
 pub use input::upstream::derived::derived_binding;
-mod backend;
+mod compiler;
 mod writer;
 
 mod contract;
@@ -27,7 +27,7 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 
 /// Verifies and emits a Flow IR module without running Heap IR passes.
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
-    backend::compile_flow(flow, options)
+    compiler::compile_flow(flow, options)
 }
 
 mod semantics;

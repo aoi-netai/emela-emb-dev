@@ -1,4 +1,4 @@
-> この文書の現状調査は改修前の記録です。実装後の構成は[src/backend/README.md](../src/backend/README.md)、共通ABIと接続手順は[artifact-contract.md](artifact-contract.md)を参照してください。
+> この文書の現状調査は改修前の記録です。現在の構成は[src/compiler/README.md](../src/compiler/README.md)、共通ABIと接続手順は[artifact-contract.md](artifact-contract.md)を参照してください。
 
 # ディレクトリ構成の調査と改善案
 

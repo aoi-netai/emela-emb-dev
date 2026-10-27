@@ -4,7 +4,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 [実装範囲と実装状況](docs/implementation.md)に、入力契約、各variantへの対応、メモリ方針と既存の検証をまとめています。
 
-[段階別の構成](src/backend/README.md)と[生成物契約](docs/artifact-contract.md)に、純粋なlower・plan・emitと、同じOutputをnative／board／追加platformへ接続する境界を説明しています。
+[段階別の構成](src/compiler/README.md)と[生成物契約](docs/artifact-contract.md)に、純粋なlower・plan・emitと、同じOutputをnative／board／追加platformへ接続する境界を説明しています。
 
 ## 主な入口
 
@@ -18,7 +18,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 ## 実装とテストの自動検査
 
-IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`とCIで検査します。[backendの構成](src/backend/README.md)で説明する機能別の分割に合わせた仕組みです。
+IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`とCIで検査します。[コンパイラーの構成](src/compiler/README.md)で説明する機能別の分割に合わせた仕組みです。
 
 | 生成される一覧 | 確認する内容 |
 | --- | --- |
