@@ -388,3 +388,82 @@ fn host_library_builds_ignore_unused_embedded_runtime_and_module_paths() {
         assert!(!root.join("target").exists(), "library-only {target}");
     }
 }
+
+#[test]
+fn connect_builds_a_frozen_artifact_after_removing_the_emela_project() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "Pome.toml", "[build]\ntarget = \"c-embedded\"\n");
+    write(root, "src/main.emel", "pub fn main() -> Int { 42 }\n");
+    succeeds(root, &["build"]);
+    let artifact = root.join("target/emela/c-embedded");
+    let before: Vec<_> = std::fs::read_dir(&artifact)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            (path.clone(), std::fs::read(path).unwrap())
+        })
+        .collect();
+    std::fs::remove_dir_all(root.join("src")).unwrap();
+    std::fs::remove_file(root.join("Pome.toml")).unwrap();
+    for optimization in ["O0", "O2"] {
+        succeeds(
+            root,
+            &[
+                "connect",
+                "target/emela/c-embedded",
+                "--out-dir",
+                "connected",
+                "--optimization",
+                optimization,
+            ],
+        );
+        assert!(
+            Command::new(root.join("connected/out/program"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(root.join("connected/connection-success.json").is_file());
+        for (path, bytes) in &before {
+            assert_eq!(std::fs::read(path).unwrap(), *bytes);
+        }
+    }
+}
+
+#[test]
+fn generated_bytes_match_across_processes_and_working_directories() {
+    let mut expected = None;
+    for _ in 0..3 {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        write(root, "Pome.toml", "[build]\ntarget = \"c-embedded\"\n");
+        write(
+            root,
+            "src/main.emel",
+            "pub fn compute(x: Int) -> String { add = fn(n: Int) { x + n }\n Int.to_string(add(2)) }\n",
+        );
+        write(
+            root,
+            "embedded.toml",
+            "heap_bytes = 4096\nstring_capacity = 64\n",
+        );
+        succeeds(root, &["build", "--embedded-config", "embedded.toml"]);
+        let artifact = root.join("target/emela/c-embedded");
+        let actual: std::collections::BTreeMap<_, _> = std::fs::read_dir(artifact)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                (
+                    path.file_name().unwrap().to_owned(),
+                    std::fs::read(path).unwrap(),
+                )
+            })
+            .collect();
+        if let Some(expected) = &expected {
+            assert_eq!(&actual, expected);
+        } else {
+            expected = Some(actual);
+        }
+    }
+}

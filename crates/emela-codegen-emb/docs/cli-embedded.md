@@ -268,3 +268,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --profile ci
 ```
+
+## 保存済み共通Cの接続
+
+`emela connect generated --out-dir host-build --platform native`で、Emela sourceやproject設定なしに保存済みartifactをbuildできる。共通生成物は変更せず、platformファイルを別directoryへ配置する。独自packageとMCUへの接続は[生成物契約](artifact-contract.md#sourceから独立したcli接続)を参照。既存のproject build/flashはsourceの鮮度確認を維持する。
