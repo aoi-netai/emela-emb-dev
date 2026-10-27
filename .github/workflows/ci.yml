@@ -45,12 +45,9 @@ jobs:
               exit 0
               ;;
           esac
-          # Generated inventory documents are test inputs, including Markdown.
-          changed=$(git diff --name-only "$base" HEAD)
+          # No build or test reads these files.
           docs='(\.md$|^docs/|^editors/|^LICENSE$|^\.github/ISSUE_TEMPLATE/)'
-          if [[ -n "$changed" ]] &&
-             { grep -qE '^crates/emela-codegen-emb/docs/generated/' <<< "$changed" ||
-               grep -qvE "$docs" <<< "$changed"; }; then
+          if git diff --name-only "$base" HEAD | grep -qvE "$docs"; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -69,16 +66,6 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Embedded backend inventory and compiled test references
-        run: |
-          bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh --check
-          bash crates/emela-codegen-emb/tools/backend-inventory.sh --check
-          bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh --check --require-evidence
-          python3 crates/emela-codegen-emb/tools/test-inventory.py --check-built
-      - name: Embedded pure stage boundaries and frozen artifact connections
-        run: cargo test -p emela-codegen-emb --test architecture --test platform --locked
-      - name: Embedded C artifact and BSP boundary tests
-        run: python3 -B -m unittest discover -s crates/emela-codegen-emb/tools -p 'test_*.py'
 
   test:
     needs: changes

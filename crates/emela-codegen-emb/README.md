@@ -18,7 +18,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 ## 実装とテストの自動検査
 
-IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`とCIで検査します。[コンパイラーの構成](src/compiler/README.md)で説明する機能別の分割に合わせた仕組みです。
+IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`で検査します。[コンパイラーの構成](src/compiler/README.md)で説明する機能別の分割に合わせた仕組みです。
 
 | 生成される一覧 | 確認する内容 |
 | --- | --- |
@@ -37,7 +37,7 @@ bash crates/emela-codegen-emb/tools/backend-inventory.sh
 bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh
 ```
 
-CIと同じ検査は次のとおりです。`--check`は生成物を更新せず、現在のsourceとの差分を検出します。生成されたMarkdownだけの変更もCIの検査対象です。
+開発時の検査コマンドは次のとおりです。`--check`は生成物を更新せず、現在のsourceとの差分を検出します。専用のCIステップは設けず、必要に応じて手元で実行します。
 
 ```sh
 bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh --check
