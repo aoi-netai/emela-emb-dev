@@ -1,20 +1,22 @@
 //! Synchronous statement, control-flow, cleanup, and failure emission.
-use super::super::{
+use super::functions::{emit_owned_cleanup, emit_release_if_owned};
+use super::{
+    StringBufferPlan, TypeLayouts,
     analysis::ResultOwnership,
     c::{enum_index, owned_variable_name, variable_name},
     diagnostics::invalid_flow_ir,
     features,
-    layouts::TypeLayouts,
-    string_buffers::StringBufferPlan,
 };
-use super::functions::{emit_owned_cleanup, emit_release_if_owned};
+use crate::contract::ir::Type;
+use crate::contract::ir::{
+    FnId, Function, LabelId, OnFail, Operand, Repr, Stmt, Term, Value, VarId,
+};
+use crate::semantics::abi::LayoutRead;
 use crate::{Error, writer::Writer};
-use emela_core::Type;
-use emela_lir::{FnId, Function, LabelId, OnFail, Operand, Repr, Stmt, Term, Value, VarId};
 use std::collections::HashMap;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_statement(
+pub(in crate::backend::compiler::emit) fn emit_statement(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
@@ -33,8 +35,8 @@ pub(in crate::backend::compiler) fn emit_statement(
     if let Some(dst) = managed_dst {
         emit_release_if_owned(layouts, function, dst, writer);
     }
-    let retain_result = matches!(statement, Stmt::Let { value, .. }
-        if features::values::result_ownership(value) == ResultOwnership::Borrowed);
+    let retain_result = matches!(statement, Stmt::Let { dst: Some(dst), .. }
+        if string_buffers.result_ownership.get(dst) == Some(&ResultOwnership::Borrowed));
     emit_statement_inner(
         layouts,
         function,
@@ -61,15 +63,15 @@ pub(in crate::backend::compiler) fn emit_statement(
             emit_release_if_owned(layouts, function, dst, writer);
         }
     }
-    if layouts.has_cause_raise
-        && layouts.has_unwind
+    if layouts.runtime.has_cause_raise
+        && layouts.runtime.has_unwind
         && !function.suspends
         && matches!(
             statement,
             Stmt::Let {
                 value: Value::Call { .. }
                     | Value::Fiber {
-                        op: emela_core::FiberOp::Attempt { .. },
+                        op: crate::contract::ir::FiberOp::Attempt { .. },
                         ..
                     },
                 ..
@@ -93,7 +95,7 @@ pub(in crate::backend::compiler) fn emit_statement(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_statement_inner(
+pub(in crate::backend::compiler::emit) fn emit_statement_inner(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     statement: &Stmt,
@@ -124,10 +126,10 @@ pub(in crate::backend::compiler) fn emit_statement_inner(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_compound_sequence(
+pub(in crate::backend::compiler::emit) fn emit_compound_sequence(
     layouts: &TypeLayouts<'_>,
     function: &Function,
-    sequence: emela_lir::SeqId,
+    sequence: crate::contract::ir::SeqId,
     dst: Option<VarId>,
     writer: &mut Writer,
     names: &HashMap<FnId, String>,
@@ -174,7 +176,7 @@ pub(in crate::backend::compiler) fn emit_compound_sequence(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_call_failure_edge(
+pub(in crate::backend::compiler::emit) fn emit_call_failure_edge(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     edge: OnFail,
@@ -206,7 +208,7 @@ pub(in crate::backend::compiler) fn emit_call_failure_edge(
     )
 }
 
-pub(in crate::backend::compiler) fn emit_error_assignment(
+pub(in crate::backend::compiler::emit) fn emit_error_assignment(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     error: &Operand,
@@ -220,7 +222,7 @@ pub(in crate::backend::compiler) fn emit_error_assignment(
         ));
     };
     let ty = function.vars[*variable].ty;
-    if matches!(layouts.types[ty], Type::Any) {
+    if matches!(layouts.shapes.types[ty], Type::Any) {
         writer.assign(target, &variable_name(*variable));
         writer.line(&format!("emela_error_retain({target});"));
         return Ok(());
@@ -252,7 +254,7 @@ pub(in crate::backend::compiler) fn emit_error_assignment(
     Ok(())
 }
 
-pub(in crate::backend::compiler) fn emit_failure_return(
+pub(in crate::backend::compiler::emit) fn emit_failure_return(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     writer: &mut Writer,
@@ -266,7 +268,7 @@ pub(in crate::backend::compiler) fn emit_failure_return(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_pending_cleanups(
+pub(in crate::backend::compiler::emit) fn emit_pending_cleanups(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     keep_depth: usize,
@@ -308,7 +310,7 @@ pub(in crate::backend::compiler) fn emit_pending_cleanups(
     Ok(())
 }
 
-pub(in crate::backend::compiler) fn emit_return(
+pub(in crate::backend::compiler::emit) fn emit_return(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     term: &Term,
@@ -319,7 +321,7 @@ pub(in crate::backend::compiler) fn emit_return(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_sync_interrupt_exit(
+pub(in crate::backend::compiler::emit) fn emit_sync_interrupt_exit(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     writer: &mut Writer,
@@ -347,15 +349,17 @@ pub(in crate::backend::compiler) fn emit_sync_interrupt_exit(
     Ok(())
 }
 
-pub(in crate::backend::compiler) struct BlockTarget {
-    pub(in crate::backend::compiler) label: LabelId,
-    pub(in crate::backend::compiler) dst: Option<VarId>,
-    pub(in crate::backend::compiler) exit: String,
-    pub(in crate::backend::compiler) used: bool,
-    pub(in crate::backend::compiler) protect_depth: usize,
+pub(in crate::backend::compiler::emit) struct BlockTarget {
+    pub(in crate::backend::compiler::emit) label: LabelId,
+    pub(in crate::backend::compiler::emit) dst: Option<VarId>,
+    pub(in crate::backend::compiler::emit) exit: String,
+    pub(in crate::backend::compiler::emit) used: bool,
+    pub(in crate::backend::compiler::emit) protect_depth: usize,
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::backend::compiler) struct ProtectTarget {
-    pub(in crate::backend::compiler) cleanup: emela_lir::SeqId,
+pub(in crate::backend::compiler::emit) struct ProtectTarget {
+    pub(in crate::backend::compiler::emit) cleanup: crate::contract::ir::SeqId,
 }
+
+use super::layouts::LayoutEmission;

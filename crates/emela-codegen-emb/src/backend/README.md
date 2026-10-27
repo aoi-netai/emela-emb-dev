@@ -1,63 +1,51 @@
-# Flow IR backendの構成
+# 共通Cコンパイラーの構成
 
-公開APIの `compile_flow` は、共通コンパイルとボード接続を順に実行する。
+`compile`／`compile_flow`は、明示したIRとOptionsからplatform共通のC一式を返す。ファイル・環境変数・process・toolchainを参照せず、呼出し元のIRも変更しない。
 
 ```text
-compile_flow
-  → compiler::compile_flow
-      → 正規化・検証・closure／handler／const等の準備
-      → CompiledModule
-  → board::link
-      → compiler::emit(compiled, target, options)
-          → 型配置・所有権・buffer・runtimeの計画
-          → 機能別のC生成とボード用adapter・入口の生成
+Core → input → Flow
+                 ↓
+          lower → LoweredModule
+                    ↓
+                   plan → PlannedModule
+                            ↓
+                           emit → Output
+                                   ↓ 保存（実行側）
+                     platform::prepare_connection → BuildPlan
+                                                       ↓
+                                            platform::execution
 ```
-
-`CompiledModule` は接続先に依存しない中間結果であり、最終的なC文字列ではない。IRとclosure・constのmetadataは非公開で、接続側には可変参照を渡さない。最終生成はそのcopyを使うため、同じ中間結果を別の接続先や別の容量設定で再利用できる。接続処理が共通のloweringを再実行することはない。
 
 | 場所 | 責任 |
 | --- | --- |
-| [../input/](../input) | Core→Flowの準備とFlow入力検証。公開入口はcrate rootから再公開 |
-| [../contract/](../contract) | 設定・診断・生成物のデータ型。compilerやplatformの実装には依存しない |
-| [compiler/mod.rs](compiler/mod.rs) | 共通コンパイル、中間結果、既存機能に対する明示的な内部facade |
-| [compiler/c/](compiler/c) | C identifier・名前・literalの規則 |
-| [compiler/diagnostics.rs](compiler/diagnostics.rs) | 入力拒否の診断と構文要素の表示名 |
-| [compiler/validation.rs](compiler/validation.rs) | 関数値と外部signatureの適合検査 |
-| [compiler/emit/](compiler/emit) | 最終配置・runtime計画・C出力の組立て。header・functions・control・valuesへ出力処理を分割 |
-| [compiler/features/](compiler/features) | Value・Stmt・Term・Builtin・FiberOp等の機能別処理 |
-| [compiler/foundation/](compiler/foundation) | 型配置、到達可能性、所有権、String buffer、heap・runtime計画 |
-| [compiler/target.rs](compiler/target.rs) | 外部binding、header、検査、adapter、起動処理の接続契約 |
-| [board/](board) | 既存の標準周辺機器adapter、ISR制約、ボード起動処理 |
-| [cnative/](cnative) | 同じ中間結果をホストCで実行する内部試験用の接続 |
-| [tests/separation.rs](tests/separation.rs) | 中間結果の再利用、接続先の独立性、生成Cの実行試験 |
+| `../input/` | Coreの便宜入口とFlow検証。`upstream/`は入力・lowerだけが使う上流adapter用の純粋な共通処理 |
+| `../contract/` | 独立したbackend IR、段階の成果物、設定、診断、生成物／manifestのデータ。上流型のaliasやcompiler実装を含めない |
+| `compiler/lower/` | 所有した入力copyの正規化、closure／handler／coerce変換、const評価、網羅的な上流→backend IR変換 |
+| `compiler/plan/` | 型配置・所有権、String buffer、heap／runtime要求、標準サービス、ISR、suspend制御とframeの決定 |
+| `compiler/emit/` | 計画を読み取ったC／headerの整形。`features/`は操作別renderer、`runtime/`は固定C資産 |
+| `../semantics/` | 用途を限定した純粋な共有library。構造的な型照会、ABIの読み取り、文字列／数値規則、Unicode table、診断、C命名 |
+| `../platform/contract.rs` | package、解決済みtoolchain情報、接続設定、BuildPlanのデータ |
+| `../platform/plan.rs` | ABI・必要サービス・外部symbol・ISR保証の照合と具体的なcompile/link引数の作成 |
+| `../platform/execution.rs` | 生成物の読込み、toolchain探索・確認、保存、外部process、成功記録とhash検証 |
+| `../platform/packages.rs`、`../../boards/` | nativeとMCUのpackage構築・起動処理・実サービス・BSP資産 |
 
-共通コンパイラーは具体的なボード接続をimportしない。C上の `emela_board_*` hook名や生成file名は既存ABIとして維持し、その実装と標準周辺機器bindingの解釈を接続側へ委ねる。`cnative` はlibrary testでのみ有効で、CLIのtargetを追加するものではない。
+lower・plan・emitは、他段階の実装をimportしない。compiler直下には順序制御だけを置く。共有libraryはcontractを解釈する小さな規則に限定し、段階の入口や外部作用へ逆依存させない。局所的なMap、Writer、作業copyの変更は許容する。
 
-設定のfieldはcontractの外から直接操作せず、builderと読み取りaccessorを通じて使う。公開型名・既定値・生成CのABIはこの整理では変更しない。`compiler/mod.rs`の内部facadeは既存featureのために残し、新しく分けた補助moduleは必要な依存を明示してimportする。
+Flow/Coreの型とvariantは入力側で解釈する。lowerのadapterはstruct fieldを網羅的に分解し、enum variantも網羅的に変換する。plan／emitは独自のID・型定義を使うため、上流の表現変更が直接後段の実装へ広がらない。意味やcontract自体が変わる場合は対応する段階の変更が必要になる。
 
-現在は段階分離の最初の内部整理までであり、`emit`内の解析・IR書換えや上流IR型への依存は残っている。同じ最終`Output`をboard/nativeに接続する変更、独立したlower/plan契約、platformの計算と実行の分離は後続の移行対象になる。`CompiledModule`を再利用できることと、同じ生成済みC一式を再利用できることは別の条件として扱う。
+Stringの処理方式・長さ・所有権・buffer容量、関数adapter容量、runtime helper依存、suspendの制御graphと生存変数はplanが決定する。emitはその成果物を使う。ABI読み取りとC整形は段階ごとのtrait実装に分かれ、契約型は実装を再公開しない。
 
-## 機能と共有計画
+標準`Std.Embedded.Board`のbinding認識は言語サービスABIとしてplanが担当し、値変換と宣言はemitが担当する。物理MCUのI/O実装やnativeの終了方針は含めない。共通entryは実行と結果の解放を行い、`emela_platform_start`が初期化・終了後の方針を決める。歴史的な`emela_board_*`名は共有hookの名前として残る。
 
-最終`Output`には[生成Cとビルドの契約](../../docs/artifact-contract.md)を表す`emela_artifact.json`を含める。後段のBSPはこの入力一覧とC headerを読み、Flow IRや`CompiledModule`に依存しない。C生成に使う接続先`Target`と、生成後のtoolchain実行の境界は別である。
+## 検証と監査
 
-各機能はC生成に加え、必要に応じて `string_behavior`、`string_bound`、`result_ownership`、`needs_heap`、`require_runtime` を提供する。例えばString連結では、定数・入力参照・動的bufferという同じ分類を生成・長さ・所有権の判断に使う。
+`tests/architecture.rs`がcontractの逆依存、段階間の直接／再公開／相対import、上流型の漏出、外部作用、source includeを検査する。これは限定した構文検査であり、Rustの純粋性の完全な証明ではない。planとemitには、前段を呼ばずに手で組み立てたcontract fixtureを使う試験がある。
 
-共有のString buffer計画は、その情報から生存期間・slotの再利用・caller出力bufferの伝播を求める。heap計画は型と操作の要求を集約し、runtime計画はhelperの依存を解決して必要なものを一度ずつ生成する。共有計画は個々のBuiltinやFiberOpを直接分岐しない。
+実装inventoryは、上流の定義ID、網羅的なadapter、`representation_owner`に指定した独立IRのdispatcherを区別して記録する。両enumのvariant名も照合し、定義・実装・関連テストの変更を検出する。段階別の追加担当は`phase_owners`に明示する。
 
-Value・Stmt・Term等のdispatcherはvariantを網羅する。新しいvariantの追加時に生成・解析・runtime要求の判断漏れをコンパイル時に検出し、子のIRの走査には共通処理を使う。
-
-## 実装とテストの対応
-
-[実装・テストの自動対応表](../../docs/generated/flow-backend-inventory.md)は、IRの定義IDから機能別の専用入口・追加の処理段階・関連テストへ対応付ける。variantごとの担当と関連テストを明示し、fieldは親の担当との関係を記録する。fieldや共有宣言を独立した実装数・テスト数として数えない。
-
-通常の`cargo test`とCIでは、定義・実装・テストの欠落、生成物の古さ、sync/suspend等の必須経路の根拠を検査する。CIでは実際のテストバイナリーへの登録とignore状態も確認する。設定と生成・検査のコマンドは[crateのREADME](../../README.md#実装とテストの自動検査)を参照する。
-
-## 検証
+同じOutputのnative／第三platformでの-O0/-O2実行、両MCUの接続計画、入力不変性、管理値の繰返し解放、String buffer、clock／console、保存後の独立build、成功記録の失効を試験する。MCUのcross buildと起動は別の環境検証として扱う。
 
 ```sh
-cargo test -p emela-codegen-emb --locked
-cargo run -p emela-codegen-emb --example check_flow_coverage --locked
+cargo test -p emela-codegen-emb --locked --offline
+cargo test -p emela-cli --test embedded_cli --test embedded_firmware_state --test embedded_dependencies --locked --offline
 ```
-
-ホスト接続の実行試験は生成された全C translation unitを `-std=c11 -Wall -Werror` と `-O0` / `-O2` でコンパイルする。closure・managed値・suspend・起動時の返り値の解放・String出力bufferを確認し、ボード接続後にも元の中間結果を再利用できることを検査する。

@@ -1,32 +1,17 @@
 //! Value expressions, projections, and generated-value stores.
-use super::super::{
+use super::functions::emit_retain_operand;
+use super::{
+    StringBufferPlan, TypeLayouts,
     c::int32_literal,
     diagnostics::{invalid_flow_ir, unsupported},
     features,
-    layouts::TypeLayouts,
-    string_buffers::StringBufferPlan,
 };
-use super::functions::emit_retain_operand;
+use crate::contract::ir::{Builtin, Type, TypeId};
+use crate::contract::ir::{Const, Function, Operand, PrimOp, PrimTy, Repr, RuntimeOp, VarId};
+use crate::semantics::abi::LayoutRead;
 use crate::{Error, writer::Writer};
-use emela_core::{Builtin, Type, TypeId};
-use emela_lir::{Const, Function, Operand, PrimOp, PrimTy, Repr, RuntimeOp, VarId};
 
-pub(in crate::backend::compiler) fn operand_type(
-    function: &Function,
-    operand: &Operand,
-) -> Option<TypeId> {
-    match operand {
-        Operand::Var(variable) => Some(function.vars[*variable].ty),
-        Operand::Const(Const::Int(_)) => Some(TypeId::INT),
-        Operand::Const(Const::Bool(_)) => Some(TypeId::BOOL),
-        Operand::Const(Const::Int64(_)) => Some(TypeId::INT64),
-        Operand::Const(Const::Float(_)) => Some(TypeId::FLOAT),
-        Operand::Const(Const::String(_)) => Some(TypeId::STRING),
-        Operand::Const(Const::Unit) => Some(TypeId::UNIT),
-    }
-}
-
-pub(in crate::backend::compiler) fn operand_is_string(
+pub(in crate::backend::compiler::emit) fn operand_is_string(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
@@ -34,13 +19,16 @@ pub(in crate::backend::compiler) fn operand_is_string(
     match operand {
         Operand::Const(Const::String(_)) => true,
         Operand::Var(variable) => {
-            matches!(layouts.types[function.vars[*variable].ty], Type::String)
+            matches!(
+                layouts.shapes.types[function.vars[*variable].ty],
+                Type::String
+            )
         }
         _ => false,
     }
 }
 
-pub(in crate::backend::compiler) fn operand_is_string_list(
+pub(in crate::backend::compiler::emit) fn operand_is_string_list(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
@@ -48,7 +36,7 @@ pub(in crate::backend::compiler) fn operand_is_string_list(
     match operand {
         Operand::Var(variable) => {
             matches!(
-                layouts.types[function.vars[*variable].ty],
+                layouts.shapes.types[function.vars[*variable].ty],
                 Type::List(TypeId::STRING)
             )
         }
@@ -56,19 +44,21 @@ pub(in crate::backend::compiler) fn operand_is_string_list(
     }
 }
 
-pub(in crate::backend::compiler) fn operand_is_int(
+pub(in crate::backend::compiler::emit) fn operand_is_int(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
 ) -> bool {
     match operand {
         Operand::Const(Const::Int(_)) => true,
-        Operand::Var(variable) => matches!(layouts.types[function.vars[*variable].ty], Type::Int),
+        Operand::Var(variable) => {
+            matches!(layouts.shapes.types[function.vars[*variable].ty], Type::Int)
+        }
         _ => false,
     }
 }
 
-pub(in crate::backend::compiler) fn operand_is_int64(
+pub(in crate::backend::compiler::emit) fn operand_is_int64(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
@@ -76,57 +66,44 @@ pub(in crate::backend::compiler) fn operand_is_int64(
     match operand {
         Operand::Const(Const::Int64(_)) => true,
         Operand::Var(variable) => {
-            matches!(layouts.types[function.vars[*variable].ty], Type::Int64)
+            matches!(
+                layouts.shapes.types[function.vars[*variable].ty],
+                Type::Int64
+            )
         }
         _ => false,
     }
 }
 
-pub(in crate::backend::compiler) fn operand_is_float(
+pub(in crate::backend::compiler::emit) fn operand_is_float(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
 ) -> bool {
     match operand {
         Operand::Const(Const::Float(_)) => true,
-        Operand::Var(variable) => matches!(layouts.types[function.vars[*variable].ty], Type::Float),
+        Operand::Var(variable) => matches!(
+            layouts.shapes.types[function.vars[*variable].ty],
+            Type::Float
+        ),
         _ => false,
     }
 }
 
-pub(in crate::backend::compiler) fn option_payload_type(
-    layouts: &TypeLayouts<'_>,
-    ty: TypeId,
-) -> Option<TypeId> {
-    let Type::Enum(enum_id, _) = layouts.types[ty] else {
-        return None;
-    };
-    let definition = &layouts.core.enums[enum_id];
-    if definition.name != "Option" {
-        return None;
-    }
-    let some_index = definition
-        .variants
-        .iter()
-        .position(|variant| variant.name == "Some")?;
-    let fields = layouts.enum_fields(ty)?.get(some_index)?;
-    (fields.len() == 1).then_some(fields[0])
-}
-
-pub(in crate::backend::compiler) fn option_variant_expression(
+pub(in crate::backend::compiler::emit) fn option_variant_expression(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     ty: TypeId,
     variant_name: &str,
     value: Option<&str>,
 ) -> Result<String, Vec<Error>> {
-    let Type::Enum(enum_id, _) = layouts.types[ty] else {
+    let Type::Enum(enum_id, _) = layouts.shapes.types[ty] else {
         return Err(invalid_flow_ir(
             &function.name,
             "Option builtin result is not an enum",
         ));
     };
-    let definition = &layouts.core.enums[enum_id];
+    let definition = &layouts.shapes.core.enums[enum_id];
     if definition.name != "Option" {
         return Err(invalid_flow_ir(
             &function.name,
@@ -183,7 +160,7 @@ pub(in crate::backend::compiler) fn option_variant_expression(
     ))
 }
 
-pub(in crate::backend::compiler) fn emit_builtin(
+pub(in crate::backend::compiler::emit) fn emit_builtin(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     dst: Option<VarId>,
@@ -205,7 +182,7 @@ pub(in crate::backend::compiler) fn emit_builtin(
     )
 }
 
-pub(in crate::backend::compiler) fn emit_runtime(
+pub(in crate::backend::compiler::emit) fn emit_runtime(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     dst: Option<VarId>,
@@ -228,7 +205,7 @@ pub(in crate::backend::compiler) fn emit_runtime(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::backend::compiler) fn emit_aggregate_field_store(
+pub(in crate::backend::compiler::emit) fn emit_aggregate_field_store(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     owner_ty: TypeId,
@@ -267,7 +244,7 @@ pub(in crate::backend::compiler) fn emit_aggregate_field_store(
     Ok(())
 }
 
-pub(in crate::backend::compiler) fn primitive_expression(
+pub(in crate::backend::compiler::emit) fn primitive_expression(
     op: PrimOp,
     ty: PrimTy,
     args: &[Operand],
@@ -275,18 +252,16 @@ pub(in crate::backend::compiler) fn primitive_expression(
     features::primitive_types::emit(op, ty, args)
 }
 
-pub(in crate::backend::compiler) fn operand_expression(
+pub(in crate::backend::compiler::emit) fn operand_expression(
     operand: &Operand,
 ) -> Result<String, &'static str> {
     features::operands::dispatch(operand)
 }
 
-pub(in crate::backend::compiler) fn constant_expression(
-    value: &emela_lir::Const,
+pub(in crate::backend::compiler::emit) fn constant_expression(
+    value: &crate::contract::ir::Const,
 ) -> Result<Option<String>, &'static str> {
     features::constants::dispatch(value)
 }
 
-pub(in crate::backend::compiler) fn c_type(repr: Repr) -> &'static str {
-    features::representations::dispatch(repr)
-}
+use super::layouts::LayoutEmission;

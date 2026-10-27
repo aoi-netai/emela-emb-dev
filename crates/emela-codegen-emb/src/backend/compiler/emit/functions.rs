@@ -1,16 +1,14 @@
 //! Function signatures, ownership helpers, closures, and public wrappers.
-use super::super::{
+use super::{
+    StringBufferPlan, TypeLayouts,
     c::{c_string_literal, function_coerce_adapter_name, owned_variable_name, variable_name},
-    features,
-    layouts::{FunctionAdapterLayout, TypeLayouts},
-    string_buffers::StringBufferPlan,
 };
+use crate::contract::ir::{FnId, Function, Operand, Repr, VarId};
+use crate::contract::ir::{Type, TypeId};
+use crate::semantics::abi::LayoutRead;
 use crate::writer::Writer;
-use emela_core::{Type, TypeId};
-use emela_lir::{FnId, Function, Operand, Repr, Stmt, Value, VarId};
-use std::collections::HashSet;
 
-pub(in crate::backend::compiler) fn emit_local_declarations(
+pub(in crate::backend::compiler::emit) fn emit_local_declarations(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     string_buffers: &StringBufferPlan,
@@ -43,9 +41,9 @@ pub(in crate::backend::compiler) fn emit_local_declarations(
     }
 }
 
-pub(in crate::backend::compiler) fn emit_closure_environment_declarations(
+pub(in crate::backend::compiler::emit) fn emit_closure_environment_declarations(
     layouts: &TypeLayouts<'_>,
-    closures: &features::values::closure::ClosureLowering,
+    closures: &crate::contract::lowered::ClosureMetadata,
     writer: &mut Writer,
 ) {
     for (index, environment) in closures.environments.iter().enumerate() {
@@ -69,7 +67,7 @@ pub(in crate::backend::compiler) fn emit_closure_environment_declarations(
     }
 }
 
-pub(in crate::backend::compiler) fn emit_closure_string_copy_helper(
+pub(in crate::backend::compiler::emit) fn emit_closure_string_copy_helper(
     layouts: &TypeLayouts<'_>,
     writer: &mut Writer,
 ) {
@@ -95,13 +93,13 @@ pub(in crate::backend::compiler) fn emit_closure_string_copy_helper(
     writer.end_block();
 }
 
-pub(in crate::backend::compiler) fn emit_closure_capture_loads(
+pub(in crate::backend::compiler::emit) fn emit_closure_capture_loads(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     environment: usize,
     writer: &mut Writer,
 ) {
-    let captures = &layouts.closure_environments[environment].captures;
+    let captures = &layouts.functions.closure_environments[environment].captures;
     writer.begin_block("if (emela_env == NULL)");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_PANIC, \"null closure environment\", UINT16_C(24));",
@@ -122,7 +120,7 @@ pub(in crate::backend::compiler) fn emit_closure_capture_loads(
     }
 }
 
-pub(in crate::backend::compiler) fn emit_release_if_owned(
+pub(in crate::backend::compiler::emit) fn emit_release_if_owned(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     variable: VarId,
@@ -141,7 +139,7 @@ pub(in crate::backend::compiler) fn emit_release_if_owned(
     writer.assign(&owned_variable_name(variable), "INT32_C(0)");
 }
 
-pub(in crate::backend::compiler) fn emit_retain_operand(
+pub(in crate::backend::compiler::emit) fn emit_retain_operand(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     operand: &Operand,
@@ -158,7 +156,7 @@ pub(in crate::backend::compiler) fn emit_retain_operand(
     }
 }
 
-pub(in crate::backend::compiler) fn emit_owned_cleanup(
+pub(in crate::backend::compiler::emit) fn emit_owned_cleanup(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     except: Option<VarId>,
@@ -173,14 +171,18 @@ pub(in crate::backend::compiler) fn emit_owned_cleanup(
         }
         emit_release_if_owned(layouts, function, variable, writer);
     }
-    if layouts.has_cause_raise && layouts.has_unwind && !function.suspends && !function.constant {
+    if layouts.runtime.has_cause_raise
+        && layouts.runtime.has_unwind
+        && !function.suspends
+        && !function.constant
+    {
         writer.line(
             "if (emela_current_fiber != NULL) emela_current_fiber->holds = emela_entry_holds;",
         );
     }
 }
 
-pub(in crate::backend::compiler) fn emit_const_getter(
+pub(in crate::backend::compiler::emit) fn emit_const_getter(
     layouts: &TypeLayouts<'_>,
     id: FnId,
     function: &Function,
@@ -192,7 +194,7 @@ pub(in crate::backend::compiler) fn emit_const_getter(
     let state = format!("emela_const_state_{index}");
     let cache = format!("emela_const_value_{index}");
     writer.line(&format!("static EmelaConstState {state};"));
-    let is_void = matches!(layouts.types[function.ret], Type::Unit | Type::Never);
+    let is_void = matches!(layouts.shapes.types[function.ret], Type::Unit | Type::Never);
     if !is_void {
         writer.line(&format!("static {} {cache};", layouts.c_type(function.ret)));
     }
@@ -241,7 +243,7 @@ pub(in crate::backend::compiler) fn emit_const_getter(
     writer.line(&format!("{state}.status = 2;"));
     writer.end_block();
     if is_void {
-        if matches!(layouts.types[function.ret], Type::Never) {
+        if matches!(layouts.shapes.types[function.ret], Type::Never) {
             writer.line(
                 "emela_board_defect(EMELA_DEFECT_PANIC, \"Never const returned\", UINT16_C(20));",
             );
@@ -256,11 +258,11 @@ pub(in crate::backend::compiler) fn emit_const_getter(
     writer.blank();
 }
 
-pub(in crate::backend::compiler) fn emit_any_ownership_declarations(
+pub(in crate::backend::compiler::emit) fn emit_any_ownership_declarations(
     layouts: &TypeLayouts<'_>,
     writer: &mut Writer,
 ) {
-    if !layouts.any_abi {
+    if !layouts.runtime.any_abi {
         return;
     }
     writer.line("static inline void emela_any_retain(EmelaAny value);");
@@ -269,17 +271,17 @@ pub(in crate::backend::compiler) fn emit_any_ownership_declarations(
     writer.line("static inline void emela_any_release(EmelaAny value);");
 }
 
-pub(in crate::backend::compiler) fn emit_any_ownership(
+pub(in crate::backend::compiler::emit) fn emit_any_ownership(
     layouts: &TypeLayouts<'_>,
     heap: bool,
     writer: &mut Writer,
 ) {
-    if !layouts.any_abi {
+    if !layouts.runtime.any_abi {
         return;
     }
     writer.begin_block("static inline void emela_any_retain(EmelaAny value)");
     writer.line("(void)value;");
-    if heap && layouts.any_box_required {
+    if heap && layouts.runtime.any_box_required {
         writer.line("if (value.tag == 0) emela_heap_retain(value.payload.any_box);");
     }
     if layouts.has_error_ownership() {
@@ -288,7 +290,7 @@ pub(in crate::backend::compiler) fn emit_any_ownership(
     writer.end_block();
     writer.begin_block("static inline void emela_any_own(EmelaAny *value)");
     writer.line("(void)value;");
-    if heap && layouts.any_box_required {
+    if heap && layouts.runtime.any_box_required {
         writer.line("if (value->tag == 0) emela_heap_retain(value->payload.any_box);");
     }
     if layouts.has_error_ownership() {
@@ -298,7 +300,7 @@ pub(in crate::backend::compiler) fn emit_any_ownership(
     if heap {
         writer.begin_block("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
         writer.line("(void)value; (void)pending; (void)tail;");
-        if layouts.any_box_required {
+        if layouts.runtime.any_box_required {
             writer.line(
                 "if (value.tag == 0) emela_heap_enqueue(value.payload.any_box, pending, tail);",
             );
@@ -318,7 +320,7 @@ pub(in crate::backend::compiler) fn emit_any_ownership(
     writer.end_block();
 }
 
-pub(in crate::backend::compiler) fn emit_public_string_ownership(writer: &mut Writer) {
+pub(in crate::backend::compiler::emit) fn emit_public_string_ownership(writer: &mut Writer) {
     writer.begin_block("void emela_embedded_retain_string(const EmelaString *value)");
     writer.begin_block("if (value != NULL)");
     writer.line("emela_heap_retain(value->owner);");
@@ -335,7 +337,7 @@ pub(in crate::backend::compiler) fn emit_public_string_ownership(writer: &mut Wr
     writer.blank();
 }
 
-pub(in crate::backend) fn signature(
+pub(in crate::backend::compiler::emit) fn signature(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     name: &str,
@@ -368,7 +370,7 @@ pub(in crate::backend) fn signature(
     format!("{linkage}{return_type} {name}({params})")
 }
 
-pub(in crate::backend::compiler) fn closure_signature(
+pub(in crate::backend::compiler::emit) fn closure_signature(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     name: &str,
@@ -386,43 +388,12 @@ pub(in crate::backend::compiler) fn closure_signature(
     }
 }
 
-pub(in crate::backend::compiler) fn function_ref_adapters(
-    flow: &emela_lir::Module,
-    emitted: &HashSet<FnId>,
-    layouts: &TypeLayouts<'_>,
-) -> Vec<(FnId, TypeId)> {
-    let mut adapters = HashSet::new();
-    for (function_id, function) in flow.functions.iter() {
-        if !emitted.contains(&function_id) {
-            continue;
-        }
-        for (_, statement) in function.stmts.iter() {
-            let Stmt::Let {
-                dst: Some(dst),
-                value: Value::FnRef(target),
-                ..
-            } = statement
-            else {
-                continue;
-            };
-            if !layouts.closure_functions.contains_key(target) {
-                adapters.insert((*target, function.vars[*dst].ty));
-            }
-        }
-    }
-    let mut adapters: Vec<_> = adapters.into_iter().collect();
-    adapters.sort_by_key(|(target, function_type)| {
-        (u32::from(target.into_raw()), function_type.index())
-    });
-    adapters
-}
-
-pub(in crate::backend::compiler) fn function_ref_adapter_signature(
+pub(in crate::backend::compiler::emit) fn function_ref_adapter_signature(
     layouts: &TypeLayouts<'_>,
     function_type: TypeId,
     name: &str,
 ) -> String {
-    let Type::Fn(function_type) = layouts.types[function_type].clone() else {
+    let Type::Fn(function_type) = layouts.shapes.types[function_type].clone() else {
         unreachable!("function reference adapter has a non-function type")
     };
     let mut params = vec!["void *emela_env".to_owned()];
@@ -454,7 +425,7 @@ pub(in crate::backend::compiler) fn function_ref_adapter_signature(
     )
 }
 
-pub(in crate::backend::compiler) fn emit_function_ref_adapter(
+pub(in crate::backend::compiler::emit) fn emit_function_ref_adapter(
     layouts: &TypeLayouts<'_>,
     function_type: TypeId,
     target_name: &str,
@@ -463,7 +434,7 @@ pub(in crate::backend::compiler) fn emit_function_ref_adapter(
     string_capacity: u16,
     writer: &mut Writer,
 ) {
-    let Type::Fn(function_type_data) = layouts.types[function_type].clone() else {
+    let Type::Fn(function_type_data) = layouts.shapes.types[function_type].clone() else {
         unreachable!("function reference adapter has a non-function type")
     };
     writer.begin_block(&function_ref_adapter_signature(
@@ -516,16 +487,16 @@ pub(in crate::backend::compiler) fn emit_function_ref_adapter(
     writer.end_block();
 }
 
-pub(in crate::backend::compiler) fn emit_function_coerce_adapter(
+pub(in crate::backend::compiler::emit) fn emit_function_coerce_adapter(
     layouts: &TypeLayouts<'_>,
     adapter: &FunctionAdapterLayout,
     index: usize,
     writer: &mut Writer,
 ) {
-    let Type::Fn(source_type) = layouts.types[adapter.source].clone() else {
+    let Type::Fn(source_type) = layouts.shapes.types[adapter.source].clone() else {
         unreachable!("function adapter source has non-function type")
     };
-    let Type::Fn(destination_type) = layouts.types[adapter.destination].clone() else {
+    let Type::Fn(destination_type) = layouts.shapes.types[adapter.destination].clone() else {
         unreachable!("function adapter destination has non-function type")
     };
     let traps_failure = source_type.fails && !destination_type.fails;
@@ -641,7 +612,7 @@ pub(in crate::backend::compiler) fn emit_function_coerce_adapter(
     writer.end_block();
 }
 
-pub(in crate::backend::compiler) fn emit_fallible_wrapper(
+pub(in crate::backend::compiler::emit) fn emit_fallible_wrapper(
     layouts: &TypeLayouts<'_>,
     function: &Function,
     public_name: &str,
@@ -686,3 +657,7 @@ pub(in crate::backend::compiler) fn emit_fallible_wrapper(
     }
     writer.end_block();
 }
+
+use super::layouts::LayoutEmission;
+
+use crate::contract::abi::FunctionAdapterLayout;

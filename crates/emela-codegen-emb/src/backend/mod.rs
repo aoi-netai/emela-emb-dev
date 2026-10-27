@@ -1,19 +1,7 @@
-//! Flow IR backend with explicit feature owners and target-independent compilation.
-mod board;
-#[cfg(test)]
-mod cnative;
+//! Target independent C compilation.
 pub(crate) mod compiler;
+pub(crate) use compiler::compile_flow;
 
-pub(crate) fn compile_flow(
-    flow: &emela_lir::Module,
-    options: &crate::Options,
-) -> Result<crate::Output, Vec<crate::Error>> {
-    let compiled = compiler::compile_flow(flow)?;
-    board::link(&compiled, options)
-}
-
-#[cfg(test)]
-use compiler::*;
 #[cfg(test)]
 #[path = "tests/separation.rs"]
 mod separation_tests;

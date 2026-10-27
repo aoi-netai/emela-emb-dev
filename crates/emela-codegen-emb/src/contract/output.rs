@@ -10,7 +10,8 @@ pub struct Output {
 }
 
 /// A public entry point emitted into the generated header.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExportedFunction {
     /// The function name recorded by Flow IR, before C identifier sanitization.
     pub source_name: String,

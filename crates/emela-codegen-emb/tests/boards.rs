@@ -63,6 +63,9 @@ fn installed_bsp_reads_the_contract_without_the_compiler_checkout() {
         &Options::default(),
     )
     .unwrap();
+    output
+        .files
+        .retain(|file| file.path != emela_codegen_emb::artifact::ALIASES_HEADER);
     output.files.push(GeneratedFile {
         path: "emela_embedded_exports.h".into(),
         contents: "#include \"emela_embedded.h\"\n".into(),

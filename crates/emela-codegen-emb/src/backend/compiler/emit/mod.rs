@@ -1,253 +1,64 @@
-//! Final layout, runtime assembly, and C output for a selected connection.
-use super::*;
+//! C formatting of a complete, immutable backend plan.
+use crate::contract::abi::{AggregateKind, CLayoutPlan as TypeLayouts};
+use crate::contract::ir::*;
+use crate::contract::lowered::ConstOutcome;
+use crate::contract::strings::StringBuffers as StringBufferPlan;
+use crate::semantics::abi::{LayoutRead, option_payload_type};
+use crate::semantics::c::variable_name;
+use crate::semantics::diagnostics::{
+    self, invalid_flow_ir, statement_name, term_name, unsupported, value_name,
+};
+use crate::{Error, ErrorKind, Options};
+use std::collections::{HashMap, HashSet};
 
-/// Each connection emits from its own copy, leaving the shared compiled artifact unchanged.
-pub(in crate::backend) fn emit(
-    compiled: &CompiledModule,
-    target: &impl Target,
-    options: &Options,
-) -> Result<Output, Vec<Error>> {
-    if !(1..=512).contains(&options.string_capacity()) {
-        return Err(vec![Error {
-            kind: ErrorKind::InvalidOptions,
-            message: format!(
-                "string capacity must be between 1 and 512 bytes, found {}",
-                options.string_capacity()
-            ),
-        }]);
-    }
-    let CompiledModule {
-        lowered: mut lowered_flow,
-        closures,
-        const_groups,
-        runtime_consts,
-        deferred_pool,
-        ..
-    } = compiled.clone();
-    if deferred_pool && options.deferred_capacity() == 0 {
-        return Err(vec![Error {
-            kind: ErrorKind::InvalidOptions,
-            message: "deferred_capacity must be positive for Deferred operations".into(),
-        }]);
-    }
-    let discarded_results = crate::discarded::normalize(&mut lowered_flow);
-    let flow = &lowered_flow;
-    let emitted_functions = runtime_reachable(flow);
-    let has_scheduler = suspend::validate(flow, &emitted_functions, options)?;
-    let has_tasks = suspend::has_tasks(flow, &emitted_functions);
-    let task_value_types = task_values::result_types(flow, &emitted_functions);
-    let mut layouts = TypeLayouts::new(flow, &emitted_functions, &closures, deferred_pool)?;
-    layouts.discarded_results = discarded_results;
-    layouts.runtime_consts = runtime_consts.clone();
-    let const_bridges = const_bridge::Bridges::new(flow, &const_groups, &closures, &mut layouts)?;
-    for &id in &runtime_consts {
-        if matches!(layouts.types[flow.functions[id].ret], Type::String) {
-            layouts
-                .owned_string_returns
-                .insert(flow.functions[id].name.clone());
-        }
-    }
-    let external_bindings =
-        external::resolve(flow, &emitted_functions, &mut layouts, options, target)?;
-    let target_headers = target.headers(flow, &emitted_functions, options)?;
-    let derived_plan = derive_runtime::Plan::new(flow, &emitted_functions, &layouts)?;
-    task_values::validate_types(flow, &emitted_functions, &layouts)?;
-    validate_function_value_types(&layouts, &emitted_functions, flow)?;
-    validate_function_refs(flow, &emitted_functions, &layouts)?;
-    let mut string_output_functions =
-        functions_with_string_output(flow, &emitted_functions, &layouts);
-    external::extend_string_output(
-        flow,
-        &emitted_functions,
-        &external_bindings,
-        &layouts,
-        &mut string_output_functions,
-    );
-    layouts.owned_aggregate_returns = flow
-        .functions
-        .iter()
-        .filter(|(id, f)| {
-            emitted_functions.contains(id)
-                && !f.suspends
-                && !f.constant
-                && f.external.is_none()
-                && !matches!(layouts.types[f.ret], Type::String)
-                && layouts.has_inline_string(f.ret)
-        })
-        .filter(|(id, f)| {
-            runtime_consts.contains(id)
-                || !StringBufferPlan::new(
-                    &layouts,
-                    *id,
-                    f,
-                    options.string_capacity(),
-                    &string_output_functions,
-                    false,
-                )
-                .declarations
-                .is_empty()
-        })
-        .map(|(_, f)| f.name.clone())
-        .collect();
-    let empty_list_functions = crate::const_runtime::empty_list_functions(flow);
-    let heap_functions: HashSet<_> = flow
-        .functions
-        .iter()
-        .filter_map(|(id, function)| {
-            (emitted_functions.contains(&id)
-                && (function_needs_heap(
-                    flow,
-                    id,
-                    function,
-                    &layouts,
-                    &closures,
-                    &string_output_functions,
-                    &empty_list_functions,
-                ) || external::needs_heap(
-                    function,
-                    external_bindings.get(&id),
-                    &layouts,
-                    options,
-                )))
-            .then_some(id)
-        })
-        .collect();
+use crate::contract::planned::PlannedModule;
+
+pub(super) fn render(plan: &PlannedModule<'_>) -> Result<Output, Vec<Error>> {
+    let options = &plan.options;
+    let compiled = plan.input;
+    let flow = &compiled.lowered;
+    let closures = &compiled.closures;
+    let runtime_consts = &compiled.runtime_consts;
+    let layouts = &plan.layouts;
+    let external_bindings = &plan.external_bindings;
+    let const_bridges = &plan.const_bridges;
+    let derived_plan = &plan.derived_plan;
+    let emitted_functions = &plan.emitted_functions;
+    let heap_functions = &plan.heap_functions;
+    let string_output_functions = &plan.string_output_functions;
+    let const_outcomes = &plan.const_outcomes;
+    let names = &plan.names;
+    let public_names = &plan.public_names;
+    let runtime = &plan.runtime;
+    let has_scheduler = plan.has_scheduler;
+    let has_tasks = plan.has_tasks;
+    let task_value_types = &plan.task_value_types;
     let heap_required = !heap_functions.is_empty();
-    if options.heap_bytes() == 0 && heap_required {
-        let (_, function) = flow
-            .functions
-            .iter()
-            .find(|(id, _)| heap_functions.contains(id))
-            .expect("heap requirement came from an emitted function");
-        return Err(unsupported(
-            &function.name,
-            "heap-backed List, recursive value, shared Cell, closure environment, handler, or evidence table with heap_bytes = 0; configure Options::with_heap_bytes",
-        ));
-    }
-    let mut const_outcomes = HashMap::new();
-    for (id, function) in flow
-        .functions
-        .iter()
-        .filter(|(id, function)| emitted_functions.contains(id) && function.constant)
-    {
-        match const_eval::evaluate(flow, id) {
-            Ok(outcome) => {
-                const_outcomes.insert(id, outcome);
-            }
-            Err(reason) => {
-                let caller = flow.functions.iter().find_map(|(caller_id, caller)| {
-                    (emitted_functions.contains(&caller_id)
-                        && !caller.constant
-                        && directly_calls(caller, id))
-                    .then_some(caller)
-                });
-                let location = caller.map_or(function.name.as_str(), |caller| caller.name.as_str());
-                return Err(unsupported(
-                    location,
-                    &format!(
-                        "const `{}` cannot be evaluated statically: {reason}",
-                        function.name
-                    ),
-                ));
-            }
-        }
-    }
-
-    let mut names = HashMap::new();
-    let mut public_names = HashMap::new();
-    for (id, function) in flow
-        .functions
-        .iter()
-        .filter(|(id, _)| emitted_functions.contains(id))
-    {
-        let name = if function.external.is_some() {
-            if function.exported {
-                return Err(unsupported(&function.name, "exported external functions"));
-            }
-            if function.suspends {
-                suspend::external_symbol(function, options, target)?
-            } else {
-                let binding = &external_bindings[&id];
-                if binding.adapted {
-                    function_name(id, function)
-                } else {
-                    binding.symbol.clone()
-                }
-            }
-        } else {
-            function_name(id, function)
-        };
-        public_names.insert(id, name.clone());
-        let implementation_name = if function.exported && function.fails && !function.suspends {
-            format!("{name}_impl")
-        } else {
-            name
-        };
-        names.insert(id, implementation_name);
-    }
-    let connection = LinkContext {
-        flow,
-        layouts: &layouts,
-        names: &names,
-        emitted: &emitted_functions,
-        heap_functions: &heap_functions,
-        options,
-    };
-    target.validate(&connection)?;
-    let main_entry = flow.functions.iter().find(|(id, function)| {
-        emitted_functions.contains(id) && function.exported && function.name == "main"
-    });
-    if let Some((_, function)) = main_entry
-        && !function.params.is_empty()
-    {
-        return Err(unsupported(
-            &function.name,
-            "an embedded main function with parameters",
-        ));
-    }
-
+    let main_entry = plan.main_entry.map(|id| (id, &flow.functions[id]));
+    let target_headers = services::headers(flow, &plan.services)?;
+    let function_ref_adapters = &plan.function_ref_adapters;
     let header = header::emit(header::Context {
         flow,
-        layouts: &layouts,
-        emitted_functions: &emitted_functions,
-        external_bindings: &external_bindings,
-        names: &names,
-        public_names: &public_names,
-        string_output_functions: &string_output_functions,
-        task_value_types: &task_value_types,
+        layouts,
+        emitted_functions,
+        external_bindings,
+        names,
+        public_names,
+        string_output_functions,
+        task_value_types,
         has_scheduler,
         has_tasks,
+        has_failing_tasks: plan.has_failing_tasks,
         heap_required,
-        entry_declaration: main_entry.map(|_| target.entry_declaration()),
+        entry_declaration: main_entry.map(|_| "void emela_embedded_start(void);"),
     });
 
-    let mut runtime = runtime_plan::Requirements::collect(flow, &emitted_functions);
-    derived_plan.require_runtime(&layouts, &mut runtime);
-    if !string_output_functions.is_empty() {
-        runtime.require(runtime_plan::Helper::StringOutput);
-        runtime.defects = true;
-    }
-    runtime.defects |= !runtime_consts.is_empty()
-        || has_scheduler
-        || heap_required
-        || external_bindings
-            .iter()
-            .any(|(&id, binding)| binding.adapted && flow.functions[id].fails)
-        || external_bindings
-            .values()
-            .any(|binding| binding.result == crate::ExternalResult::StringBuffer)
-        || const_outcomes.values().any(|outcome| {
-            matches!(
-                outcome,
-                ConstOutcome::Defect { .. } | ConstOutcome::SelfReference { .. }
-            )
-        });
     let platform_header = platform::header(platform::Requirements {
         defects: runtime.defects,
         const_defects: !runtime_consts.is_empty(),
         lifecycle: main_entry.is_some(),
         debug: runtime.debug,
-        event_lock: has_tasks || target.needs_event_lock(&target_headers),
+        event_lock: has_tasks,
     });
 
     let mut source = Writer::new();
@@ -260,99 +71,107 @@ pub(in crate::backend) fn emit(
     }
     source.blank();
     if !runtime_consts.is_empty() {
-        crate::const_runtime::emit_runtime(flow, &runtime_consts, options, &mut source)?;
+        crate::backend::compiler::emit::const_runtime::emit_runtime(
+            plan.const_emergency_bytes,
+            options,
+            &mut source,
+        )?;
     }
     if has_scheduler {
-        if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
+        if !task_value_types.is_empty() || plan.has_failing_tasks {
             source.line("#define EMELA_TASK_CONTEXT_RUNTIME 1");
         }
         if !task_value_types.is_empty() {
-            task_values::emit_union(&task_value_types, &mut source);
+            task_values::emit_union(task_value_types, &mut source);
         }
-        if suspend::has_failing_tasks(flow, &emitted_functions) {
+        if plan.has_failing_tasks {
             source.line("#define EMELA_TASK_FAILURE_RUNTIME 1");
         }
         suspend::emit_runtime(
             &mut source,
             options,
             has_tasks,
-            layouts.has_resumes,
-            layouts.has_unwind,
-            layouts.has_scopes,
-            layouts.deferred_pool,
-            layouts.has_error_abi,
+            layouts.runtime.has_resumes,
+            layouts.runtime.has_unwind,
+            layouts.runtime.has_scopes,
+            layouts.runtime.deferred_pool,
+            layouts.runtime.has_error_abi,
         );
     }
-    if layouts.has_scopes {
+    if layouts.runtime.has_scopes {
         if layouts.has_child_waits() {
             source.line("#define EMELA_CHILD_WAIT_RUNTIME");
         }
-        source.line(include_str!("../../../runtime/scope_types.c"));
+        source.line(include_str!("runtime/scope_types.c"));
     }
-    if layouts.deferred_pool {
-        source.line(include_str!("../../../runtime/deferred_types.c"));
+    if layouts.runtime.deferred_pool {
+        source.line(include_str!("runtime/deferred_types.c"));
     }
-    cause::emit_types(&layouts, &mut source);
-    error_runtime::emit_types(&layouts, &mut source);
-    emit_closure_environment_declarations(&layouts, &closures, &mut source);
+    cause::emit_types(layouts, &mut source);
+    error_runtime::emit_types(layouts, &mut source);
+    emit_closure_environment_declarations(layouts, closures, &mut source);
     layouts.emit_runtime_value_declarations(&mut source);
     if heap_required {
         layouts.emit_list_node_declarations(&mut source);
-        crate::heap::emit_runtime(&mut source, options.heap_bytes(), layouts.has_cell_cycles());
-        emit_closure_string_copy_helper(&layouts, &mut source);
-        error_runtime::emit_ownership_declarations(&layouts, &mut source);
-        emit_any_ownership_declarations(&layouts, &mut source);
+        crate::backend::compiler::emit::heap::emit_runtime(
+            &mut source,
+            options.heap_bytes(),
+            layouts.has_cell_cycles(),
+        );
+        emit_closure_string_copy_helper(layouts, &mut source);
+        error_runtime::emit_ownership_declarations(layouts, &mut source);
+        emit_any_ownership_declarations(layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
-        owned::emit_helpers(&layouts, &mut source);
-        error_runtime::emit_ownership(&layouts, true, &mut source);
-        emit_any_ownership(&layouts, true, &mut source);
-        if layouts.deferred_pool {
+        owned::emit_helpers(layouts, &mut source);
+        error_runtime::emit_ownership(layouts, true, &mut source);
+        emit_any_ownership(layouts, true, &mut source);
+        if layouts.runtime.deferred_pool {
             source.line(&format!(
                 "#define EMELA_DEFERRED_KIND UINT32_C({})",
                 layouts.deferred_kind()
             ));
-            source.line(include_str!("../../../runtime/deferred.c"));
+            source.line(include_str!("runtime/deferred.c"));
         }
         layouts.emit_heap_destroy_switch(&closures.environments, &mut source);
         layouts.emit_public_release_helpers(&mut source);
         layouts.emit_public_function_ownership_helpers(&mut source);
-        crate::heap::emit_public_retain(&mut source);
-        crate::heap::emit_public_release(&mut source);
+        crate::backend::compiler::emit::heap::emit_public_retain(&mut source);
+        crate::backend::compiler::emit::heap::emit_public_release(&mut source);
         emit_public_string_ownership(&mut source);
-        external::emit_ownership_helpers(flow, &external_bindings, &layouts, &mut source);
+        external::emit_ownership_helpers(flow, external_bindings, layouts, &mut source);
     } else {
         source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
         source.line("static inline void emela_heap_release(void *value) { (void)value; }");
-        error_runtime::emit_ownership(&layouts, false, &mut source);
-        emit_any_ownership(&layouts, false, &mut source);
+        error_runtime::emit_ownership(layouts, false, &mut source);
+        emit_any_ownership(layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);
         source.blank();
     }
-    if suspend::has_failing_tasks(flow, &emitted_functions) {
-        suspend::emit_task_failure_ownership(&layouts, &mut source);
+    if plan.has_failing_tasks {
+        suspend::emit_task_failure_ownership(layouts, &mut source);
     }
-    task_values::emit_dispatch(&layouts, &task_value_types, &mut source);
-    cause::emit_runtime(&layouts, &mut source);
-    if layouts.has_resumes {
-        suspend::emit_resume_runtime(&layouts, &mut source);
+    task_values::emit_dispatch(layouts, task_value_types, &mut source);
+    cause::emit_runtime(layouts, &mut source);
+    if layouts.runtime.has_resumes {
+        suspend::emit_resume_runtime(layouts, &mut source);
     }
-    if layouts.has_unwind {
-        source.line(include_str!("../../../runtime/unwind.c"));
+    if layouts.runtime.has_unwind {
+        source.line(include_str!("runtime/unwind.c"));
     }
-    if layouts.has_scopes {
+    if layouts.runtime.has_scopes {
         if layouts.has_child_waits() {
-            source.line(include_str!("../../../runtime/child_wait.c"));
-            child::emit_runtime(&layouts, &mut source)?;
+            source.line(include_str!("runtime/child_wait.c"));
+            child::emit_runtime(layouts, &mut source)?;
         }
-        suspend::emit_scope_runtime(&layouts, &mut source)?;
+        suspend::emit_scope_runtime(layouts, &mut source)?;
     }
-    cause::emit_attempts(&layouts, &mut source)?;
-    cause::emit_infallible_raise(&layouts, &mut source);
-    if layouts.deferred_pool {
-        deferred::emit_runtime(&layouts, &mut source)?;
+    cause::emit_attempts(layouts, &mut source)?;
+    cause::emit_infallible_raise(layouts, &mut source);
+    if layouts.runtime.deferred_pool {
+        deferred::emit_runtime(layouts, &mut source)?;
     }
     runtime.emit_helpers(&mut source);
-    derived_plan.emit(&layouts, &mut source);
+    derived_plan.emit(layouts, &mut source);
 
     for (id, function) in flow
         .functions
@@ -363,7 +182,7 @@ pub(in crate::backend) fn emit(
         let takes_string_output = string_output_functions.contains(&id);
         if function.suspends {
             suspend::emit_declarations(
-                &layouts,
+                layouts,
                 function,
                 name,
                 closures.functions.get(&id).copied(),
@@ -378,7 +197,7 @@ pub(in crate::backend) fn emit(
             source.line(&format!(
                 "{prefix}{};",
                 signature(
-                    &layouts,
+                    layouts,
                     function,
                     name,
                     external_bindings[&id].adapted,
@@ -390,10 +209,10 @@ pub(in crate::backend) fn emit(
             source.line(&format!(
                 "{};",
                 if closures.functions.contains_key(&id) {
-                    closure_signature(&layouts, function, name, true)
+                    closure_signature(layouts, function, name, true)
                 } else {
                     signature(
-                        &layouts,
+                        layouts,
                         function,
                         name,
                         true,
@@ -404,34 +223,34 @@ pub(in crate::backend) fn emit(
             ));
         }
     }
-    target.emit_declarations(&target_headers, &mut source);
-    let function_ref_adapters = function_ref_adapters(flow, &emitted_functions, &layouts);
-    for &(target, function_type) in &function_ref_adapters {
+    for adapter in function_ref_adapters {
+        let target = adapter.target;
+        let function_type = adapter.function_type;
         source.line(&format!(
             "{};",
             function_ref_adapter_signature(
-                &layouts,
+                layouts,
                 function_type,
                 &function_ref_adapter_name(target, function_type),
             )
         ));
     }
-    for (index, adapter) in layouts.function_adapters.iter().enumerate() {
+    for (index, adapter) in layouts.shapes.function_adapters.iter().enumerate() {
         source.line(&format!(
             "{};",
             function_ref_adapter_signature(
-                &layouts,
+                layouts,
                 adapter.destination,
                 &function_coerce_adapter_name(index),
             )
         ));
     }
     source.blank();
-    const_bridges.emit(flow, &layouts, &names, heap_required, &mut source)?;
+    const_bridges.emit(flow, layouts, names, heap_required, &mut source)?;
     error_runtime::emit_display(
-        &layouts,
-        &names,
-        &string_output_functions,
+        layouts,
+        names,
+        string_output_functions,
         options.string_capacity(),
         &mut source,
     )?;
@@ -444,15 +263,16 @@ pub(in crate::backend) fn emit(
         if function.suspends {
             suspend::emit_function(
                 flow,
-                &layouts,
+                layouts,
                 id,
                 function,
                 &names[&id],
-                &names,
-                &string_output_functions,
+                names,
+                string_output_functions,
                 closures.functions.get(&id).copied(),
                 options,
                 &mut source,
+                plan.suspensions.get(&id),
             )?;
             continue;
         }
@@ -467,15 +287,24 @@ pub(in crate::backend) fn emit(
                     ),
                 }]);
             }
-            if crate::derived::kind(function).is_some() {
-                derive_runtime::emit_adapter(&layouts, function, &names[&id], &mut source);
+            if function.derivation.is_some() {
+                derive_runtime::emit_adapter(layouts, function, &names[&id], &mut source);
                 continue;
             }
-            if target.emit_adapter(&connection, function, &names[&id], &mut source)? {
+            if let Some(operation) = plan.services.get(&id) {
+                services::emit_adapter(
+                    flow,
+                    operation,
+                    layouts,
+                    function,
+                    &names[&id],
+                    options.peripheral_buffer_capacity(),
+                    &mut source,
+                )?;
                 continue;
             }
             external::emit_adapter(
-                &layouts,
+                layouts,
                 function,
                 &external_bindings[&id],
                 &names[&id],
@@ -488,7 +317,7 @@ pub(in crate::backend) fn emit(
         };
         let sequence = &function.seqs[body];
         if const_bridges.getters.contains_key(&id) {
-            const_bridges.emit_getter(id, flow, &layouts, &names, &mut source);
+            const_bridges.emit_getter(id, flow, layouts, names, &mut source);
             continue;
         }
         let initializer_name = format!("{}_const_init", names[&id]);
@@ -501,10 +330,10 @@ pub(in crate::backend) fn emit(
         let is_static = is_runtime_const || !function.exported || function.fails;
         let takes_string_output = string_output_functions.contains(&id);
         let function_signature = if closures.functions.contains_key(&id) {
-            closure_signature(&layouts, function, name, is_static)
+            closure_signature(layouts, function, name, is_static)
         } else {
             signature(
-                &layouts,
+                layouts,
                 function,
                 name,
                 is_static,
@@ -515,7 +344,7 @@ pub(in crate::backend) fn emit(
         source.begin_block(&function_signature);
         if function.constant {
             match &const_outcomes[&id] {
-                ConstOutcome::Value(emela_lir::Const::Unit) => source.ret(None),
+                ConstOutcome::Value(crate::contract::ir::Const::Unit) => source.ret(None),
                 ConstOutcome::Value(value) => {
                     let expression = constant_expression(value).map_err(|kind| {
                         unsupported(&function.name, &format!("{kind} in a const value"))
@@ -562,7 +391,7 @@ pub(in crate::backend) fn emit(
             source.blank();
             continue;
         }
-        if layouts.has_cause_raise && layouts.has_unwind {
+        if layouts.runtime.has_cause_raise && layouts.runtime.has_unwind {
             source.line("unsigned emela_entry_holds = emela_current_fiber == NULL ? 0 : emela_current_fiber->holds;");
             source.line("(void)emela_entry_holds;");
         }
@@ -580,28 +409,10 @@ pub(in crate::backend) fn emit(
                 )),
             );
         }
-        let string_buffers = StringBufferPlan::new(
-            &layouts,
-            id,
-            function,
-            options.string_capacity(),
-            &string_output_functions,
-            takes_string_output,
-        );
-        if !string_buffers.declarations.is_empty()
-            && layouts.has_inline_string(function.ret)
-            && !layouts.owned_string_returns.contains(&function.name)
-            && !layouts.owned_aggregate_returns.contains(&function.name)
-            && !takes_string_output
-        {
-            return Err(unsupported(
-                &function.name,
-                "a String scratch buffer that could outlive its function stack frame",
-            ));
-        }
-        emit_local_declarations(&layouts, function, &string_buffers, &mut source);
-        if let Some(&environment) = layouts.closure_functions.get(&id) {
-            emit_closure_capture_loads(&layouts, function, environment, &mut source);
+        let string_buffers = &plan.strings[&id];
+        emit_local_declarations(layouts, function, string_buffers, &mut source);
+        if let Some(&environment) = layouts.functions.closure_functions.get(&id) {
+            emit_closure_capture_loads(layouts, function, environment, &mut source);
         }
         let mut loops = Vec::new();
         let mut blocks = Vec::new();
@@ -610,12 +421,12 @@ pub(in crate::backend) fn emit(
         let mut next_label = 0;
         for &statement in &sequence.stmts {
             emit_statement(
-                &layouts,
+                layouts,
                 function,
                 &function.stmts[statement],
                 &mut source,
-                &names,
-                &string_buffers,
+                names,
+                string_buffers,
                 &mut loops,
                 &mut blocks,
                 &mut protects,
@@ -624,17 +435,17 @@ pub(in crate::backend) fn emit(
             )?;
         }
         emit_return(
-            &layouts,
+            layouts,
             function,
             &sequence.term,
-            &string_buffers,
+            string_buffers,
             &mut source,
         )?;
         source.end_block();
         source.blank();
         if is_runtime_const {
             emit_const_getter(
-                &layouts,
+                layouts,
                 id,
                 function,
                 &names[&id],
@@ -643,42 +454,13 @@ pub(in crate::backend) fn emit(
             );
         }
     }
-    for &(target, function_type) in &function_ref_adapters {
-        let target_function = &flow.functions[target];
-        let takes_output = string_output_functions.contains(&target);
-        let adapter_capacity = if takes_output {
-            let plan = StringBufferPlan::new(
-                &layouts,
-                target,
-                target_function,
-                options.string_capacity(),
-                &string_output_functions,
-                true,
-            );
-            target_function
-                .seqs
-                .iter()
-                .filter_map(|(_, seq)| match &seq.term {
-                    Term::Return(Some(Operand::Var(var))) => Some(
-                        plan.buffers
-                            .get(var)
-                            .map_or(options.string_capacity(), |(_, size)| *size),
-                    ),
-                    Term::Return(Some(Operand::Const(Const::String(value)))) => Some(
-                        u16::try_from(value.len())
-                            .unwrap_or(u16::MAX)
-                            .min(options.string_capacity()),
-                    ),
-                    _ => None,
-                })
-                .max()
-                .unwrap_or(options.string_capacity())
-                .max(1)
-        } else {
-            options.string_capacity()
-        };
+    for adapter in function_ref_adapters {
+        let target = adapter.target;
+        let function_type = adapter.function_type;
+        let takes_output = adapter.takes_output;
+        let adapter_capacity = adapter.capacity;
         emit_function_ref_adapter(
-            &layouts,
+            layouts,
             function_type,
             &names[&target],
             &function_ref_adapter_name(target, function_type),
@@ -688,8 +470,8 @@ pub(in crate::backend) fn emit(
         );
         source.blank();
     }
-    for (index, adapter) in layouts.function_adapters.iter().enumerate() {
-        emit_function_coerce_adapter(&layouts, adapter, index, &mut source);
+    for (index, adapter) in layouts.shapes.function_adapters.iter().enumerate() {
+        emit_function_coerce_adapter(layouts, adapter, index, &mut source);
         source.blank();
     }
     for (id, function) in flow
@@ -698,7 +480,7 @@ pub(in crate::backend) fn emit(
         .filter(|(id, f)| emitted_functions.contains(id) && f.exported && f.fails && !f.suspends)
     {
         emit_fallible_wrapper(
-            &layouts,
+            layouts,
             function,
             &public_names[&id],
             &names[&id],
@@ -707,32 +489,11 @@ pub(in crate::backend) fn emit(
         );
         source.blank();
     }
-    if let Some((id, function)) = main_entry {
-        target.emit_entry(
-            &connection,
-            function,
-            &public_names[&id],
-            string_output_functions.contains(&id),
-            &mut source,
-        );
+    if let Some((id, _)) = main_entry {
+        entry::emit(plan, id, &mut source);
     }
-
-    target.emit_helpers(&connection, &target_headers, &mut source);
     let mut output = Output {
-        exports: flow
-            .functions
-            .iter()
-            .filter(|(id, function)| emitted_functions.contains(id) && function.exported)
-            .map(|(id, function)| ExportedFunction {
-                source_name: function.name.clone(),
-                c_symbol: if function.suspends {
-                    format!("{}_start", public_names[&id])
-                } else {
-                    public_names[&id].clone()
-                },
-                suspends: function.suspends,
-            })
-            .collect(),
+        exports: plan.metadata.exports.clone(),
         files: vec![
             header,
             platform_header,
@@ -745,6 +506,26 @@ pub(in crate::backend) fn emit(
         .chain(target_headers)
         .collect(),
     };
+    let mut alias_header = String::from(
+        "#ifndef EMELA_EMBEDDED_EXPORTS_H\n#define EMELA_EMBEDDED_EXPORTS_H\n\n#include \"emela_embedded.h\"\n",
+    );
+    for (alias, symbol) in &plan.aliases {
+        alias_header.push_str(&format!("\n#ifdef {alias}\n#error \"embedded export alias {alias} conflicts with an existing macro\"\n#endif\n#define {alias} {symbol}\n"));
+    }
+    alias_header.push_str("\n#endif\n");
+    output.files.push(GeneratedFile {
+        path: crate::artifact::ALIASES_HEADER.into(),
+        contents: alias_header,
+    });
+    let mut manifest = crate::artifact::Manifest::from_files(&output.files)
+        .map_err(|error| vec![Error::from(error)])?;
+    manifest.metadata = plan.metadata.clone();
+    output.files.push(GeneratedFile {
+        path: crate::artifact::MANIFEST_FILE.into(),
+        contents: manifest
+            .to_json()
+            .map_err(|error| vec![Error::from(error)])?,
+    });
     output
         .refresh_manifest()
         .map_err(|error| vec![Error::from(error)])?;
@@ -756,23 +537,94 @@ mod functions;
 mod header;
 mod values;
 
-pub(super) use control::{
+use control::{
     BlockTarget, ProtectTarget, emit_call_failure_edge, emit_compound_sequence,
     emit_error_assignment, emit_failure_return, emit_pending_cleanups, emit_return, emit_statement,
     emit_sync_interrupt_exit,
 };
-pub(in crate::backend) use functions::signature;
-pub(super) use functions::{
+use functions::signature;
+use functions::{
     closure_signature, emit_any_ownership, emit_any_ownership_declarations,
     emit_closure_capture_loads, emit_closure_environment_declarations,
     emit_closure_string_copy_helper, emit_const_getter, emit_fallible_wrapper,
     emit_function_coerce_adapter, emit_function_ref_adapter, emit_local_declarations,
     emit_owned_cleanup, emit_public_string_ownership, emit_release_if_owned, emit_retain_operand,
-    function_ref_adapter_signature, function_ref_adapters,
+    function_ref_adapter_signature,
 };
-pub(super) use values::{
-    c_type, constant_expression, emit_aggregate_field_store, emit_builtin, emit_runtime,
+use values::{
+    constant_expression, emit_aggregate_field_store, emit_builtin, emit_runtime,
     operand_expression, operand_is_float, operand_is_int, operand_is_int64, operand_is_string,
-    operand_is_string_list, operand_type, option_payload_type, option_variant_expression,
-    primitive_expression,
+    operand_is_string_list, option_variant_expression, primitive_expression,
 };
+
+pub(super) mod layouts;
+
+pub(super) mod string_buffers;
+
+pub(super) mod const_bridge;
+use const_bridge::Emission as ConstBridgePlanEmission;
+
+pub(super) mod derive_runtime;
+use derive_runtime::Emission as DerivationPlanEmission;
+
+pub(super) mod runtime_helpers;
+use runtime_helpers::RuntimeEmission;
+
+pub(super) mod external;
+
+mod features;
+use crate::writer::Writer;
+use crate::{GeneratedFile, Output};
+use features::builtins::string_split::emit_string_split_push;
+use features::values::coerce::emit_coerce;
+mod c;
+mod cause;
+mod child;
+mod deferred;
+mod error_runtime;
+mod numeric_runtime;
+mod owned;
+mod platform;
+mod string_runtime;
+mod suspend;
+mod task_values;
+use crate::contract::operations as analysis;
+use c::*;
+use layouts::LayoutEmission;
+use string_buffers::StringBufferEmission;
+const HEADER_FILE: &str = "emela_embedded.h";
+const SOURCE_FILE: &str = "emela_embedded.c";
+
+mod entry;
+mod services;
+
+mod heap;
+
+mod float_parse;
+
+mod float_to_string;
+
+mod const_runtime;
+
+use crate::semantics::operands::operand_type;
+
+mod unicode_grapheme;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn renders_a_contract_fixture_without_invoking_plan_or_lower() {
+        let input = crate::contract::fixtures::lowered();
+        let plan = crate::contract::fixtures::planned(&input);
+        let first = super::render(&plan).unwrap();
+        let second = super::render(&plan).unwrap();
+        assert_eq!(first.files, second.files);
+        assert!(
+            first
+                .files
+                .iter()
+                .any(|file| file.path == crate::artifact::MANIFEST_FILE)
+        );
+        assert!(first.exports.is_empty());
+    }
+}

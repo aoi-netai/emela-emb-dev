@@ -1,9 +1,9 @@
 //! Public C types, runtime interfaces, and exported function declarations.
-use super::super::{HEADER_FILE, external, layouts::TypeLayouts, suspend, task_values};
 use super::functions::signature;
+use super::{HEADER_FILE, TypeLayouts, external, suspend, task_values};
+use crate::contract::ir::{FnId, Program as Module};
+use crate::contract::ir::{Type, TypeId};
 use crate::{GeneratedFile, writer::Writer};
-use emela_core::{Type, TypeId};
-use emela_lir::{FnId, Module};
 use std::collections::{HashMap, HashSet};
 
 /// Inputs resolved by the existing module assembly pass. No input is mutated.
@@ -11,13 +11,14 @@ pub(super) struct Context<'a, 'ir> {
     pub flow: &'ir Module,
     pub layouts: &'a TypeLayouts<'ir>,
     pub emitted_functions: &'a HashSet<FnId>,
-    pub external_bindings: &'a external::Bindings,
+    pub external_bindings: &'a crate::contract::bindings::ExternalBindings,
     pub names: &'a HashMap<FnId, String>,
     pub public_names: &'a HashMap<FnId, String>,
     pub string_output_functions: &'a HashSet<FnId>,
     pub task_value_types: &'a [TypeId],
     pub has_scheduler: bool,
     pub has_tasks: bool,
+    pub has_failing_tasks: bool,
     pub heap_required: bool,
     pub entry_declaration: Option<&'static str>,
 }
@@ -34,6 +35,7 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
         task_value_types,
         has_scheduler,
         has_tasks,
+        has_failing_tasks,
         heap_required,
         entry_declaration,
     } = context;
@@ -46,15 +48,16 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
     layouts.emit_string_declaration(&mut header);
     if has_scheduler
         || layouts
+            .shapes
             .function_types
             .iter()
-            .any(|&ty| matches!(&layouts.types[ty], Type::Fn(ft) if ft.suspends))
+            .any(|&ty| matches!(&layouts.shapes.types[ty], Type::Fn(ft) if ft.suspends))
     {
         header.line("typedef struct emela_fiber emela_fiber;");
     }
-    if layouts.has_error_abi || layouts.any_abi {
+    if layouts.runtime.has_error_abi || layouts.runtime.any_abi {
         header.line("typedef struct EmelaError EmelaError;");
-        if layouts.any_abi {
+        if layouts.runtime.any_abi {
             header.line("typedef struct EmelaError EmelaAny;");
         }
         header.blank();
@@ -62,16 +65,16 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
     layouts.emit_declarations(&mut header);
     external::emit_header(flow, external_bindings, layouts, heap_required, &mut header);
     if has_scheduler {
-        header.line(include_str!("../../../runtime/scheduler.h"));
+        header.line(include_str!("runtime/scheduler.h"));
     }
     if has_tasks {
         header.line("#define EMELA_HAS_TASK_RUNTIME 1");
-        header.line(include_str!("../../../runtime/task.h"));
-        if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, emitted_functions) {
-            header.line(include_str!("../../../runtime/task_context.h"));
+        header.line(include_str!("runtime/task.h"));
+        if !task_value_types.is_empty() || has_failing_tasks {
+            header.line(include_str!("runtime/task_context.h"));
         }
-        if suspend::has_failing_tasks(flow, emitted_functions) {
-            header.line(include_str!("../../../runtime/task_failure.h"));
+        if has_failing_tasks {
+            header.line(include_str!("runtime/task_failure.h"));
         }
         task_values::emit_header(layouts, task_value_types, &mut header);
         for (id, function) in flow
@@ -79,7 +82,7 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
             .iter()
             .filter(|(id, f)| emitted_functions.contains(id) && f.suspends && f.external.is_some())
         {
-            if !suspend::scalar(&layouts.types, function.ret) {
+            if !suspend::scalar(&layouts.shapes.types, function.ret) {
                 header.line(&format!("/* Success: emela_task_complete_value_{}. Arguments are borrowed only during start. */", function.ret.index()));
             }
             header.line(&format!(
@@ -88,7 +91,7 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
             ));
         }
     }
-    if !layouts.aggregates.is_empty() {
+    if !layouts.shapes.aggregates.is_empty() {
         header.blank();
     }
 
@@ -138,3 +141,5 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
         contents: header.finish(),
     }
 }
+
+use super::layouts::LayoutEmission;

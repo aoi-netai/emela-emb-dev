@@ -5,6 +5,7 @@
   "targets": [
     {
       "owner": "emela_lir::Value",
+      "representation_owner": "crate::contract::ir::Value",
       "contexts": [
         "sync",
         "suspend"
@@ -12,6 +13,7 @@
     },
     {
       "owner": "emela_lir::Stmt",
+      "representation_owner": "crate::contract::ir::Stmt",
       "contexts": [
         "sync",
         "suspend"
@@ -19,6 +21,7 @@
     },
     {
       "owner": "emela_lir::Term",
+      "representation_owner": "crate::contract::ir::Term",
       "contexts": [
         "sync",
         "suspend"
@@ -26,6 +29,7 @@
     },
     {
       "owner": "emela_lir::Callee",
+      "representation_owner": "crate::contract::ir::Callee",
       "contexts": [
         "sync",
         "suspend"
@@ -33,6 +37,7 @@
     },
     {
       "owner": "emela_lir::OnFail",
+      "representation_owner": "crate::contract::ir::OnFail",
       "contexts": [
         "sync",
         "suspend"
@@ -40,6 +45,7 @@
     },
     {
       "owner": "emela_lir::SwitchOn",
+      "representation_owner": "crate::contract::ir::SwitchOn",
       "contexts": [
         "sync",
         "suspend"
@@ -47,6 +53,7 @@
     },
     {
       "owner": "emela_lir::CaseKey",
+      "representation_owner": "crate::contract::ir::CaseKey",
       "contexts": [
         "sync",
         "suspend"
@@ -54,54 +61,63 @@
     },
     {
       "owner": "emela_lir::Const",
+      "representation_owner": "crate::contract::ir::Const",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::Operand",
+      "representation_owner": "crate::contract::ir::Operand",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::PrimOp",
+      "representation_owner": "crate::contract::ir::PrimOp",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::PrimTy",
+      "representation_owner": "crate::contract::ir::PrimTy",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::RuntimeOp",
+      "representation_owner": "crate::contract::ir::RuntimeOp",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::Repr",
+      "representation_owner": "crate::contract::ir::Repr",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_lir::Stage",
+      "representation_owner": null,
       "contexts": [
         "input"
       ]
     },
     {
       "owner": "emela_core::Builtin",
+      "representation_owner": "crate::contract::ir::Builtin",
       "contexts": [
         "common"
       ]
     },
     {
       "owner": "emela_core::FiberOp",
+      "representation_owner": "crate::contract::ir::FiberOp",
       "contexts": [
         "sync",
         "suspend"
@@ -204,14 +220,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -227,14 +245,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -250,14 +270,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -273,14 +295,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -296,14 +320,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -319,14 +345,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -358,14 +386,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-term"
+            "sync-term",
+            "upstream-adapter-term"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-term"
+            "suspend-term",
+            "upstream-adapter-term"
           ]
         }
       ]
@@ -381,14 +411,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -404,14 +436,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -427,14 +461,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -450,14 +486,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -473,14 +511,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -496,14 +536,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-stmt"
+            "sync-stmt",
+            "upstream-adapter-stmt"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-stmt"
+            "suspend-stmt",
+            "upstream-adapter-stmt"
           ]
         }
       ]
@@ -551,14 +593,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "switch"
+            "switch",
+            "upstream-adapter-switchon"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "switch"
+            "switch",
+            "upstream-adapter-switchon"
           ]
         }
       ]
@@ -574,14 +618,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "switch"
+            "switch",
+            "upstream-adapter-switchon"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "switch"
+            "switch",
+            "upstream-adapter-switchon"
           ]
         }
       ]
@@ -597,14 +643,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "case-key"
+            "case-key",
+            "upstream-adapter-casekey"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "case-key"
+            "case-key",
+            "upstream-adapter-casekey"
           ]
         }
       ]
@@ -620,14 +668,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "case-key"
+            "case-key",
+            "upstream-adapter-casekey"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "case-key"
+            "case-key",
+            "upstream-adapter-casekey"
           ]
         }
       ]
@@ -643,7 +693,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "operand"
+            "operand",
+            "upstream-adapter-operand"
           ]
         }
       ]
@@ -659,7 +710,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "operand"
+            "operand",
+            "upstream-adapter-operand"
           ]
         }
       ]
@@ -675,7 +727,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -691,7 +744,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -707,7 +761,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -723,7 +778,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -739,7 +795,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -755,7 +812,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "constant"
+            "constant",
+            "upstream-adapter-const"
           ]
         }
       ]
@@ -771,6 +829,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -778,6 +837,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -794,6 +854,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -801,6 +862,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -817,6 +879,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -824,6 +887,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -840,6 +904,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -847,6 +912,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -863,6 +929,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -870,6 +937,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -886,6 +954,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -893,6 +962,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -909,6 +979,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -916,6 +987,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -932,6 +1004,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -939,6 +1012,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -955,6 +1029,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -962,6 +1037,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -978,6 +1054,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -985,6 +1062,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1001,6 +1079,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1008,6 +1087,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1024,6 +1104,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1031,6 +1112,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1047,6 +1129,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1054,6 +1137,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1070,6 +1154,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1077,6 +1162,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1094,6 +1180,7 @@
           "status": "candidate_found",
           "routes": [
             "closure-lowering",
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1102,6 +1189,7 @@
           "status": "candidate_found",
           "routes": [
             "closure-lowering",
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1150,6 +1238,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1157,6 +1246,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1173,6 +1263,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1180,6 +1271,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1196,6 +1288,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1203,6 +1296,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1219,6 +1313,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1226,6 +1321,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1242,6 +1338,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1249,6 +1346,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1265,6 +1363,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1272,6 +1371,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1288,6 +1388,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1295,6 +1396,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1311,6 +1413,7 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         },
@@ -1318,6 +1421,7 @@
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
+            "upstream-adapter-value",
             "value"
           ]
         }
@@ -1334,7 +1438,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime"
+            "runtime",
+            "upstream-adapter-runtimeop"
           ]
         }
       ]
@@ -1350,7 +1455,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime"
+            "runtime",
+            "upstream-adapter-runtimeop"
           ]
         }
       ]
@@ -1366,7 +1472,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime"
+            "runtime",
+            "upstream-adapter-runtimeop"
           ]
         }
       ]
@@ -1430,7 +1537,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime"
+            "runtime",
+            "upstream-adapter-runtimeop"
           ]
         }
       ]
@@ -1446,7 +1554,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "runtime"
+            "runtime",
+            "upstream-adapter-runtimeop"
           ]
         }
       ]
@@ -1494,14 +1603,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "callee"
+            "callee",
+            "upstream-adapter-callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee-direct"
+            "suspend-callee-direct",
+            "upstream-adapter-callee"
           ]
         }
       ]
@@ -1517,14 +1628,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "callee"
+            "callee",
+            "upstream-adapter-callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee-indirect"
+            "suspend-callee-indirect",
+            "upstream-adapter-callee"
           ]
         }
       ]
@@ -1540,14 +1653,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "callee"
+            "callee",
+            "upstream-adapter-callee"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-callee-op"
+            "suspend-callee-op",
+            "upstream-adapter-callee"
           ]
         }
       ]
@@ -1563,14 +1678,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-failure"
+            "sync-failure",
+            "upstream-adapter-onfail"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-failure"
+            "suspend-failure",
+            "upstream-adapter-onfail"
           ]
         }
       ]
@@ -1586,14 +1703,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "sync-failure"
+            "sync-failure",
+            "upstream-adapter-onfail"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "suspend-failure"
+            "suspend-failure",
+            "upstream-adapter-onfail"
           ]
         }
       ]
@@ -1625,7 +1744,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1641,7 +1761,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1657,7 +1778,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1673,7 +1795,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1689,7 +1812,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1705,7 +1829,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1721,7 +1846,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1737,7 +1863,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1753,7 +1880,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1769,7 +1897,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1785,7 +1914,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1801,7 +1931,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1817,7 +1948,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive"
+            "primitive",
+            "upstream-adapter-primop"
           ]
         }
       ]
@@ -1833,7 +1965,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-type"
+            "primitive-type",
+            "upstream-adapter-primty"
           ]
         }
       ]
@@ -1849,7 +1982,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-type"
+            "primitive-type",
+            "upstream-adapter-primty"
           ]
         }
       ]
@@ -1865,7 +1999,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-type"
+            "primitive-type",
+            "upstream-adapter-primty"
           ]
         }
       ]
@@ -1881,7 +2016,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "primitive-type"
+            "primitive-type",
+            "upstream-adapter-primty"
           ]
         }
       ]
@@ -1897,7 +2033,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "representation"
+            "representation",
+            "upstream-adapter-repr"
           ]
         }
       ]
@@ -1913,7 +2050,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "representation"
+            "representation",
+            "upstream-adapter-repr"
           ]
         }
       ]
@@ -1929,7 +2067,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "representation"
+            "representation",
+            "upstream-adapter-repr"
           ]
         }
       ]
@@ -1945,7 +2084,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "representation"
+            "representation",
+            "upstream-adapter-repr"
           ]
         }
       ]
@@ -1961,7 +2101,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "representation"
+            "representation",
+            "upstream-adapter-repr"
           ]
         }
       ]
@@ -1977,7 +2118,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -1993,7 +2135,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2009,7 +2152,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2025,7 +2169,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2041,7 +2186,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2057,7 +2203,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2073,7 +2220,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2089,7 +2237,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2105,7 +2254,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2121,7 +2271,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2137,7 +2288,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2153,7 +2305,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2185,7 +2338,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2201,7 +2355,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2217,7 +2372,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2233,7 +2389,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2249,7 +2406,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2265,7 +2423,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2281,7 +2440,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2297,7 +2457,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2313,7 +2474,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2329,7 +2491,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2345,7 +2508,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2361,7 +2525,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2377,7 +2542,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2393,7 +2559,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2409,7 +2576,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2425,7 +2593,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2441,7 +2610,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2457,7 +2627,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2473,7 +2644,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2489,7 +2661,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2505,7 +2678,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2521,7 +2695,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2537,7 +2712,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2553,7 +2729,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2569,7 +2746,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2585,7 +2763,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2601,7 +2780,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2681,7 +2861,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2697,7 +2878,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2713,7 +2895,8 @@
           "context": "common",
           "status": "candidate_found",
           "routes": [
-            "builtin"
+            "builtin",
+            "upstream-adapter-builtin"
           ]
         }
       ]
@@ -2761,14 +2944,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2784,14 +2969,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2807,14 +2994,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2830,14 +3019,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2853,14 +3044,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2876,14 +3069,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2899,14 +3094,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2922,14 +3119,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2945,14 +3144,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2968,14 +3169,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -2991,14 +3194,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -3014,14 +3219,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]
@@ -3037,14 +3244,16 @@
           "context": "sync",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         },
         {
           "context": "suspend",
           "status": "candidate_found",
           "routes": [
-            "fiber"
+            "fiber",
+            "upstream-adapter-fiberop"
           ]
         }
       ]

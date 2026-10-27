@@ -5,43 +5,12 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::{GeneratedFile, Output};
 
-pub const MANIFEST_FILE: &str = "emela_artifact.json";
-pub const SCHEMA_VERSION: u32 = 1;
-pub const ABI_VERSION: u32 = 1;
-pub const PUBLIC_HEADER: &str = "emela_embedded.h";
-pub const PLATFORM_HEADER: &str = "emela_board.h";
-pub const ALIASES_HEADER: &str = "emela_embedded_exports.h";
-
-/// One ordered build input. All paths are relative to the manifest directory.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArtifactFile {
-    pub path: String,
-    pub role: FileRole,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileRole {
-    Source,
-    PublicHeader,
-    PlatformHeader,
-    AliasesHeader,
-    Header,
-}
-
-/// C11 source files and their generated interfaces, independent of a board/toolchain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Manifest {
-    pub schema_version: u32,
-    pub abi_version: u32,
-    pub files: Vec<ArtifactFile>,
-}
+pub use crate::contract::artifact::{
+    ABI_VERSION, ALIASES_HEADER, ArtifactFile, FileRole, MANIFEST_FILE, Manifest, Metadata,
+    PLATFORM_HEADER, PUBLIC_HEADER, SCHEMA_VERSION,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactError(String);
@@ -55,7 +24,7 @@ impl std::fmt::Display for ArtifactError {
 impl std::error::Error for ArtifactError {}
 
 impl Manifest {
-    /// Describes an in-memory output, ignoring its previous manifest if present.
+    /// Describes an in-memory output, preserving requirements from its previous manifest if present.
     pub fn from_files(files: &[GeneratedFile]) -> Result<Self, ArtifactError> {
         let mut entries = Vec::new();
         let mut manifests = 0;
@@ -88,6 +57,12 @@ impl Manifest {
             schema_version: SCHEMA_VERSION,
             abi_version: ABI_VERSION,
             files: entries,
+            metadata: files
+                .iter()
+                .find(|file| file.path == MANIFEST_FILE)
+                .map(|file| Self::from_json(&file.contents).map(|manifest| manifest.metadata))
+                .transpose()?
+                .unwrap_or_default(),
         };
         manifest.validate()?;
         Ok(manifest)
@@ -113,6 +88,40 @@ impl Manifest {
                 "unsupported schema/ABI version {}/{} (expected {SCHEMA_VERSION}/{ABI_VERSION})",
                 self.schema_version, self.abi_version
             )));
+        }
+        for names in [
+            &self.metadata.services,
+            &self.metadata.external_symbols,
+            &self.metadata.isr_entries,
+            &self.metadata.isr_safe_symbols,
+        ] {
+            let mut seen = HashSet::new();
+            if names
+                .iter()
+                .any(|name| name.is_empty() || !seen.insert(name))
+            {
+                return Err(ArtifactError(
+                    "empty or duplicate interface requirement".into(),
+                ));
+            }
+        }
+        let c_symbol = |name: &str| {
+            let mut bytes = name.bytes();
+            matches!(bytes.next(), Some(b'a'..=b'z' | b'A'..=b'Z' | b'_'))
+                && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        };
+        if self
+            .metadata
+            .entry
+            .as_ref()
+            .is_some_and(|name| !c_symbol(name))
+            || self
+                .metadata
+                .exports
+                .iter()
+                .any(|export| !c_symbol(&export.c_symbol))
+        {
+            return Err(ArtifactError("invalid exported C symbol".into()));
         }
         let mut paths = HashSet::new();
         let mut interfaces = HashSet::new();
@@ -178,10 +187,15 @@ impl Manifest {
 }
 
 impl Output {
-    /// Rebuilds the manifest after adding generated C or headers (for example, export
-    /// aliases or a native adapter). On validation failure the output is untouched.
+    /// Refreshes the file inventory while preserving ABI requirements. Platform files belong
+    /// in a separate package, never in the frozen common output.
     pub fn refresh_manifest(&mut self) -> Result<(), ArtifactError> {
-        let contents = Manifest::from_files(&self.files)?.to_json()?;
+        let mut manifest = Manifest::from_files(&self.files)?;
+        if let Some(previous) = self.files.iter().find(|file| file.path == MANIFEST_FILE) {
+            manifest.metadata = Manifest::from_json(&previous.contents)?.metadata;
+        }
+        manifest.metadata.exports = self.exports.clone();
+        let contents = manifest.to_json()?;
         self.files.retain(|file| file.path != MANIFEST_FILE);
         self.files.push(GeneratedFile {
             path: MANIFEST_FILE.into(),

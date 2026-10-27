@@ -19,6 +19,14 @@ struct Owner {
     role: String,
     #[serde(default)]
     lower_symbol: Option<String>,
+    #[serde(default)]
+    phase_owners: Vec<PhaseOwner>,
+}
+
+#[derive(Clone, Deserialize)]
+struct PhaseOwner {
+    path: String,
+    symbol: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -195,6 +203,15 @@ fn collect(root: &Path, definitions: &Value) -> Result<Inventory, String> {
             .ok_or_else(|| format!("missing entry {id}: {}::{}", owner.path, owner.symbol))?
             .clone();
         let mut phases = Vec::new();
+        for phase in &owner.phase_owners {
+            let functions = functions(root, &phase.path)?;
+            phases.push(
+                functions
+                    .get(&phase.symbol)
+                    .ok_or_else(|| format!("missing stage owner {}::{}", phase.path, phase.symbol))?
+                    .clone(),
+            );
+        }
         if relation == "variant_entry" {
             let mut names = vec![
                 "lower",

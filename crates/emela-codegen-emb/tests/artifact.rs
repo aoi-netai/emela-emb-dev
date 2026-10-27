@@ -23,7 +23,7 @@ fn generator_lists_every_source_and_header_in_a_valid_manifest() {
     assert_eq!(manifest, Manifest::from_files(&output.files).unwrap());
     assert_eq!(manifest.files.len() + 1, output.files.len());
     assert!(
-        !manifest
+        manifest
             .files
             .iter()
             .any(|file| file.role == FileRole::AliasesHeader)
@@ -41,6 +41,7 @@ fn adding_an_adapter_and_aliases_refreshes_one_complete_manifest() {
         ("adapter/native.c", "/* native adapter */"),
         (ALIASES_HEADER, "/* aliases */"),
     ] {
+        output.files.retain(|file| file.path != path);
         output.files.push(GeneratedFile {
             path: path.into(),
             contents: contents.into(),

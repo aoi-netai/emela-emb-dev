@@ -258,7 +258,7 @@
   "emela_core::Builtin::IntToString": [
     {
       "target": "lib",
-      "name": "backend::separation_tests::board_and_native_entries_supply_dynamic_string_output_buffers"
+      "name": "backend::separation_tests::common_entries_supply_dynamic_string_output_buffers"
     }
   ],
   "emela_core::Builtin::IntParse": [

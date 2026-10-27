@@ -40,6 +40,8 @@ impl ExternalAdapter {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Options {
+    entry: String,
+    export_aliases: Vec<(String, String)>,
     string_capacity: u16,
     peripheral_buffer_capacity: u16,
     heap_bytes: u32,
@@ -59,6 +61,8 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            entry: "main".into(),
+            export_aliases: Vec::new(),
             string_capacity: 256,
             peripheral_buffer_capacity: 256,
             heap_bytes: 0,
@@ -247,5 +251,26 @@ impl ExternalAdapter {
     }
     pub(crate) fn result(&self) -> ExternalResult {
         self.result
+    }
+}
+
+impl Options {
+    pub fn with_entry(mut self, name: impl Into<String>) -> Self {
+        self.entry = name.into();
+        self
+    }
+    pub fn with_export_alias(
+        mut self,
+        alias: impl Into<String>,
+        function: impl Into<String>,
+    ) -> Self {
+        self.export_aliases.push((alias.into(), function.into()));
+        self
+    }
+    pub(crate) fn entry(&self) -> &str {
+        &self.entry
+    }
+    pub(crate) fn export_aliases(&self) -> &[(String, String)] {
+        &self.export_aliases
     }
 }

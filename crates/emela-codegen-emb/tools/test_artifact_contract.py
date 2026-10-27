@@ -42,6 +42,13 @@ class ArtifactFixture(unittest.TestCase):
 
 
 class ContractTests(ArtifactFixture):
+    def test_legacy_v1_contract_is_read_with_its_original_fields(self):
+        self.metadata["schema_version"] = 1
+        self.metadata["abi_version"] = 1
+        del self.metadata["metadata"]
+        self.manifest.write_text(json.dumps(self.metadata))
+        self.assertEqual(len(load_manifest(self.generated)["source"]), 2)
+
     def test_shared_invalid_corpus_is_rejected(self):
         cases = json.loads((ROOT / "tests/fixtures/artifact-invalid.json").read_text())
         for case in cases:

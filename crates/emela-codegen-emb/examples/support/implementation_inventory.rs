@@ -31,6 +31,8 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Target {
     pub owner: String,
+    #[serde(default)]
+    pub representation_owner: Option<String>,
     pub contexts: Vec<String>,
 }
 
@@ -57,6 +59,8 @@ pub struct Route {
     pub path: String,
     pub symbol: String,
     pub owner: String,
+    #[serde(default)]
+    pub representation_owner: Option<String>,
     pub selector: Selector,
     pub expression: String,
     /// Disambiguates e.g. `let expression = match op` from an arity/type-checking table.
@@ -71,6 +75,15 @@ pub struct Route {
     pub only_variants: Vec<String>,
     #[serde(default)]
     pub required_calls: Vec<String>,
+}
+
+impl Route {
+    fn pattern_owner(&self) -> String {
+        self.representation_owner.as_ref().map_or_else(
+            || self.owner.clone(),
+            |owner| format!("{}=>{owner}", self.owner),
+        )
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -177,9 +190,10 @@ fn location(path: &str, span: proc_macro2::Span) -> Location {
 
 fn variant_id(path: &syn::Path, owner: &str) -> Option<String> {
     let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-    let short = owner.rsplit("::").next()?;
+    let (owner, representation) = owner.split_once("=>").unwrap_or((owner, owner));
+    let short = representation.rsplit("::").next()?;
     if segments.len() == 2 && segments[0] == short
-        || segments.len() == 3 && segments[..2].join("::") == owner
+        || segments.len() > 2 && segments[..segments.len() - 1].join("::") == representation
     {
         Some(format!("{owner}::{}", segments.last()?))
     } else {
@@ -378,7 +392,7 @@ impl<'ast> Visit<'ast> for Extractor<'_> {
             && init.diverge.is_some()
             && expr_key(&init.expr) == self.expression
         {
-            let ids = pattern_ids(&local.pat, &self.route.owner);
+            let ids = pattern_ids(&local.pat, &self.route.pattern_owner());
             if !ids.is_empty() {
                 self.result.sites += 1;
                 let body = Expr::Block(syn::ExprBlock {
@@ -406,7 +420,7 @@ impl<'ast> Visit<'ast> for Extractor<'_> {
         {
             self.result.sites += 1;
             for arm in &value.arms {
-                let ids = pattern_ids(&arm.pat, &self.route.owner);
+                let ids = pattern_ids(&arm.pat, &self.route.pattern_owner());
                 if ids.is_empty() && catch_all(&arm.pat) {
                     self.result.fallbacks.push(Fallback {
                         route: self.route.id.clone(),
@@ -431,7 +445,7 @@ impl<'ast> Visit<'ast> for Extractor<'_> {
 
     fn visit_expr_if(&mut self, value: &'ast syn::ExprIf) {
         if matches!(self.route.selector, Selector::If) {
-            let ids = condition_ids(&value.cond, &self.expression, &self.route.owner);
+            let ids = condition_ids(&value.cond, &self.expression, &self.route.pattern_owner());
             if !ids.is_empty() {
                 self.result.sites += 1;
                 let body = Expr::Block(syn::ExprBlock {
@@ -562,6 +576,57 @@ pub fn collect(
     let mut items = BTreeMap::<String, Vec<Evidence>>::new();
     let mut fallbacks = Vec::new();
     let mut sources = BTreeMap::<String, String>::new();
+    if config
+        .targets
+        .iter()
+        .any(|target| target.representation_owner.is_some())
+    {
+        let normalized_path = "crates/emela-codegen-emb/src/contract/ir.rs";
+        let normalized_source =
+            fs::read_to_string(root.join(normalized_path)).map_err(|e| e.to_string())?;
+        let normalized = syn::parse_file(&normalized_source).map_err(|e| e.to_string())?;
+        sources.insert(normalized_path.into(), sha256(normalized_source.as_bytes()));
+        for target in &config.targets {
+            if let Some(owner) = &target.representation_owner {
+                let name = owner.rsplit("::").next().unwrap();
+                let variants = normalized
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        Item::Enum(item) if item.ident == name => Some(
+                            item.variants
+                                .iter()
+                                .map(|variant| variant.ident.to_string())
+                                .collect::<BTreeSet<_>>(),
+                        ),
+                        _ => None,
+                    })
+                    .ok_or_else(|| format!("missing normalized enum {owner}"))?;
+                let upstream: BTreeSet<_> = definitions
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        item.kind == "variant"
+                            && item.parent.as_deref() == Some(target.owner.as_str())
+                    })
+                    .map(|item| item.id.rsplit("::").next().unwrap().to_owned())
+                    .collect();
+                if variants != upstream {
+                    return Err(format!(
+                        "normalized variants differ from {}: {owner}",
+                        target.owner
+                    ));
+                }
+                if !config.routes.iter().any(|route| {
+                    route.owner == target.owner
+                        && route.path.ends_with("lower/adapter.rs")
+                        && route.representation_owner.is_none()
+                }) {
+                    return Err(format!("missing upstream adapter for {}", target.owner));
+                }
+            }
+        }
+    }
     let mut route_ids = BTreeSet::new();
     for route in &config.routes {
         if !route_ids.insert(route.id.clone())
@@ -569,6 +634,14 @@ pub fn collect(
             || route.contexts.is_empty()
         {
             return Err(format!("invalid/duplicate route {}", route.id));
+        }
+        if route.representation_owner.is_some()
+            && !config.targets.iter().any(|target| {
+                target.owner == route.owner
+                    && target.representation_owner == route.representation_owner
+            })
+        {
+            return Err(format!("undeclared representation mapping {}", route.id));
         }
         let source = fs::read_to_string(root.join(&route.path))
             .map_err(|e| format!("{}: {e}", route.path))?;

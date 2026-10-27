@@ -5,19 +5,9 @@
 
 pub mod artifact;
 pub mod boards;
-mod const_eval;
-mod const_origins;
-mod const_runtime;
-mod derived;
-pub use derived::{DerivedOperation, derived_binding};
+pub use contract::DerivedOperation;
+pub use input::upstream::derived::derived_binding;
 mod backend;
-mod discarded;
-mod float_parse;
-mod float_to_string;
-mod heap;
-mod scope_abi;
-mod type_expansion;
-mod unicode_grapheme;
 mod writer;
 
 mod contract;
@@ -39,3 +29,7 @@ pub fn compile(core: &emela_core::Module, options: &Options) -> Result<Output, V
 pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Output, Vec<Error>> {
     backend::compile_flow(flow, options)
 }
+
+mod semantics;
+
+pub mod platform;

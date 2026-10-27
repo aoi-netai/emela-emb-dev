@@ -1,11 +1,11 @@
 {
   "emela_lir::FnId": {
-    "path": "src/backend/compiler/c/names.rs",
+    "path": "src/semantics/c.rs",
     "symbol": "function_name",
     "role": "schema"
   },
   "emela_lir::VarId": {
-    "path": "src/backend/compiler/c/names.rs",
+    "path": "src/semantics/c.rs",
     "symbol": "variable_name",
     "role": "schema"
   },
@@ -20,7 +20,7 @@
     "role": "schema"
   },
   "emela_lir::LabelId": {
-    "path": "src/backend/compiler/features/statements/block.rs",
+    "path": "src/backend/compiler/emit/features/statements/block.rs",
     "symbol": "emit",
     "role": "schema"
   },
@@ -30,22 +30,22 @@
     "role": "schema"
   },
   "emela_lir::Stage": {
-    "path": "src/backend/compiler/features/stages.rs",
+    "path": "src/backend/compiler/lower/stages.rs",
     "symbol": "verify",
     "role": "schema"
   },
   "emela_lir::Function": {
     "path": "src/backend/compiler/emit/mod.rs",
-    "symbol": "emit",
+    "symbol": "render",
     "role": "schema"
   },
   "emela_lir::VarData": {
-    "path": "src/backend/compiler/foundation/layouts.rs",
-    "symbol": "TypeLayouts::new",
+    "path": "src/backend/compiler/plan/layouts.rs",
+    "symbol": "CLayoutPlan::new",
     "role": "schema"
   },
   "emela_lir::LabelData": {
-    "path": "src/backend/compiler/features/statements/block.rs",
+    "path": "src/backend/compiler/emit/features/statements/block.rs",
     "symbol": "emit",
     "role": "schema"
   },
@@ -55,163 +55,277 @@
     "role": "schema"
   },
   "emela_lir::Term": {
-    "path": "src/backend/compiler/features/terms/mod.rs",
+    "path": "src/backend/compiler/emit/features/terms/mod.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/terms/mod.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::Stmt": {
-    "path": "src/backend/compiler/features/statements/mod.rs",
+    "path": "src/backend/compiler/emit/features/statements/mod.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/statements/mod.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::Suspend": {
-    "path": "src/backend/compiler/features/statements/let_.rs",
+    "path": "src/backend/compiler/emit/features/statements/let_.rs",
     "symbol": "emit",
     "role": "schema"
   },
   "emela_lir::SwitchOn": {
-    "path": "src/backend/compiler/features/switches.rs",
+    "path": "src/backend/compiler/emit/features/switches.rs",
     "symbol": "scrutinee",
     "role": "schema"
   },
   "emela_lir::Case": {
-    "path": "src/backend/compiler/features/statements/switch.rs",
+    "path": "src/backend/compiler/emit/features/statements/switch.rs",
     "symbol": "emit_switch",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/statements/switch.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::CaseKey": {
-    "path": "src/backend/compiler/features/case_keys.rs",
+    "path": "src/backend/compiler/emit/features/case_keys.rs",
     "symbol": "label",
     "role": "schema"
   },
   "emela_lir::Operand": {
-    "path": "src/backend/compiler/features/operands.rs",
+    "path": "src/backend/compiler/emit/features/operands.rs",
     "symbol": "dispatch",
     "role": "schema"
   },
   "emela_lir::Const": {
-    "path": "src/backend/compiler/features/constants.rs",
+    "path": "src/backend/compiler/emit/features/constants.rs",
     "symbol": "dispatch",
     "role": "schema"
   },
   "emela_lir::Value": {
-    "path": "src/backend/compiler/features/values/mod.rs",
+    "path": "src/backend/compiler/emit/features/values/mod.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "string_bound"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "result_ownership"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "is_known_empty"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/mod.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::RuntimeOp": {
-    "path": "src/backend/compiler/features/runtime.rs",
+    "path": "src/backend/compiler/emit/features/runtime.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/runtime.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/runtime.rs",
+        "symbol": "string_bound"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/runtime.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/runtime.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::Closure": {
-    "path": "src/backend/compiler/features/values/closure.rs",
+    "path": "src/backend/compiler/lower/closure.rs",
     "symbol": "lower",
     "role": "schema"
   },
   "emela_lir::Callee": {
-    "path": "src/backend/compiler/features/values/call.rs",
+    "path": "src/backend/compiler/emit/features/values/call.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/values/call.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/call.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/call.rs",
+        "symbol": "is_known_empty"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/values/call.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::OnFail": {
-    "path": "src/backend/compiler/features/failures.rs",
+    "path": "src/backend/compiler/emit/features/failures.rs",
     "symbol": "emit",
     "role": "schema"
   },
   "emela_lir::PrimOp": {
-    "path": "src/backend/compiler/features/primitive_operations.rs",
+    "path": "src/backend/compiler/emit/features/primitive_operations.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/primitive_operations.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_lir::PrimTy": {
-    "path": "src/backend/compiler/features/primitive_types.rs",
+    "path": "src/backend/compiler/emit/features/primitive_types.rs",
     "symbol": "emit",
     "role": "schema"
   },
   "emela_lir::Repr": {
-    "path": "src/backend/compiler/features/representations.rs",
+    "path": "src/semantics/representations.rs",
     "symbol": "dispatch",
     "role": "schema"
   },
   "emela_core::Builtin": {
-    "path": "src/backend/compiler/features/builtins/mod.rs",
+    "path": "src/backend/compiler/emit/features/builtins/mod.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/builtins/mod.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/builtins/mod.rs",
+        "symbol": "string_bound"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/builtins/mod.rs",
+        "symbol": "result_ownership"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/builtins/mod.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/backend/compiler/plan/operations/builtins/mod.rs",
+        "symbol": "require_runtime"
+      }
+    ]
   },
   "emela_core::External": {
-    "path": "src/backend/compiler/foundation/external.rs",
+    "path": "src/backend/compiler/plan/external.rs",
     "symbol": "resolve",
     "role": "schema"
   },
   "emela_core::ExternalBinding": {
-    "path": "src/backend/compiler/foundation/external.rs",
+    "path": "src/backend/compiler/plan/external.rs",
     "symbol": "resolve",
     "role": "schema"
   },
   "emela_core::HostRef": {
-    "path": "src/backend/compiler/features/host_refs.rs",
+    "path": "src/semantics/host_refs.rs",
     "symbol": "symbol",
     "role": "schema"
   },
   "emela_core::HostModule": {
-    "path": "src/backend/compiler/features/host_modules.rs",
+    "path": "src/semantics/host_modules.rs",
     "symbol": "symbol",
     "role": "schema"
   },
   "emela_core::EffectDef": {
-    "path": "src/backend/compiler/foundation/layouts.rs",
-    "symbol": "TypeLayouts::collect",
+    "path": "src/backend/compiler/plan/layouts.rs",
+    "symbol": "CLayoutPlan::collect",
     "role": "schema"
   },
   "emela_core::OpDef": {
-    "path": "src/backend/compiler/foundation/layouts.rs",
-    "symbol": "TypeLayouts::collect",
+    "path": "src/backend/compiler/plan/layouts.rs",
+    "symbol": "CLayoutPlan::collect",
     "role": "schema"
   },
   "emela_core::EnumDef": {
-    "path": "src/backend/compiler/foundation/layouts.rs",
-    "symbol": "TypeLayouts::collect",
+    "path": "src/backend/compiler/plan/layouts.rs",
+    "symbol": "CLayoutPlan::collect",
     "role": "schema"
   },
   "emela_core::VariantDef": {
-    "path": "src/backend/compiler/features/variant_fields.rs",
+    "path": "src/semantics/variants.rs",
     "symbol": "types",
     "role": "schema"
   },
   "emela_core::Type": {
-    "path": "src/backend/compiler/features/types.rs",
+    "path": "src/semantics/type_representations.rs",
     "symbol": "repr",
     "role": "schema"
   },
   "emela_core::SetSummary": {
-    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "path": "src/backend/compiler/lower/type_normalize.rs",
     "symbol": "normalize",
     "role": "schema"
   },
   "emela_core::FnSets": {
-    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "path": "src/backend/compiler/lower/type_normalize.rs",
     "symbol": "normalize",
     "role": "schema"
   },
   "emela_core::FnType": {
-    "path": "src/backend/compiler/foundation/type_normalize.rs",
+    "path": "src/backend/compiler/lower/type_normalize.rs",
     "symbol": "normalize",
     "role": "schema"
   },
   "emela_core::VariantFields": {
-    "path": "src/backend/compiler/features/variant_fields.rs",
+    "path": "src/semantics/variants.rs",
     "symbol": "arity",
     "role": "schema"
   },
   "emela_core::CtorRef": {
-    "path": "src/backend/compiler/features/values/make.rs",
+    "path": "src/backend/compiler/emit/features/values/make.rs",
     "symbol": "emit_make",
     "role": "schema"
   },
   "emela_core::FiberOp": {
-    "path": "src/backend/compiler/features/fibers/mod.rs",
+    "path": "src/backend/compiler/emit/features/fibers/mod.rs",
     "symbol": "emit",
-    "role": "schema"
+    "role": "schema",
+    "phase_owners": [
+      {
+        "path": "src/backend/compiler/plan/operations/fibers/mod.rs",
+        "symbol": "string_behavior"
+      }
+    ]
   }
 }
