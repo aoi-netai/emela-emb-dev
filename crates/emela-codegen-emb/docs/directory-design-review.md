@@ -1,3 +1,5 @@
+> この文書の現状調査は改修前の記録です。実装後の構成は[src/backend/README.md](../src/backend/README.md)、共通ABIと接続手順は[artifact-contract.md](artifact-contract.md)を参照してください。
+
 # ディレクトリ構成の調査と改善案
 
 調査日: 2026-10-27。対象: `crates/emela-codegen-emb`、関連するdriver・CLI・CI。調査時のcommit: `a527c33`。

@@ -75,6 +75,8 @@ jobs:
           bash crates/emela-codegen-emb/tools/backend-inventory.sh --check
           bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh --check --require-evidence
           python3 crates/emela-codegen-emb/tools/test-inventory.py --check-built
+      - name: Embedded pure stage boundaries and frozen artifact connections
+        run: cargo test -p emela-codegen-emb --test architecture --test platform --locked
       - name: Embedded C artifact and BSP boundary tests
         run: python3 -B -m unittest discover -s crates/emela-codegen-emb/tools -p 'test_*.py'
 
