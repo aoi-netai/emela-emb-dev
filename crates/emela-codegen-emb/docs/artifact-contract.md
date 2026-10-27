@@ -48,7 +48,7 @@ platformは初期化後にprogramを一度呼ぶ。nativeは復帰し、boardは
 
 `services`は必要なサービス、`external_symbols`は追加Cが供給するsymbol、`isr_safe_symbols`は実際にISRから必要となる外部実装の保証である。compilerはISRの再帰・suspend・heap・動的呼出し等を検査し、接続時にはplatformの能力宣言と照合する。宣言だけでC signatureや実サイズが証明されるわけではなく、C compile/linkと動作検証も必要になる。
 
-Rustの共通接続APIはv2だけを受け付ける。v1の起動契約は異なるため共通接続へ流用せず再生成する。既存BSPのPython readerは、旧手順のためv1とv2を版別の厳密なfield集合で読む。
+Rustの共通接続APIとBSPのPython readerはv2だけを受け付ける。v1の生成物は再生成する。
 
 ## 生成・接続・実行
 

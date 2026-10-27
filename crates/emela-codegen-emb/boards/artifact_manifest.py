@@ -20,7 +20,7 @@ def _object(pairs):
 def load_manifest(directory, require_aliases=False):
     """Return validated role -> ordered paths; never discover extra sources by glob.
 
-    C ABI v1 fixes the three interface header names. Aliases are optional for a C
+    C ABI v2 fixes the three interface header names. Aliases are optional for a C
     library and required by a BSP. All declared paths must be existing files within
     the artifact directory, including when symlinks are present.
     """
@@ -31,25 +31,24 @@ def load_manifest(directory, require_aliases=False):
         if not isinstance(data, dict):
             raise ValueError("expected schema_version, abi_version, and files")
         version = (data.get("schema_version"), data.get("abi_version"))
-        if any(type(value) is not int for value in version) or version not in {(1, 1), (2, 2)}:
-            raise ValueError("unsupported schema/ABI version (expected 1/1 or 2/2)")
-        expected = {"schema_version", "abi_version", "files"} | ({"metadata"} if version == (2, 2) else set())
+        if any(type(value) is not int for value in version) or version != (2, 2):
+            raise ValueError("unsupported schema/ABI version (expected 2/2; regenerate the artifact)")
+        expected = {"schema_version", "abi_version", "files", "metadata"}
         if set(data) != expected:
             raise ValueError("unknown or missing manifest fields")
-        if version == (2, 2):
-            metadata = data["metadata"]
-            if not isinstance(metadata, dict) or set(metadata) != {"entry", "exports", "services", "external_symbols", "isr_entries", "isr_safe_symbols", "task_capacity"}:
-                raise ValueError("invalid ABI 2 metadata")
-            for field in ("services", "external_symbols", "isr_entries", "isr_safe_symbols"):
-                names = metadata[field]
-                if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names):
-                    raise ValueError("invalid metadata " + field)
-            if metadata["entry"] is not None and not isinstance(metadata["entry"], str):
-                raise ValueError("invalid entry")
-            if type(metadata["task_capacity"]) is not int or not 0 <= metadata["task_capacity"] <= 65535:
-                raise ValueError("invalid task capacity")
-            if not isinstance(metadata["exports"], list) or any(not isinstance(export, dict) or set(export) != {"source_name", "c_symbol", "suspends"} or type(export["suspends"]) is not bool or not isinstance(export["source_name"], str) or not isinstance(export["c_symbol"], str) for export in metadata["exports"]):
-                raise ValueError("invalid exports")
+        metadata = data["metadata"]
+        if not isinstance(metadata, dict) or set(metadata) != {"entry", "exports", "services", "external_symbols", "isr_entries", "isr_safe_symbols", "task_capacity"}:
+            raise ValueError("invalid ABI 2 metadata")
+        for field in ("services", "external_symbols", "isr_entries", "isr_safe_symbols"):
+            names = metadata[field]
+            if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names):
+                raise ValueError("invalid metadata " + field)
+        if metadata["entry"] is not None and not isinstance(metadata["entry"], str):
+            raise ValueError("invalid entry")
+        if type(metadata["task_capacity"]) is not int or not 0 <= metadata["task_capacity"] <= 65535:
+            raise ValueError("invalid task capacity")
+        if not isinstance(metadata["exports"], list) or any(not isinstance(export, dict) or set(export) != {"source_name", "c_symbol", "suspends"} or type(export["suspends"]) is not bool or not isinstance(export["source_name"], str) or not isinstance(export["c_symbol"], str) for export in metadata["exports"]):
+            raise ValueError("invalid exports")
         if not isinstance(data["files"], list):
             raise ValueError("files must be a list")
         roles = {role: [] for role in ["source", "header", *INTERFACES]}

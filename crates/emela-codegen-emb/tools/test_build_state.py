@@ -55,11 +55,14 @@ class BuildStateTests(unittest.TestCase):
         for path, text in inputs.items():
             self.write(path, text)
         self.artifact_path = self.output / "generated/emela_artifact.json"
-        self.artifact = {"schema_version": 1, "abi_version": 1, "files": [
+        self.artifact = {"schema_version": 2, "abi_version": 2, "files": [
             {"path": name, "role": role} for name, role in [
                 ("emela_embedded.c", "source"), ("emela_embedded.h", "public_header"),
                 ("emela_board.h", "platform_header"), ("emela_embedded_exports.h", "aliases_header"),
-                ("nested/adapter.c", "source"), ("nested/value.h", "header")]]}
+                ("nested/adapter.c", "source"), ("nested/value.h", "header")]],
+            "metadata": {"entry": None, "exports": [], "services": [],
+                         "external_symbols": [], "isr_entries": [],
+                         "isr_safe_symbols": [], "task_capacity": 0}}
         self.write(self.artifact_path, json.dumps(self.artifact))
         self.firmware_path = self.output / "firmware/firmware.json"
         self.firmware = {
