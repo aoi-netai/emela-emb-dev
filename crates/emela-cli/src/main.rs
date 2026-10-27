@@ -26,12 +26,13 @@ enum Command {
         artifact: PathBuf,
         #[arg(long)]
         out_dir: PathBuf,
+        /// Built-in connection platform (currently only native)
         #[arg(long, default_value = "native")]
         platform: String,
         /// Custom package JSON (contains its C files, capabilities and build flags)
         #[arg(long)]
         package: Option<PathBuf>,
-        /// Compiler executable; board builds require an explicit cross compiler
+        /// Compiler executable used for the selected package
         #[arg(long, default_value = "cc")]
         compiler: PathBuf,
         #[arg(long,default_value="O2",value_parser=["O0","O2"])]

@@ -15,7 +15,7 @@ pub(super) fn emit(plan: &PlannedModule<'_>, id: FnId, writer: &mut Writer) {
         writer.line(&format!("EmelaFiber main_fiber = {name}_start({args});"));
         writer.begin_block("while (!emela_fiber_done(main_fiber))");
         writer.line("(void)emela_scheduler_run(UINT32_C(64));");
-        writer.line("emela_board_idle();");
+        writer.line("if (!emela_fiber_done(main_fiber)) emela_board_idle();");
         writer.end_block();
         writer.line("emela_fiber_release(main_fiber);");
         if layouts.type_repr(function.ret) != Repr::Void {

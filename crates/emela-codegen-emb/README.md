@@ -14,7 +14,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 `Options`でString容量、固定heap、fiberやtaskのpool容量などを指定します。必要なランタイムとボード接続用のCインターフェースは生成コードに含まれます。
 
-[生成Cとビルドの契約](docs/artifact-contract.md)は`emela_artifact.json`で生成ファイルの役割と形式・ABIの版を定義します。BSPはこのmanifestからCを選び、Emela sourceやIRを使わずにビルドします。ABI 2の共通出力はplatformごとに書き換えず、`platform::prepare_connection`と`platform::execution`で接続します。`emela connect generated --out-dir host-build`は元sourceなしでnativeへbuildします。
+[生成Cとビルドの契約](docs/artifact-contract.md)は`emela_artifact.json`で生成ファイルの役割と形式・ABIの版を定義します。BSPはこのmanifestからCを選び、Emela sourceやIRを使わずにビルドします。ABI 2の共通出力はplatformごとに書き換えず、`platform::prepare_connection`と`platform::execution`で接続します。`emela connect generated --out-dir host-build`は元sourceなしでnativeへbuildします。同梱MCUへの保存済みartifact接続は未対応です。
 
 ## 実装とテストの自動検査
 

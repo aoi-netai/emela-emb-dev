@@ -429,6 +429,21 @@ fn connect_builds_a_frozen_artifact_after_removing_the_emela_project() {
             assert_eq!(std::fs::read(path).unwrap(), *bytes);
         }
     }
+    fails(
+        root,
+        &[
+            "connect",
+            "target/emela/c-embedded",
+            "--out-dir",
+            "mcu-build",
+            "--platform",
+            "stm32f446re",
+            "--compiler",
+            "missing-cross-compiler",
+        ],
+        "not supported yet; use `emela build --board stm32f446re` with the original project",
+    );
+    assert!(!root.join("mcu-build").exists());
 }
 
 #[test]

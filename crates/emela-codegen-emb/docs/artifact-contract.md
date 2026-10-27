@@ -1,6 +1,6 @@
 # 共通生成物とplatform接続の契約
 
-`compile`／`compile_flow`は一度だけ共通C・header・manifest・exportsを生成する。保存した同じ一式をnative、board、独自packageへ渡す。platform用のCは別directoryへ置き、共通Outputへ追加しない。
+`compile`／`compile_flow`は一度だけ共通C・header・manifest・exportsを生成する。保存した同じ一式をnativeや独自packageへ渡せる。同梱boardへの保存済みartifactの接続は今後の対象である。platform用のCは別directoryへ置き、共通Outputへ追加しない。
 
 ## manifest v2／ABI 2
 
@@ -68,7 +68,7 @@ let executable = platform::execution::execute(&plan, build_dir)?;
 
 nativeは単一threadのconsole、Unix epochのclock、単調clockを使う固定容量timer、defect/debug、task lockを提供する。ISRや別threadからの完了通知は受け付ける契約ではない。独自の単一threadの非同期producerは、packageの追加Cと`emela_native_set_poll`でidle時のpollを登録できる。未対応のGPIO等は接続時に不足サービスとして診断する。
 
-MCU packageは`platform::board(id)`で得られる。解決済みcross compilerを渡し、package自身がreset/mainを持つので`ConnectOptions.main=false`にする。STM32のprofileからのheader・vector・linker生成も純粋なpackage構築に含まれる。既存BSPは`board_main_start`を使う引数なし・Int戻り値のsuspend entryを要求する。既存projectのbuild/flashは資源計測・image作成・source鮮度確認を含むBSP手順を維持する。
+MCU packageは将来の接続に向けて`platform::board(id)`で構築・計画できる。解決済みcross compilerを渡し、package自身がreset/mainを持つので`ConnectOptions.main=false`にする。STM32のprofileからのheader・vector・linker生成も純粋なpackage構築に含まれる。既存BSPは`board_main_start`を使う引数なし・Int戻り値のsuspend entryを要求する。保存済みartifactを同梱MCUへ接続するCLIは未対応である。現時点のfirmware生成・書き込みは`emela build --board <id>`／`emela flash --board <id>`を使う。この経路では資源計測・image作成・source鮮度確認も行う。
 
 ## sourceから独立したCLI接続
 
@@ -76,11 +76,8 @@ MCU packageは`platform::board(id)`で得られる。解決済みcross compiler�
 emela build --target c-embedded --out-dir generated
 emela connect generated --out-dir host-build --platform native --optimization O2
 ./host-build/out/program
-
-emela connect generated --out-dir mcu-build --platform stm32f446re \
-  --compiler /path/to/arm-none-eabi-gcc --no-main
 ```
 
-`connect`は元Emela sourceやPome.tomlを読まない。`--package package.json`で`PlatformPackage`を読み込めば、compilerを変更せず第三platformへ接続できる。packageはABI版、能力、ISR保証、全ファイルのbytes、source一覧、compile/link flagsを持つ。追加の外部Cもpackageへ含め、その供給symbolを明示する。
+`connect`は元Emela sourceやPome.tomlを読まない。同梱の接続先は現在nativeのみ。`--package package.json`で`PlatformPackage`を読み込めば、compilerを変更せず独自platformへ接続できる。packageはABI版、能力、ISR保証、全ファイルのbytes、source一覧、compile/link flagsを持つ。追加の外部Cもpackageへ含め、その供給symbolを明示する。
 
 成功記録`connection-success.json`は共通一式とplatform入力のhashを分離し、compiler driverの実体・version／identity、実行形式のhashも確認する。`verify_success`は入力・package・toolchain・binaryの変更を検出する。新たなbuildを始めた時点で古い成功記録を無効にする。既存projectのbuild/flashでは、これに加えて従来のsource・overlay・設定の鮮度検査を維持する。

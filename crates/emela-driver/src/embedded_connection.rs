@@ -12,16 +12,26 @@ pub struct ArtifactConnection<'a> {
     pub main: bool,
 }
 pub fn connect_artifact(request: ArtifactConnection<'_>) -> Result<std::path::PathBuf, String> {
+    if request.package.is_none() && request.platform != "native" {
+        if emela_codegen_emb::boards::BOARD_NAMES.contains(&request.platform) {
+            return Err(format!(
+                "connecting a saved artifact to board `{}` is not supported yet; use `emela build --board {}` with the original project for firmware",
+                request.platform, request.platform
+            ));
+        }
+        return Err(format!(
+            "unknown connection platform `{}`; use `native` or provide `--package`",
+            request.platform
+        ));
+    }
     let output = platform::execution::load_artifact(request.artifact)?;
     let package = if let Some(path) = request.package {
         serde_json::from_slice::<PlatformPackage>(
             &std::fs::read(path).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?
-    } else if request.platform == "native" {
-        platform::native()
     } else {
-        platform::board(request.platform)?
+        platform::native()
     };
     let toolchain = platform::execution::inspect_toolchain(request.compiler)?;
     let options = ConnectOptions {
@@ -32,7 +42,7 @@ pub fn connect_artifact(request: ArtifactConnection<'_>) -> Result<std::path::Pa
             "firmware.elf"
         }
         .into(),
-        main: request.main && (request.package.is_some() || request.platform == "native"),
+        main: request.main,
     };
     let plan = platform::prepare_connection(&output, &package, &options, &toolchain)?;
     platform::execution::execute(&plan, request.output)

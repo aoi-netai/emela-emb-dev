@@ -36,8 +36,9 @@ fn frozen_output_builds_on_native_and_independent_third_platform_and_plans_both_
     let native_plan =
         prepare_connection(&output, &native(), &ConnectOptions::default(), &tool).unwrap();
     run(&native_plan);
+    // This entry finishes in the first scheduler run, so an idle call is always premature.
     // Independent package: only generated public headers and its own services. No native code.
-    let package=PlatformPackage{id:"third".into(),abi_version:2,services:["runtime.lifecycle","runtime.defect"].map(str::to_owned).into(),external_symbols:Default::default(),isr_safe_symbols:Default::default(),supports_isr:false,files:vec![PackageFile{path:"third.c".into(),contents:b"#include <stdlib.h>\n#include \"emela_board.h\"\nstatic int invoked;\nvoid emela_board_idle(void) {}\nvoid emela_platform_start(void (*run)(void)) { if(invoked++) abort();run(); }\n_Noreturn void emela_board_defect(EmelaDefectKind kind,const char *text,uint16_t length) {(void)kind;(void)text;(void)length;abort();}\n".to_vec()}],sources:vec!["third.c".into()],compile_flags:vec![],link_flags:vec!["-lm".into()]};
+    let package=PlatformPackage{id:"third".into(),abi_version:2,services:["runtime.lifecycle","runtime.defect"].map(str::to_owned).into(),external_symbols:Default::default(),isr_safe_symbols:Default::default(),supports_isr:false,files:vec![PackageFile{path:"third.c".into(),contents:b"#include <stdlib.h>\n#include \"emela_board.h\"\nstatic int invoked;\nvoid emela_board_idle(void) { abort(); }\nvoid emela_platform_start(void (*run)(void)) { if(invoked++) abort();run(); }\n_Noreturn void emela_board_defect(EmelaDefectKind kind,const char *text,uint16_t length) {(void)kind;(void)text;(void)length;abort();}\n".to_vec()}],sources:vec!["third.c".into()],compile_flags:vec![],link_flags:vec!["-lm".into()]};
     for optimization in [Optimization::O0, Optimization::O2] {
         let plan = prepare_connection(
             &output,
