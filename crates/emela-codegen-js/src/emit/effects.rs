@@ -37,6 +37,9 @@ fn may_suspend(e: &Expr) -> bool {
 /// The evidence table key. For an effect with type arguments (`State.State[Int]`, spec 8.1),
 /// turning the name into an identifier could collapse the type argument delimiters and collide,
 /// so the IR effect index is appended to keep keys distinct.
+///
+/// Keys start with an uppercase letter (effect names do), so they never shadow a name on
+/// `Object.prototype` that the table would otherwise inherit.
 pub(crate) fn effect_key(m: &Module, effect: EffectId) -> String {
     let name = &m.effects[effect].name;
     if name.contains('[') {
@@ -83,6 +86,10 @@ pub(crate) fn module_specifier(module: &str) -> String {
 
 impl Emitter<'_> {
     /// `{ __proto__: base, Console: h }`．
+    ///
+    /// Each `with` makes a new table chained to the outer one instead of writing into it. A
+    /// capability taken out of the outer table, or a closure that captured the outer table, keeps
+    /// seeing the outer handlers.
     pub(super) fn provide(&mut self, base: Option<&Expr>, bindings: &[(EffectId, Expr)]) -> String {
         let mut es: Vec<&Expr> = base.into_iter().collect();
         es.extend(bindings.iter().map(|(_, h)| h));
@@ -154,8 +161,10 @@ impl Emitter<'_> {
     /// For each binding with release, the later bindings and the body are wrapped in `try`, and
     /// release is evaluated in `finally`. A failure of a later binding (init) or of the body leaves
     /// the `try` by `return` or `break`, so releases run in reverse binding order. When unwinding
-    /// while suspended, the runtime closes the generator with `gen.return()`, which runs the same
-    /// `finally` (`$Interrupted` from `$sync` leaves as an exception).
+    /// while suspended, the runtime throws `$Interrupted` into the waiting continuation, which
+    /// runs the same `finally` from the inside out. Throwing replaced closing the generator with
+    /// `gen.return()` so that interruption works per fiber: a scope (`$scope`) can catch the
+    /// interruption aimed at its body on the way.
     ///
     /// ```js
     /// const h$1 = Pool();
@@ -297,6 +306,37 @@ impl Emitter<'_> {
                     js_string(source_name(&f.name))
                 ));
             }
+        }
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    /// The function the host calls for an exported fn (`[target.js.module]`), named `name`. It
+    /// converts the arguments from the host, calls the fn as one launch and converts its value
+    /// back. A fn that may suspend returns a Promise of the value, which rejects with the defect or
+    /// the interruption the launch ends with; one that does not suspend returns the value and
+    /// throws a defect.
+    pub(super) fn host_export_fn(&mut self, id: FnId, f: &Function, name: &str) {
+        let params: Vec<String> = (0..f.params.len()).map(|i| format!("$p{i}")).collect();
+        self.line(&format!("function {name}({}) {{", params.join(", ")));
+        self.indent += 1;
+        let args: Vec<String> = params
+            .iter()
+            .zip(&f.params)
+            .map(|(p, &local)| self.convert(self.m.locals[local].ty, p, Dir::FromHost, 0))
+            .collect();
+        let call = format!("{}({})", self.fn_js(id), args.join(", "));
+        if f.suspends {
+            let launch = self.rt("$export");
+            let value = self.convert(f.ret, "$v", Dir::ToHost, 0);
+            if value == "$v" {
+                self.line(&format!("return {launch}({call});"));
+            } else {
+                self.line(&format!("return {launch}({call}).then(($v) => {value});"));
+            }
+        } else {
+            let value = self.convert(f.ret, &call, Dir::ToHost, 0);
+            self.line(&format!("return {value};"));
         }
         self.indent -= 1;
         self.line("}");

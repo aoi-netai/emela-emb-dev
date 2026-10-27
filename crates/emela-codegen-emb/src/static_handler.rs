@@ -266,7 +266,7 @@ fn term_uses(term: &Term, needle: VarId) -> bool {
         Term::Yield(value) | Term::Return(value) => value
             .as_ref()
             .is_some_and(|value| operand_uses(value, needle)),
-        Term::Fail(value) | Term::Defect(value) => operand_uses(value, needle),
+        Term::Fail(value) | Term::Defect(value, _) => operand_uses(value, needle),
         Term::Break { value, .. } => value
             .as_ref()
             .is_some_and(|value| operand_uses(value, needle)),

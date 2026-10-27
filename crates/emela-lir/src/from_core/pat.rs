@@ -11,7 +11,7 @@
 //! - Within a block, every row tests the occurrence, so each row goes to exactly one case: a tag
 //!   `switch` for enums (none for an enum of one constructor), a literal `switch` for Int and
 //!   Int64, `if` for Bool, `==` comparisons for String and Float, and "empty or not" for lists.
-//!   No arm body is converted twice.
+//!   No arm body is converted twice; the price is that a later block may test a value again.
 //! - A row without tests left matches: its bindings take the occurrences' variables, then its
 //!   guard (if any) is evaluated and, if false, the rows after it are tried.
 //!
@@ -211,9 +211,10 @@ impl Lower<'_> {
     fn fail_exit(&mut self, fail: Option<LabelId>) {
         match fail {
             Some(label) => self.term(Term::Break { label, value: None }),
-            None => self.term(Term::Defect(Operand::Const(Const::String(
-                "unreachable: no match arm matched".into(),
-            )))),
+            None => self.term(Term::Defect(
+                Operand::Const(Const::String("unreachable: no match arm matched".into())),
+                None,
+            )),
         }
     }
 

@@ -195,6 +195,7 @@ fn rejects_heap_only_failure_handle_at_flow_stage() {
 fn rejects_heap_only_runtime_operations_at_flow_stage() {
     for op in [
         RuntimeOp::Defect,
+        RuntimeOp::DefectAt,
         RuntimeOp::DefectTake,
         RuntimeOp::DefectResume,
         RuntimeOp::Yield,
@@ -205,6 +206,10 @@ fn rejects_heap_only_runtime_operations_at_flow_stage() {
         builder.set_exported().set_suspends();
         let args = match op {
             RuntimeOp::Defect => vec![Const::String("defect".into()).into()],
+            RuntimeOp::DefectAt => vec![
+                Const::String("defect".into()).into(),
+                Const::String("main.emel:1:1".into()).into(),
+            ],
             RuntimeOp::DefectResume => vec![builder.param("pending", TypeId::ANY).into()],
             _ => vec![],
         };
@@ -227,6 +232,7 @@ fn rejects_source_builtins_that_must_lower_to_flow_control_or_runtime() {
     for op in [
         Builtin::Panic,
         Builtin::Todo,
+        Builtin::AssertFail,
         Builtin::Dbg,
         Builtin::Inspect,
         Builtin::ShowNested,
@@ -239,6 +245,10 @@ fn rejects_source_builtins_that_must_lower_to_flow_control_or_runtime() {
         let args = match op {
             Builtin::Panic => vec![Const::String("panic".into()).into()],
             Builtin::Todo => vec![],
+            Builtin::AssertFail => vec![
+                Const::String("assert".into()).into(),
+                Const::String("main.emel:1:1".into()).into(),
+            ],
             Builtin::Dbg | Builtin::Inspect | Builtin::ShowNested => vec![Const::Int(42).into()],
             Builtin::ShowString | Builtin::DebugPrint => {
                 vec![Const::String("debug".into()).into()]

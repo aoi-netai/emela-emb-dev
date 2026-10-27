@@ -32,17 +32,17 @@ pub(super) fn emit_ownership_declarations(layouts: &TypeLayouts<'_>, writer: &mu
     if !layouts.has_error_abi {
         return;
     }
-    writer.line("static inline void emela_error_retain(EmelaError error);");
-    writer.line("static inline void emela_error_own(EmelaError *error);");
-    writer.line("static inline void emela_error_release(EmelaError error);");
-    writer.line("static inline void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail);");
+    writer.line("static inline EMELA_UNUSED void emela_error_retain(EmelaError error);");
+    writer.line("static inline EMELA_UNUSED void emela_error_own(EmelaError *error);");
+    writer.line("static inline EMELA_UNUSED void emela_error_release(EmelaError error);");
+    writer.line("static inline EMELA_UNUSED void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail);");
 }
 
 pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut Writer) {
     if !layouts.has_error_abi {
         return;
     }
-    writer.begin_block("static inline void emela_error_own(EmelaError *error)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_error_own(EmelaError *error)");
     writer.line("(void)error;");
     if heap && layouts.managed_error_payloads {
         writer.begin_block("switch (error->tag)");
@@ -67,7 +67,7 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut
         writer.line("emela_heap_retain(error->notes);");
     }
     writer.end_block();
-    writer.begin_block("static inline void emela_error_retain(EmelaError error)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_error_retain(EmelaError error)");
     writer.line("(void)error;");
     if layouts.managed_error_payloads {
         emit_payloads(layouts, true, writer);
@@ -77,7 +77,7 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut
     }
     writer.end_block();
     if heap {
-        writer.begin_block("static inline void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.begin_block("static inline EMELA_UNUSED void emela_error_enqueue(EmelaError error, emela_heap_block **pending, emela_heap_block **tail)");
         writer.line("(void)error; (void)pending; (void)tail;");
         if layouts.managed_error_payloads {
             emit_payloads(layouts, false, writer);
@@ -87,7 +87,7 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut
         }
         writer.end_block();
     }
-    writer.begin_block("static inline void emela_error_release(EmelaError error)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_error_release(EmelaError error)");
     if layouts.has_error_ownership() {
         writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
         writer.line("emela_error_enqueue(error, &pending, &tail);");
@@ -96,13 +96,13 @@ pub(super) fn emit_ownership(layouts: &TypeLayouts<'_>, heap: bool, writer: &mut
         writer.line("(void)error;");
     }
     writer.end_block();
-    writer.begin_block("static inline void emela_error_clear(EmelaError *error)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_error_clear(EmelaError *error)");
     writer.line("EmelaError old = *error; *error = (EmelaError){0}; emela_error_release(old);");
     writer.end_block();
     if layouts.has_error_notes() {
-        writer.line("static inline void emela_error_ensure_notes(EmelaError *error);");
+        writer.line("static inline EMELA_UNUSED void emela_error_ensure_notes(EmelaError *error);");
         writer
-            .line("static inline void emela_error_add_note(EmelaError *first, EmelaError other);");
+            .line("static inline EMELA_UNUSED void emela_error_add_note(EmelaError *first, EmelaError other);");
     }
     if layouts.has_resumes {
         writer.line("static _Noreturn void emela_operation_failed_after_resume(const char *duplicate_message, uint16_t duplicate_length, EmelaError error);");
@@ -144,7 +144,7 @@ pub(super) fn emit_display(
     if !needs_display(layouts) {
         return Ok(());
     }
-    writer.begin_block("static inline EmelaString emela_error_to_string(EmelaError error, char *output, uint16_t capacity)");
+    writer.begin_block("static inline EMELA_UNUSED EmelaString emela_error_to_string(EmelaError error, char *output, uint16_t capacity)");
     writer.line("if (capacity < 7) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));");
     writer.line("EmelaString text = {0};");
     writer.begin_block("switch (error.tag)");
@@ -228,7 +228,9 @@ pub(super) fn emit_display(
         writer.end_block();
     }
     if layouts.has_error_notes() {
-        writer.begin_block("static inline void emela_error_ensure_notes(EmelaError *error)");
+        writer.begin_block(
+            "static inline EMELA_UNUSED void emela_error_ensure_notes(EmelaError *error)",
+        );
         writer.begin_block("if (error->notes == NULL)");
         writer.line(&format!(
             "error->notes = emela_heap_allocate(sizeof(emela_error_notes), UINT32_C({}));",
@@ -238,7 +240,7 @@ pub(super) fn emit_display(
         writer.end_block();
         writer.end_block();
         writer.begin_block(
-            "static inline void emela_error_add_note(EmelaError *first, EmelaError other)",
+            "static inline EMELA_UNUSED void emela_error_add_note(EmelaError *first, EmelaError other)",
         );
         writer.line("emela_error_ensure_notes(first);");
         writer.line(&format!(

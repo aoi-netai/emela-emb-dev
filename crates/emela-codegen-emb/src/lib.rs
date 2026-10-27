@@ -375,6 +375,7 @@ pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
                 emela_lir::Value::Runtime {
                     op:
                         op @ (emela_lir::RuntimeOp::Defect
+                        | emela_lir::RuntimeOp::DefectAt
                         | emela_lir::RuntimeOp::DefectTake
                         | emela_lir::RuntimeOp::DefectResume
                         | emela_lir::RuntimeOp::Yield
@@ -385,6 +386,7 @@ pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
                     op:
                         op @ (emela_core::Builtin::Panic
                         | emela_core::Builtin::Todo
+                        | emela_core::Builtin::AssertFail
                         | emela_core::Builtin::Dbg
                         | emela_core::Builtin::Inspect
                         | emela_core::Builtin::ShowNested

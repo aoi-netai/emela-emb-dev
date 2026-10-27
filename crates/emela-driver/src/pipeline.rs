@@ -1,4 +1,4 @@
-//! The pipeline: collects modules, lexes them, and checks the import graph.
+//! The pipeline: collects modules, has the [`Frontend`] parse them, and checks the import graph.
 //!
 //! Parsing, type checking and emission (JS or C) are plugged in through [`Frontend`] and
 //! [`Backend`].
@@ -12,7 +12,7 @@ use emela_resolve::{
 use la_arena::ArenaMap;
 
 use crate::actions::CodeAction;
-use crate::c::run_native;
+use crate::c::native_command;
 use crate::code;
 use crate::complete::Completion;
 use crate::diagnostic::{Diagnostic, Location, error_count};
@@ -20,7 +20,10 @@ use crate::hints::InlayHint;
 use crate::hover::HoverInfo;
 use crate::nav::{NavTarget, RenameError};
 use crate::output::{BuildOutput, write_output};
-use crate::run::{Output, RunOutput, run_node, run_wasmtime};
+use crate::run::{
+    Output, ProgramCommand, RunOutput, node_command, node_script_command, wasmtime_command,
+    wasmtime_serve_command,
+};
 use crate::signature::SignatureInfo;
 use crate::source::{FileId, FileSystem, SourceDb, SourceFile};
 use crate::target::Target;
@@ -288,7 +291,8 @@ impl Input {
 }
 
 /// The listing for a single file: shows only files directly under the root, never
-/// subdirectories.
+/// subdirectories. Filtering the listing keeps `emela_resolve::collect_modules` unchanged for
+/// single files.
 struct Shallow<'a>(&'a dyn FileSystem);
 
 impl SourceFs for Shallow<'_> {
@@ -313,6 +317,9 @@ pub trait Frontend {
 
     /// Lexes and parses one module, returning both lexer and parser diagnostics (the pipeline
     /// does no lexing itself). Keeps the tree in `self` for [`Frontend::check`].
+    ///
+    /// Lexing is left to the frontend because `emela_syntax::parse` lexes again and returns the
+    /// lexer diagnostics too; lexing in the pipeline as well would report them twice.
     fn parse(&mut self, module: ModuleId, file: FileId, source: &SourceFile) -> Parsed;
 
     /// Called once after all read modules are parsed and imports checked. `order` is the
@@ -342,6 +349,12 @@ pub trait Frontend {
     /// entry (`run` then proceeds without checking).
     fn has_entry_main(&self) -> Option<bool> {
         None
+    }
+
+    /// Whether the program is an HTTP service in the last [`Frontend::check`]
+    /// (`[lib.http-service]`). `emela run` does not ask it for `main` (E0230).
+    fn is_http_service(&self) -> bool {
+        false
     }
 
     /// Same-file occurrences of the name, including its declaration (LSP documentHighlight).
@@ -481,6 +494,10 @@ pub struct Checked<P> {
 
 /// The plug-in point for the output stage (JS, or C with [`crate::CoreC`]). Called only when
 /// there are no errors.
+///
+/// The trait and its output ([`BuildOutput`]) are shared by every target, so their names do not
+/// say JS (they were `JsBackend` and `JsOutput`). What only JS uses keeps the JS name
+/// ([`crate::CoreJs`], [`crate::JS_ENTRY_FILE`], [`NoJsBackend`]).
 pub trait Backend<P> {
     fn emit(&mut self, program: &P, analysis: &Analysis) -> Result<BuildOutput, Vec<Diagnostic>>;
 
@@ -503,7 +520,7 @@ pub enum Runner {
     Node,
     /// A native executable.
     Native,
-    /// A `.wasm` module run with `wasmtime` (WASI).
+    /// A `.wasm` component run with `wasmtime` (WASI 0.3).
     Wasmtime,
 }
 
@@ -804,7 +821,8 @@ fn build_with<F: Frontend, B: Backend<F::Program>>(
     }
     // Not reported if there are other errors: a syntax error may just have hidden main.
     if require_main
-        && (input.library_only || frontend.has_entry_main() == Some(false))
+        && (input.library_only
+            || (frontend.has_entry_main() == Some(false) && !frontend.is_http_service()))
         && let Some(entry) = &input.entry
     {
         analysis.diagnostics.push(
@@ -866,29 +884,38 @@ pub struct RunOptions {
 /// The `emela run` stage: builds and runs the entry (on node for JS, the executable for C). Without main in the entry, reports
 /// E0230 and does not start node (spec 8.3).
 ///
-/// `before_node` is called once after the build and before node starts (even if the build
-/// fails). The CLI prints diagnostics there, so warnings show first even for programs that never
-/// end (servers). The run result is `None` if diagnostics had errors or node could not start.
-/// A diagnostic about failing to start node is appended to `Analysis` after `before_node`.
+/// `before_start` is called once after the build and before the program starts (even if the
+/// build fails), with the command that will start it (`None` if there is none). The CLI prints
+/// diagnostics and the command there, so warnings show first even for programs that never end
+/// (servers). The run result is `None` if diagnostics had errors or the program could not start.
+/// A diagnostic about failing to start the program is appended to `Analysis` after
+/// `before_start`.
 pub fn run<F: Frontend, B: Backend<F::Program>>(
     fs: &dyn FileSystem,
     input: &Input,
     frontend: &mut F,
     backend: &mut B,
     options: &RunOptions,
-    before_node: impl FnOnce(&Analysis),
+    before_start: impl FnOnce(&Analysis, Option<&ProgramCommand>),
 ) -> (Analysis, Option<RunOutput>) {
     let (mut analysis, entry) = build_with(fs, input, frontend, backend, &options.out_dir, true);
-    before_node(&analysis);
-    let Some(entry) = entry else {
+    let server = frontend.is_http_service();
+    let command = entry.map(|entry| match backend.runner() {
+        Runner::Node if server => Ok(node_script_command(
+            &options.node,
+            &entry.with_file_name(emela_codegen_js::SERVE_FILE),
+            &options.args,
+        )),
+        Runner::Node => Ok(node_command(&options.node, &entry, &options.args)),
+        Runner::Native => Ok(native_command(&entry, &options.args)),
+        Runner::Wasmtime if server => wasmtime_serve_command(&entry, &options.args),
+        Runner::Wasmtime => wasmtime_command(&entry, &options.args),
+    });
+    before_start(&analysis, command.as_ref().and_then(|c| c.as_ref().ok()));
+    let Some(command) = command else {
         return (analysis, None);
     };
-    let result = match backend.runner() {
-        Runner::Node => run_node(&options.node, &entry, &options.args, options.output),
-        Runner::Native => run_native(&entry, &options.args, options.output),
-        Runner::Wasmtime => run_wasmtime(&entry, &options.args, options.output),
-    };
-    match result {
+    match command.and_then(|command| command.run(options.output)) {
         Ok(output) => (analysis, Some(output)),
         Err(diagnostic) => {
             analysis.diagnostics.push(diagnostic);

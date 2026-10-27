@@ -1,14 +1,17 @@
 // The Emela JS runtime (the pure subset of 0.20).
 //
 // Generated code only uses names starting with `$`. Emela identifiers never contain `$`, so they cannot clash.
-// For the value representation, see crates/emela-codegen-js/NOTES.md.
+// For the value representation, see the crate docs (crates/emela-codegen-js/src/lib.rs).
 // When inlined, the leading `export ` of each line is stripped, so write `export` only at the start of a line.
 
 // A defect (spec 16.5). An unrecoverable error, thrown with its own class.
+// `location` is where a failed assert is (`path:line:column`, spec 13.2), kept outside the message for the test
+// runner; undefined for other defects.
 export class $Defect extends Error {
-  constructor(message) {
+  constructor(message, location) {
     super(message);
     this.name = "Defect";
+    if (location !== undefined) this.location = location;
   }
 }
 
@@ -48,7 +51,8 @@ export function $constant(cell, name, init) {
       cell.state = 0;
       throw error;
     }
-    const defect = new $Defect(`while evaluating const ${name}: ${error.message}`);
+    // The remembered defect keeps the location of a failed assert.
+    const defect = new $Defect(`while evaluating const ${name}: ${error.message}`, error.location);
     cell.value = defect;
     cell.state = 3;
     throw defect;
@@ -190,8 +194,7 @@ export function* $maybe(result) {
 // switches is the same on every run. A resume called from a host callback queues the continuation and drains the
 // queue inside that call, so the continuation runs inside the resume (14.5, item 4).
 //
-// Fairness (11.1) is not implemented yet. It can be added as a request that puts the fiber back at the end of the
-// queue, issued by `$step` every so many suspending calls.
+// Fairness (11.1) is the `$pause` request above: the fiber goes back to the end of the queue.
 
 // The fiber being stepped, or null outside the scheduler (in host callbacks).
 let $current = null;
@@ -455,6 +458,35 @@ export function $start(gen, done) {
   const main = new $Fiber(root, null);
   root.schedule(() => $step(root, main, gen, main.end, "next", undefined));
   return () => root.stalled();
+}
+
+// The stall functions (`$start`'s result) of the launches of exported functions that have not ended.
+const $exportLaunches = new Set();
+let $exportWatching = false;
+
+// Runs the generator `gen` of an exported function that may suspend as one launch (16.6.2), and returns a Promise of
+// its value. The Promise rejects with the defect or the interruption the launch ends with. When the host reports that
+// its event loop is empty (`beforeExit`, where the host has one), the launches that have not ended are stalled, as
+// the launcher does for main.
+export function $export(gen) {
+  return new Promise((resolve, reject) => {
+    let ended = false;
+    let stalled;
+    stalled = $start(gen, (ok, value) => {
+      ended = true;
+      $exportLaunches.delete(stalled);
+      if (ok) resolve(value);
+      else reject(value);
+    });
+    if (ended) return;
+    $exportLaunches.add(stalled);
+    if (!$exportWatching && typeof globalThis.process?.on === "function") {
+      $exportWatching = true;
+      globalThis.process.on("beforeExit", () => {
+        for (const stall of [...$exportLaunches]) stall();
+      });
+    }
+  });
 }
 
 // A continuation unwound while interrupted (11.4, 14.5). Thrown into a fiber when it is interrupted, by `$sync`
@@ -995,15 +1027,21 @@ export function $retire(handler, name) {
   for (const key of Object.keys(handler)) Object.defineProperty(handler, key, { value: used });
 }
 
-// A failed assert (spec 13.2). `text` is the source text of the expression and may be empty.
-export function $assertFail(text) {
-  throw new $Defect(text === "" ? "assertion failed" : `assertion failed: ${text}`);
+// A failed assert (spec 13.2). `text` is the source text of the expression and may be empty. `location` is where the
+// assert is, or undefined.
+export function $assertFail(text, location) {
+  throw new $Defect(text === "" ? "assertion failed" : `assertion failed: ${text}`, location);
 }
 
 // A failed comparison assert. Both sides are received as displayed strings (displayed only on failure).
-export function $assertCmp(text, op, left, right) {
+export function $assertCmp(text, op, left, right, location) {
   const head = text === "" ? `left ${op} right` : text;
-  throw new $Defect(`assertion failed: ${head}\n  left: ${left}\n right: ${right}`);
+  throw new $Defect(`assertion failed: ${head}\n  left: ${left}\n right: ${right}`, location);
+}
+
+// A failed assert whose message was built by the caller (sides shown through a written Show impl).
+export function $assertDefect(message, location) {
+  throw new $Defect(message, location);
 }
 
 // Division and remainder on Int (32-bit). Truncates toward zero; the remainder takes the sign of the dividend.
@@ -1081,6 +1119,7 @@ export function $todo() {
 }
 
 // The Prelude's `dbg(value)`. `show` is the display function generated from the value's type.
+// `console.error` rather than `process.stderr`, so it also works in browsers.
 export function $dbg(value, show) {
   console.error(show(value));
   return value;
@@ -1349,7 +1388,7 @@ export function $showUnit(_) {
   return "()";
 }
 
-// A function value in the debug display (`inspect`, spec 10.6).
+// A function value in the debug display (`dbg`, spec 10.6).
 export function $showFn(_) {
   return "<fn>";
 }

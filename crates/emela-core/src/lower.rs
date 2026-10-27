@@ -4,6 +4,14 @@
 //! allocated first ([`Lowerer::declare_enums`]); only fns reachable from the roots are lowered.
 //! A fn gets an ID and is pushed on the worklist when first referenced ([`Lowerer::fn_id`]), and
 //! bodies are lowered until the worklist is empty.
+//!
+//! Lowering lives in emela-core rather than its own crate: emela-core already depends on
+//! emela-types for the builtin signatures, so a separate crate would make no dependency lighter.
+//!
+//! Since unreachable fns are not lowered, a construct lowering does not support yet
+//! ([`LowerError::Unsupported`]) is reported only once a reachable fn uses it. Type errors are not
+//! affected (the type checker checks every fn). The test `every_core_function_lowers`
+//! ([`Roots::All`]) makes sure all of core and std lowers, used or not.
 
 use std::path::Path;
 
@@ -13,16 +21,16 @@ use emela_resolve::hir::{
     UnaryOp, WithItem, int_literal_value,
 };
 use emela_resolve::{ModuleId, ModuleMap};
-use emela_types::{Prim, ProgramTypes, Row, RowElem, Supplier, Tag, Ty};
+use emela_types::{ArgsSource, Prim, ProgramTypes, Row, RowElem, Supplier, Tag, Ty};
 use la_arena::ArenaMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::intrinsics::Builtin;
 use crate::ir::{
     Arm, Assert, BinOp, BundledFile, Callee, CtorRef, EffectDef, EffectId, EnumDef, EnumId, Expr,
-    External, ExternalBinding, FiberOp, FnId, FnSets, FnType, HostModule, HostRef, Lit, Local,
-    Module, OpDef, OpTy, Pat, PreludeTraits, SetSummary, StrPart, Type, TypeId, UnOp, VariantDef,
-    VariantFields, WithBind,
+    External, ExternalBinding, FiberOp, FnId, FnSets, FnType, HostExport, HostModule, HostRef, Lit,
+    Local, Module, OpDef, OpTy, Pat, PreludeTraits, SetSummary, StrPart, Type, TypeId, UnOp,
+    VariantDef, VariantFields, WithBind,
 };
 use crate::mono::Monomorphized;
 use crate::named;
@@ -50,26 +58,33 @@ pub enum LowerError {
     /// host files (`LowerInput::bundled_files`). An error in the bundled sources. `path` is the
     /// specifier as written.
     MissingCoreFile { path: String, span: Option<Span> },
-    /// An exported fn of the entry has a type parameter with a trait bound (E0327, appendix B):
-    /// JS could call it at any type, so no impl can be chosen for it. Reported only for the JS
-    /// target, the one that exports the entry's `pub` fns. `span` is the position of the function
-    /// name.
-    ConstrainedExport {
-        name: String,
-        param: String,
-        span: Option<Span>,
-    },
+    /// An exported fn that may suspend, on the `c` target (E0441, `[target.c.export]`). `name` is
+    /// the fn, or the fn with `@entry` for an export made by `@entry`. `span` is the `@export` or
+    /// the `@entry`.
+    SuspendingExport { name: String, span: Option<Span> },
+    /// An `@export(wasm, ...)` written by a user, on the `wasm` target (`[target.wasm.external]`).
+    /// `span` is the `@export` or the `@entry`.
+    WasmExport { name: String, span: Option<Span> },
+    /// `@entry(Http.serve)` on the `c` target (E0442, `[target.c.unsupported]`). `span` is the
+    /// `@entry`.
+    HttpServiceOnC { span: Option<Span> },
 }
 
 /// Which fns lowering starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Roots {
-    /// The fns exported by the entry module (`pub` and `main`, excluding test functions). The
-    /// normal build.
+    /// The entry module's `main` and the fns the program exposes to the host (`[ext.export]`)
+    /// for the build target. The normal build.
     Exported,
+    /// The entry module's `main` and its `pub` fns, except test functions and fns with a
+    /// trait-bounded type parameter (no impl could be chosen for a caller that sees every type
+    /// the same). Not a build of a target in the specification: the embedded C backend
+    /// (`emela-codegen-emb`) exports these until it moves to `@export`.
+    Public,
     /// The test functions (`LowerInput::tests`), for `emela test`.
     Tests,
-    /// Every fn and const with a body, including unused ones. For lowering tests.
+    /// Every fn and const with a body, every `@external` fn and every handler, including unused
+    /// ones. For lowering tests.
     All,
 }
 
@@ -98,6 +113,10 @@ pub struct LowerInput<'a> {
     /// (`"./ffi.mjs"`) to the file next to the declaring source (spec 12.1). Modules without a
     /// path are left alone.
     pub paths: ArenaMap<ModuleId, &'a Path>,
+    /// Source file paths of modules as diagnostics show them (relative to the project directory
+    /// when under it). Used for the location of an assert (`[test.assert]`). An assert in a
+    /// module without one has no location.
+    pub shown_paths: ArenaMap<ModuleId, String>,
     /// Bundled host files (paths relative to `lib/` and contents; `crate::bundled_files`). File
     /// specifiers of core modules are looked up here instead of next to the source, become
     /// `HostModule::Bundled`, and the files are put in `Module::bundled_files`.
@@ -129,6 +148,8 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
         module: Module::new(),
         fns: FxHashMap::default(),
         worklist: Vec::new(),
+        layer_args: FxHashMap::default(),
+        layer_arg_work: Vec::new(),
         current_def: None,
         spec: 0,
         enums: ArenaMap::default(),
@@ -139,20 +160,25 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
         ev: None,
         bound: Vec::new(),
         paths: &input.paths,
+        shown_paths: &input.shown_paths,
         bundled_files: input.bundled_files,
         uses_bundled: false,
         errors: Vec::new(),
         prelude_trait_fns: FxHashMap::default(),
+        host_exports: Vec::new(),
+        roots,
     };
+    if roots == Roots::Exported {
+        cx.collect_host_exports(input.target);
+        cx.module.http_service = emela_types::is_http_service(hir);
+    }
     cx.declare_enums();
     cx.define_ctors();
-    if roots == Roots::Exported && input.target == Some("js") {
-        cx.check_constrained_exports();
-    }
     for (_, items) in hir.modules.iter() {
         for &def in &items.items {
             let is_root = match (roots, hir.item(def)) {
-                (Roots::Exported, Some(Item::Fn(_))) => cx.is_exported(def),
+                (Roots::Exported, Some(Item::Fn(_))) => cx.is_main(def),
+                (Roots::Public, Some(Item::Fn(_))) => cx.is_public_root(def),
                 (Roots::All, Some(Item::Fn(f))) => f.body.is_some() || f.is_external,
                 (Roots::All, Some(Item::Const(_) | Item::Handler(_))) => true,
                 _ => false,
@@ -162,12 +188,21 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
             }
         }
     }
+    for i in 0..cx.host_exports.len() {
+        cx.fn_id(cx.host_exports[i].def, 0);
+    }
     let tests = match roots {
         Roots::Tests => input.tests.iter().map(|&def| cx.fn_id(def, 0)).collect(),
         _ => Vec::new(),
     };
-    while let Some((def, spec)) = cx.worklist.pop() {
-        cx.define_fn(def, spec);
+    loop {
+        if let Some((def, spec)) = cx.worklist.pop() {
+            cx.define_fn(def, spec);
+        } else if let Some((layer, arg)) = cx.layer_arg_work.pop() {
+            cx.define_layer_arg(layer, arg);
+        } else {
+            break;
+        }
     }
     cx.builtin_impls();
     cx.trait_impls();
@@ -187,7 +222,8 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
     }
     // Target-neutral, so done once here: every backend gets self tail calls as loops (16.3).
     crate::tail::loopify(&mut cx.module);
-    let (Some(target), Roots::Exported | Roots::Tests) = (input.target, roots) else {
+    let (Some(target), Roots::Exported | Roots::Public | Roots::Tests) = (input.target, roots)
+    else {
         return Ok(Lowered {
             module: cx.module,
             tests,
@@ -216,16 +252,8 @@ pub fn lower(input: &LowerInput<'_>, roots: Roots) -> Result<Lowered, Vec<LowerE
             span: None,
         });
     }
-    let entries: Vec<FnId> = match roots {
-        Roots::Tests => mono.roots.clone(),
-        // main is exported, so it is one of the roots.
-        _ => cx
-            .entry_main()
-            .and_then(|main| mono_roots.iter().position(|&f| f == main))
-            .map(|i| mono.roots[i])
-            .into_iter()
-            .collect(),
-    };
+    // Every root of a normal build (main and the exported fns) is an entry (spec 12.1).
+    let entries: Vec<FnId> = mono.roots.clone();
     cx.check_target(&mono, &entries, target);
     if !cx.errors.is_empty() {
         return Err(cx.errors);
@@ -255,10 +283,16 @@ struct Lowerer<'a> {
     false_def: Option<DefId>,
     module: Module,
     /// HIR fns and consts, with which suspending copy (`suspend.rs`) → IR functions. A const
-    /// becomes a parameterless function. Only [`Lowerer::fn_id`] adds to it.
+    /// becomes a parameterless function. Only [`Lowerer::fn_id`] adds to it, so that every
+    /// reference also puts the fn on the worklist.
     fns: FxHashMap<(DefId, Specialization), FnId>,
     /// Fns (and which suspending copy) that have an ID but whose bodies are not lowered yet.
     worklist: Vec<(DefId, Specialization)>,
+    /// The arguments of init written in layers → IR functions computing them
+    /// ([`Lowerer::layer_arg`]). Only that function adds to it.
+    layer_args: FxHashMap<ExprId, FnId>,
+    /// Arguments in `layer_args` (with their layer) whose bodies are not lowered yet.
+    layer_arg_work: Vec<(DefId, ExprId)>,
     /// The definition whose body is being lowered, and which suspending copy. Used to decide the
     /// "may suspend" marks of lambdas and calls.
     current_def: Option<DefId>,
@@ -285,12 +319,17 @@ struct Lowerer<'a> {
     /// searches from the back (spec 8.3).
     bound: Vec<(EffectKey, Local)>,
     paths: &'a ArenaMap<ModuleId, &'a Path>,
+    shown_paths: &'a ArenaMap<ModuleId, String>,
     bundled_files: &'a [(&'a str, &'a str)],
     /// Whether a lowered external function pointed to a bundled host file.
     uses_bundled: bool,
     errors: Vec<LowerError>,
     /// The Prelude's trait functions by trait and name, once looked up.
     prelude_trait_fns: FxHashMap<(String, String), Option<DefId>>,
+    /// The fns exposed to the host for the build target, with their names (`[ext.export]`), in
+    /// the order of `emela_types::host_exports`. Filled only for `Roots::Exported`.
+    host_exports: Vec<Exposed>,
+    roots: Roots,
 }
 
 /// An evidence table key: the effect and its type arguments as a string (empty for effects without
@@ -375,7 +414,8 @@ enum Target {
 /// Creates a cell holding the initial value (`$cellNew`), adds a handler value that reads and
 /// writes it to the evidence table under the key `State[S]`, calls body, and returns the pair of
 /// body's value and the final state. If body fails, the failure propagates as the call's failure
-/// and the state is discarded.
+/// and the state is discarded. If body suspends, so does the call; the state stays in the cell, so
+/// it carries over when body resumes.
 struct StateRun {
     /// The IR effect of `State[S]`.
     effect: EffectId,
@@ -752,6 +792,11 @@ impl<'a> Lowerer<'a> {
             .module
             .declare(&name, spec == 0 && self.is_exported(def));
         self.module.functions[id].suspends = self.fn_suspends(def, spec);
+        if spec == 0
+            && let Some(exposed) = self.host_exports.iter().find(|e| e.def == def)
+        {
+            self.module.functions[id].host_exports = exposed.exports.clone();
+        }
         self.fns.insert((def, spec), id);
         self.worklist.push((def, spec));
         id
@@ -837,7 +882,8 @@ impl<'a> Lowerer<'a> {
                 f.sig.params.iter().map(|p| self.local(p.local)).collect(),
                 Some(f.body.expect("a fn with a body")),
             ),
-            // A const's value is evaluated once, at the first reference (spec 5.6).
+            // A const's value is evaluated once, at the first reference (spec 5.6). It is not
+            // inlined at its uses: that would bind the locals of its expression more than once.
             Some(Item::Const(c)) => {
                 self.module.functions[id].constant = true;
                 (Vec::new(), Some(c.value))
@@ -1401,7 +1447,8 @@ impl<'a> Lowerer<'a> {
                     format!("{name}[{}]", list(args))
                 }
             }
-            // E and R of function types are not in the key (an approximation; see NOTES.md).
+            // E and R of function types are not in the key. An approximation: two `State`s whose
+            // type arguments are function types differing only in E or R share a key.
             Ty::Fn(f) => format!("fn({}) -> {}", list(&f.params), self.key_ty(&f.ret, ctx)),
             Ty::Bound(i) => match ctx {
                 Some(def) => format!("${}.{i}", self.ir_name(def)),
@@ -1644,8 +1691,10 @@ impl<'a> Lowerer<'a> {
         let state_ty = self.handler_state_ty(def, h);
 
         // init's value is the handler's state. For a handler without init (no fields), the state
-        // is its constructor's value if it has one (`ConsoleLogger`), otherwise `()`.
-        let params: Vec<Local> = ev_param(self).into_iter().collect();
+        // is its constructor's value if it has one (`ConsoleLogger`), otherwise `()`. init takes
+        // its own parameters (`[effect.handler]`) before the table.
+        let mut params: Vec<Local> = h.init_params.iter().map(|p| self.local(p.local)).collect();
+        params.extend(ev_param(self));
         let body = match (h.init, h.ctor.and_then(|c| self.ctors.get(c).copied())) {
             (Some(body), _) => self.expr(body),
             (None, Some(ctor)) => Expr::Ctor {
@@ -1733,6 +1782,11 @@ impl<'a> Lowerer<'a> {
     /// For a stateful handler, init's value (the state) becomes a binding without release, and the
     /// handler value built from the state a binding with release (`WithBind::managed`). Without a
     /// release function, release is `()`.
+    ///
+    /// The arguments of init (`H(url: ...)`) come first, as bindings without release, in the
+    /// order the items are written and with the outer table (`[dyn.with]`). A failure there ends
+    /// the `with` before any init runs, so nothing is released. The arguments of a handler a
+    /// later item overrides are not evaluated.
     fn with(&mut self, id: ExprId, items: &[WithItem], body: ExprId, span: Span) -> Expr {
         let hir = self.hir;
         let Some(info) = self.types.with_handlers.get(id) else {
@@ -1771,6 +1825,20 @@ impl<'a> Lowerer<'a> {
         let outer = self.ev;
         let mut locals: Vec<Local> = Vec::with_capacity(hs.len());
         let mut binds = Vec::new();
+        let mut written_args: FxHashMap<ExprId, Local> = FxHashMap::default();
+        for (i, item) in items.iter().enumerate() {
+            if !info.initialized.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let (_, args) = item.supplier();
+            for arg in args.iter().flat_map(|a| &a.args) {
+                let ty = self.ty(self.expr_ty(arg.value));
+                let l = self.module.local("arg", ty);
+                let value = self.expr(arg.value);
+                binds.push(WithBind::new(l, value));
+                written_args.insert(arg.value, l);
+            }
+        }
         for (i, (supplier, own)) in hs.iter().enumerate() {
             let own_id = self.effect_id(own);
             let handler_ty = self.module.handler_effect(own_id);
@@ -1856,14 +1924,11 @@ impl<'a> Lowerer<'a> {
                 .handler_fails
                 .get(h)
                 .is_some_and(|r| !r.is_empty());
+            let mut init_args = self.init_args(id, info.binds[i].args, &written_args);
+            init_args.extend(ctx.clone());
             binds.push(WithBind::new(
                 state,
-                direct_marked(
-                    &self.module,
-                    init,
-                    ctx.clone().into_iter().collect(),
-                    init_fails,
-                ),
+                direct_marked(&self.module, init, init_args, init_fails),
             ));
             let with_state = |ctx: &Option<Expr>| {
                 std::iter::once(Expr::Var(state))
@@ -1917,6 +1982,69 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The arguments of a handler's init at the `with` `id`, in parameter order. Those written in
+    /// the `with` are the locals they were bound to; those written in a layer are computed by
+    /// their own functions ([`Self::layer_arg`]).
+    fn init_args(
+        &mut self,
+        id: ExprId,
+        source: ArgsSource,
+        written: &FxHashMap<ExprId, Local>,
+    ) -> Vec<Expr> {
+        let types = self.types;
+        // Lowering runs only without type errors, so every parameter has its argument.
+        match source {
+            ArgsSource::Item(i) => types
+                .with_args
+                .get(id)
+                .and_then(|items| items.get(i))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|arg| Expr::Var(written[arg]))
+                .collect(),
+            ArgsSource::Layer { layer, member } => types
+                .layer_args
+                .get(layer)
+                .and_then(|members| members.get(member))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|&arg| direct(self.layer_arg(layer, arg), Vec::new(), false))
+                .collect(),
+        }
+    }
+
+    /// The IR function computing the argument `arg` of an item of `layer`. The arguments in a
+    /// layer are pure (`[effect.layer]`), so each one becomes a const (spec 5.6): evaluated once,
+    /// at the first `with` that needs it. Lowering the expression at each `with` instead would
+    /// bind the locals in it (those of a lambda, say) more than once.
+    fn layer_arg(&mut self, layer: DefId, arg: ExprId) -> FnId {
+        if let Some(&f) = self.layer_args.get(&arg) {
+            return f;
+        }
+        let name = format!("{}$arg{}", self.ir_name(layer), self.layer_args.len());
+        let f = self.module.declare(&name, false);
+        self.module.functions[f].constant = true;
+        self.layer_args.insert(arg, f);
+        self.layer_arg_work.push((layer, arg));
+        f
+    }
+
+    /// Lowers the body of a function made by [`Self::layer_arg`], with fresh state as in
+    /// `define_fn`.
+    fn define_layer_arg(&mut self, layer: DefId, arg: ExprId) {
+        let f = self.layer_args[&arg];
+        self.ev = None;
+        self.bound.clear();
+        self.locals = ArenaMap::default();
+        self.current_def = Some(layer);
+        self.spec = 0;
+        let ret = self.ty(self.expr_ty(arg));
+        let body = self.expr(arg);
+        self.module.define(f, Vec::new(), ret, body);
+    }
+
     /// `use X` (spec 8.2, 8.3). The handler of the innermost `with` providing X in the same
     /// function, or else from the evidence table passed by the caller. For effects with type
     /// arguments, the type arguments must match too (spec 8.1).
@@ -1935,6 +2063,12 @@ impl<'a> Lowerer<'a> {
     /// A lambda. If its type's R is not empty, it takes the evidence table as its last argument.
     /// Bindings of enclosing `with`s are added to the received table for the body (`use X` looks
     /// at enclosing `with`s first, spec 8.3).
+    ///
+    /// `[effect.with]` says `use X` takes X from the caller when no `with` in the same function
+    /// provides it. For the enclosing `with`s, "the same function" is the top-level fn the lambda
+    /// is in; for the table, it is the lambda itself. The type checker keeps the R of a lambda's
+    /// body in the lambda's type instead of adding it to the enclosing function's R, so the
+    /// enclosing function's table need not hold X, and only the lambda's caller can supply it.
     fn lambda(&mut self, id: ExprId, params: &[emela_resolve::hir::Param], body: ExprId) -> Expr {
         let mut ps: Vec<Local> = params.iter().map(|p| self.local(p.local)).collect();
         let suspends = self.ty_suspends(self.expr_ty(id));
@@ -2062,17 +2196,6 @@ impl<'a> Lowerer<'a> {
                 suspends,
             }),
         }
-    }
-
-    /// The IR function of the entry module's `main`.
-    fn entry_main(&self) -> Option<FnId> {
-        let items = self.hir.modules.get(self.entry?)?;
-        items.items.iter().find_map(|&def| {
-            let data = &self.hir.defs[def];
-            (data.name == "main" && data.kind == DefKind::Fn)
-                .then(|| self.fns.get(&(def, 0)).copied())
-                .flatten()
-        })
     }
 
     /// Reports external functions reachable from `entries` (functions of the monomorphized
@@ -2207,7 +2330,10 @@ impl<'a> Lowerer<'a> {
                 arms: arms.iter().map(|arm| self.arm(arm)).collect(),
             },
             ExprKind::Lambda { params, body } => self.lambda(id, params, *body),
-            ExprKind::Assert(cond) => self.assert(*cond),
+            ExprKind::Assert(cond) => {
+                let location = self.location(e.span);
+                Assert::at(self.assert(*cond), location)
+            }
             ExprKind::Update { ctor, fields, base } => {
                 self.update(id, *ctor, fields, *base, e.span)
             }
@@ -2724,7 +2850,7 @@ impl<'a> Lowerer<'a> {
     /// Whether the callee may fail: true if the E of the callee expression's function type (as
     /// solved by the type checker) is not empty. Opaque sets, such as set type parameters and
     /// generalized set variables, are not empty, so they count as true. Builtins and constructors
-    /// have an empty E.
+    /// have an empty E, and builtins take no function arguments whose failures they could pass on.
     fn callee_fails(&self, callee: ExprId) -> bool {
         matches!(self.expr_ty(callee), Ty::Fn(f) if !f.fails.is_empty())
     }
@@ -2867,6 +2993,19 @@ impl<'a> Lowerer<'a> {
         }
         let cond = self.expr(cond);
         Assert::bool(cond, text)
+    }
+
+    /// `<path>:<line>:<column>` of the start of `span` (`[cmd.test.outcome]`). Lines and columns
+    /// count from 1, and a column counts characters (Unicode scalar values) from the start of the
+    /// line, as the code frames of diagnostics do. `None` without a source or a shown path.
+    fn location(&self, span: Span) -> Option<String> {
+        let path = self.shown_paths.get(span.module)?;
+        let source = self.sources.get(span.module)?;
+        let before = source.get(..usize::from(span.range.start()))?;
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        let line = before.matches('\n').count() + 1;
+        let column = before[line_start..].chars().count() + 1;
+        Some(format!("{path}:{line}:{column}"))
     }
 
     /// The source text; empty for positions without a source.
@@ -3185,6 +3324,11 @@ impl<'a> Lowerer<'a> {
     ///
     /// A trait function is named after its trait (`Show.show`), an impl function after its type
     /// and trait (`User: Show.show`).
+    ///
+    /// Enums get the prefix too, because backends derive names from them (show functions such as
+    /// `$show$User`, the JS names of constructors without fields). In JS `.` becomes `_`, which
+    /// cannot clash: module names contain no `_` (`[module.name]`) and function names start with a
+    /// lower-case letter (`[lex.name]`).
     fn ir_name(&self, def: DefId) -> String {
         let hir = self.hir;
         let data = &hir.defs[def];
@@ -3215,54 +3359,113 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Whether to export in JS: the entry module's `pub` fns and `main` (called by the entry
-    /// module). Test functions are excluded (for `emela test`, the test runner exports them).
-    /// Whether `def` is a fn the entry exports: `pub` or `main`, but not a test function, and not
-    /// one with a trait-bounded type parameter (E0327 on JS; on C and WASM only main is used).
-    fn is_exported(&self, def: DefId) -> bool {
-        self.exports(def) && self.bounded_param(def).is_none()
-    }
-
-    /// Whether `def` is a fn the entry would export, regardless of its type parameters.
-    fn exports(&self, def: DefId) -> bool {
+    /// Whether `def` is the entry module's `main` (not a test function).
+    fn is_main(&self, def: DefId) -> bool {
         let data = &self.hir.defs[def];
         data.kind == DefKind::Fn
             && self
                 .entry
                 .is_some_and(|entry| data.module == DefModule::Source(entry))
-            && (data.is_pub || data.name == "main")
+            && data.name == "main"
             && !self.tests.contains(&def)
     }
 
-    /// The name of the first type parameter of `def` with a trait bound.
-    fn bounded_param(&self, def: DefId) -> Option<&str> {
-        let sig = self.types.sigs.get(def)?;
-        sig.scheme
-            .params
-            .iter()
-            .find(|p| !p.traits.is_empty())
-            .map(|p| p.name.as_str())
+    /// Whether `def` is a root of the build: `main`, a fn exposed to the host, or with
+    /// `Roots::Public` a `pub` fn of the entry.
+    fn is_exported(&self, def: DefId) -> bool {
+        self.is_main(def)
+            || self.host_exports.iter().any(|e| e.def == def)
+            || (self.roots == Roots::Public && self.is_public_root(def))
     }
 
-    /// Reports the entry's exported fns with a trait-bounded type parameter (E0327, appendix B),
-    /// in declaration order.
-    fn check_constrained_exports(&mut self) {
-        let Some(items) = self.entry.and_then(|entry| self.hir.modules.get(entry)) else {
-            return;
-        };
-        for &def in &items.items {
-            if !matches!(self.hir.item(def), Some(Item::Fn(_))) || !self.exports(def) {
+    /// A root of `Roots::Public`: `main`, or a `pub` fn of the entry that is not a test function
+    /// and has no trait-bounded type parameter.
+    fn is_public_root(&self, def: DefId) -> bool {
+        let data = &self.hir.defs[def];
+        let bounded = self
+            .types
+            .sigs
+            .get(def)
+            .is_some_and(|sig| sig.scheme.params.iter().any(|p| !p.traits.is_empty()));
+        self.is_main(def)
+            || (data.kind == DefKind::Fn
+                && data.is_pub
+                && self
+                    .entry
+                    .is_some_and(|entry| data.module == DefModule::Source(entry))
+                && !self.tests.contains(&def)
+                && !bounded)
+    }
+
+    /// Fills [`Lowerer::host_exports`] with the exports for `target` (every target for `None`),
+    /// and reports the ones the target cannot expose: one that may suspend on `c` (E0441), and on
+    /// `wasm` any written by a user (`[target.wasm.external]`; only `Std.Http.serve`, the entry
+    /// adapter of the bundled `Std`, is exposed by the runtime).
+    fn collect_host_exports(&mut self, target: Option<&str>) {
+        for exposed in emela_types::host_exports(self.hir, self.entry) {
+            let entry = self.hir.entry_exports.iter().find(|e| e.def == exposed.def);
+            if target == Some("c")
+                && let Some(e) = entry.filter(|e| emela_types::is_http_serve(self.hir, e.adapter))
+            {
+                // `serve` has no `@export(c, ...)`, so nothing would be exposed and the program
+                // would build without an entry.
+                self.errors
+                    .push(LowerError::HttpServiceOnC { span: Some(e.span) });
                 continue;
             }
-            if let Some(param) = self.bounded_param(def) {
-                self.errors.push(LowerError::ConstrainedExport {
-                    name: self.hir.defs[def].name.to_string(),
-                    param: param.to_owned(),
-                    span: self.hir.defs[def].span,
-                });
+            let exports: Vec<HostExport> = exposed
+                .exports
+                .iter()
+                .filter(|e| target.is_none_or(|t| e.target == t))
+                .map(|e| {
+                    let (interface, name) = match e.args.as_slice() {
+                        [interface, name] => (Some(interface.clone()), name.clone()),
+                        [name] => (None, name.clone()),
+                        // The parser reported it (E0146).
+                        _ => return None,
+                    };
+                    Some(HostExport {
+                        target: e.target.to_string(),
+                        interface,
+                        name,
+                    })
+                })
+                .collect::<Option<_>>()
+                .unwrap_or_default();
+            if exports.is_empty() {
+                continue;
             }
+            let name = self.hir.defs[entry.map_or(exposed.def, |e| e.entry)]
+                .name
+                .to_string();
+            let span = Some(exposed.entry.unwrap_or(exposed.exports[0].span));
+            match target {
+                Some("c") if self.fn_suspends(exposed.def, 0) => {
+                    self.errors
+                        .push(LowerError::SuspendingExport { name, span });
+                    continue;
+                }
+                // The runtime exposes the entry adapter of the bundled `Std.Http`.
+                Some("wasm")
+                    if !entry.is_some_and(|e| emela_types::is_http_serve(self.hir, e.adapter)) =>
+                {
+                    self.errors.push(LowerError::WasmExport { name, span });
+                    continue;
+                }
+                _ => {}
+            }
+            self.host_exports.push(Exposed {
+                def: exposed.def,
+                exports,
+            });
         }
     }
+}
+
+/// A fn exposed to the host, with its names for the build target ([`Lowerer::host_exports`]).
+struct Exposed {
+    def: DefId,
+    exports: Vec<HostExport>,
 }
 
 /// Collapses `.` and `..` in a path textually (symbolic links are not resolved).

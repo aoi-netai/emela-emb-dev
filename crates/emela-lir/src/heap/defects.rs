@@ -5,7 +5,9 @@
 //! (`runtime defect(msg)`) or gets one back from a call leaves with [`Term::Unwind`], and each call
 //! that may come back with a pending defect has a landing (`on_defect { … }`) that runs instead of
 //! the rest of the sequence. C and WASM emit a call's landing as a test of the pending slot after
-//! the call (`if (pending) { …landing… }`), and `unwind` as a return of any value.
+//! the call (`if (pending) { …landing… }`), and `unwind` as a return of any value. The defect
+//! does not travel with the return value like a failure does, so that functions that cannot fail
+//! (nearly all of them) keep the shape of their return value.
 //!
 //! What the pass changes, in each function:
 //!
@@ -14,8 +16,9 @@
 //!   test that raises `division by zero` (spec 16.1); backends may then divide without checking.
 //! - Every call that may raise a defect gets a landing that unwinds: direct calls to functions
 //!   that may ([`Function::defects`], found by a fixpoint over the call graph), calls of function
-//!   values and operations, and the builtins and concurrency operations listed in
-//!   [`builtin_may_defect`] and [`fiber_may_defect`].
+//!   values and operations (the callee is unknown), and the builtins and concurrency operations
+//!   listed in [`builtin_may_defect`] and [`fiber_may_defect`]. External functions (a host
+//!   exception is a defect, `[ext.exception]`) and suspending functions always may.
 //! - Failure edges get landings of their own ([`OnFail::Handle`]) that break to the block or fail
 //!   the function.
 //! - `protect { body } cleanup { c }` becomes a block of `body` in which a copy of `c` runs on
@@ -25,8 +28,10 @@
 //!   (`runtime defect_take()`) and put back afterwards (`runtime defect_resume(d)`), so that the
 //!   calls in the cleanup can raise and detect their own defects; a defect raised by the cleanup
 //!   becomes a note of the first one (spec 14.4) and the unwinding goes on. A defect raised by the
-//!   cleanup on another way out replaces that way out. The cleanup is copied once per way out;
-//!   cleanups are small (a call of the release and `retire`).
+//!   cleanup on another way out replaces that way out. The cleanup is copied once per way out
+//!   rather than gathering the ways out into one place with a variable telling which: copying is
+//!   simpler and gives a plainer shape after reference counting, and cleanups are small (a call
+//!   of the release and `retire`).
 
 use emela_core::{Builtin, FiberOp, TypeId};
 use rustc_hash::FxHashMap;
@@ -106,6 +111,7 @@ pub fn builtin_may_defect(op: Builtin) -> bool {
         | Builtin::FloatTruncate
         | Builtin::Panic
         | Builtin::Todo
+        | Builtin::AssertFail
         // Target c splits by grapheme clusters only ASCII text so far, and an empty separator
         // that turns up at run time on other text is a defect there.
         | Builtin::StringSplit => true,
@@ -158,7 +164,7 @@ pub fn fiber_may_defect(op: FiberOp) -> bool {
         | FiberOp::Await { .. }
         | FiberOp::Interrupt
         | FiberOp::DeferredAwait
-        | FiberOp::CauseRaise
+        | FiberOp::CauseRaise { .. }
         // A scope, handle or Deferred used after its scope ended (spec 11.8).
         | FiberOp::Fork
         | FiberOp::Deferred
@@ -247,7 +253,9 @@ fn analyse(m: &Module) -> Vec<bool> {
             flags[i] = true;
             continue;
         };
-        let mut raises = f.suspends;
+        // A const's wrapper may raise a defect even when its body has none: a self-reference, or
+        // a defect remembered from the first reference (spec 5.6). Every caller needs a landing.
+        let mut raises = f.suspends || f.constant;
         visit(f, body, &mut |stmt, term| match stmt {
             Some(Stmt::Let { value, .. }) => match value {
                 Value::Call {
@@ -258,7 +266,7 @@ fn analyse(m: &Module) -> Vec<bool> {
                 v => raises |= may_defect_without_flags(v),
             },
             Some(_) => {}
-            None => raises |= matches!(term, Term::Defect(_) | Term::Unwind),
+            None => raises |= matches!(term, Term::Defect(..) | Term::Unwind),
         });
         flags[i] = raises;
     }
@@ -449,9 +457,16 @@ impl<'a> Explicit<'a> {
                 Term::Break { label, value }
             }
             Term::Recur(args) => Term::Recur(self.c.operands(out, args)),
-            Term::Defect(msg) => {
+            Term::Defect(msg, at) => {
                 let msg = self.c.operand(out, msg);
-                self.runtime(stmts, RuntimeOp::Defect, vec![msg]);
+                match at {
+                    Some(at) => self.runtime(
+                        stmts,
+                        RuntimeOp::DefectAt,
+                        vec![msg, Const::String(at.clone()).into()],
+                    ),
+                    None => self.runtime(stmts, RuntimeOp::Defect, vec![msg]),
+                }
                 self.exit(0, true, stmts);
                 Term::Unwind
             }

@@ -28,9 +28,19 @@ pub struct Signature {
     pub labels: Vec<Option<SmolStr>>,
 }
 
-/// Also holds the effect tags that handlers implement.
+/// The parameters of a handler's init (`init(binding: String)`, `[effect.handler]`). Handlers
+/// are not generic, so the types are concrete.
+#[derive(Clone, Debug, Default)]
+pub struct InitParams {
+    pub tys: Vec<Ty>,
+    pub labels: Vec<Option<SmolStr>>,
+}
+
+/// Also holds the effect tags that handlers implement and the parameters of their inits.
 pub struct Signatures {
     by_def: ArenaMap<DefId, Signature>,
+    /// Handler → the parameters of its init. Absent for a handler whose init takes none.
+    init_params: ArenaMap<DefId, InitParams>,
     /// Handler → the effect it implements and its type arguments (`implements State[Int]`, spec
     /// 8.1). Async handlers (E0413) and handlers whose effect is unknown are absent.
     handler_effects: ArenaMap<DefId, Tag>,
@@ -46,6 +56,7 @@ impl Signatures {
     pub fn new() -> Self {
         Signatures {
             by_def: ArenaMap::default(),
+            init_params: ArenaMap::default(),
             handler_effects: ArenaMap::default(),
             label_bases: ArenaMap::default(),
             default_labels: ArenaMap::default(),
@@ -54,6 +65,11 @@ impl Signatures {
 
     pub fn handler_effect(&self, handler: DefId) -> Option<&Tag> {
         self.handler_effects.get(handler)
+    }
+
+    /// The parameters of a handler's init. `None` if it takes none (or has no init).
+    pub fn init_params(&self, handler: DefId) -> Option<&InitParams> {
+        self.init_params.get(handler)
     }
 
     /// The effect a label stands for. `None` for effects that are not labels.
@@ -132,6 +148,10 @@ impl Signatures {
                     None
                 }
                 Some(Item::Handler(item)) => {
+                    if !item.init_params.is_empty() {
+                        let init = init_params(program, ty_table, def, &item.init_params, diags);
+                        sigs.init_params.insert(def, init);
+                    }
                     if let Res::Def(effect) = item.effect
                         && is_label(program, effect)
                     {
@@ -505,7 +525,8 @@ fn check_bounds(
 /// The type and labels of an effect operation (spec 8.1). Being inside a declaration, omitted
 /// `fails` and `use` in function-typed parameters mean empty (spec 9.2). The operation's `fails`
 /// clause is its E. The operation type's R is empty; calls through a capability value add the
-/// effect. Operations cannot have a `use` clause (E0137 in the syntax stage).
+/// effect. Operations cannot have a `use` clause (E0137 in the syntax stage). An omitted return
+/// type is E0110 in the parser; it is read as `()` here to go on.
 ///
 /// Effect type parameters (the `S` of `effect State[S]`) become scheme type parameters as
 /// `Bound(i)`. Capability values and handler implementations substitute the tag's type
@@ -604,6 +625,11 @@ fn own_tag(ty_table: &TyTable, effect: DefId, n: usize) -> Tag {
 
 /// Adds `own` to the `use` of a function type that names one of the effect's set type
 /// parameters (the first `n` scheme parameters).
+///
+/// Without it, the child's `Scope[?e, ?r]` would become a lower bound of `?r` itself: the scope
+/// would demand `Scope` from outside (E0402, and the checker could overflow its stack), and in
+/// nested scopes the child's `Scope` would be met by the outer scope while lowering points it at
+/// the inner one.
 fn with_own_tag(ty: Ty, own: &Tag, n: usize) -> Ty {
     let Ty::Fn(mut f) = ty else {
         return ty;
@@ -903,6 +929,39 @@ fn ctor_signature(
         scheme: Scheme::new(params, ty),
         labels,
     })
+}
+
+/// The parameters of a handler's init. Their types MUST be written (E0316, `[effect.handler]`);
+/// a missing one becomes `Ty::Error`. An omitted E or R in a function type is empty, as in the
+/// type of a const: the handler is not generic.
+fn init_params(
+    program: &Program,
+    ty_table: &TyTable,
+    handler: DefId,
+    params: &[Param],
+    diags: &mut Vec<Diagnostic>,
+) -> InitParams {
+    let tys = params
+        .iter()
+        .map(|p| match p.ty {
+            Some(ty) => ty_table.lower(program, &[], ty, diags),
+            None => {
+                let local = &program.locals[p.local];
+                diags.push(Diagnostic {
+                    span: Some(local.span),
+                    kind: DiagnosticKind::MissingInitParamType {
+                        handler: program.defs[handler].name.clone(),
+                        param: local.name.clone(),
+                    },
+                });
+                Ty::Error
+            }
+        })
+        .collect();
+    InitParams {
+        tys,
+        labels: param_labels(program, params),
+    }
 }
 
 /// The type of a top-level fn parameter. If none is written, pushes E0316 (spec 6.1) and returns

@@ -221,7 +221,7 @@ fn emit_reference_functions(writer: &mut Writer, cycles: bool) {
     );
     writer.end_block();
 
-    writer.begin_block("static inline void emela_heap_retain(void *value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_heap_retain(void *value)");
     writer.begin_block("if (value == NULL)");
     writer.line("return;");
     writer.end_block();
@@ -387,6 +387,7 @@ mod tests {
         writer.line(
             "#include <stddef.h>\n#include <stdint.h>\n#include <assert.h>\n#include <stdlib.h>",
         );
+        crate::emit::emit_unused_attribute(&mut writer);
         writer.line("enum { EMELA_DEFECT_HEAP_EXHAUSTED, EMELA_DEFECT_PANIC };");
         writer.line("_Noreturn void emela_board_defect(int kind, const char *message, uint16_t length) { (void)kind; (void)message; (void)length; abort(); }");
         emit_runtime(&mut writer, 1024, true);
