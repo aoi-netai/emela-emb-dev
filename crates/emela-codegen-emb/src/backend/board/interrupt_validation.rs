@@ -9,7 +9,7 @@ pub(super) fn validate_isr_entries(
     names: &HashMap<FnId, String>,
     options: &Options,
 ) -> Result<(), Vec<Error>> {
-    for entry_name in &options.isr_entries {
+    for entry_name in options.isr_entries() {
         let Some((entry, _)) = flow.functions.iter().find(|(id, function)| {
             emitted.contains(id) && function.exported && function.name == *entry_name
         }) else {
@@ -132,7 +132,11 @@ fn validate_isr_function(
                 if callee.external.is_some() {
                     let symbol =
                         external::isr_symbol(flow, callee, &names[callee_id], options, entry_name)?;
-                    if !options.isr_safe_externals.iter().any(|safe| safe == symbol) {
+                    if !options
+                        .isr_safe_externals()
+                        .iter()
+                        .any(|safe| safe == symbol)
+                    {
                         active.remove(&id);
                         return Err(unsupported(
                             &function.name,

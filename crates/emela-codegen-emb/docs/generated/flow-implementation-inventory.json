@@ -4,7 +4,7 @@
   "backend": "emela-codegen-emb",
   "config": {
     "path": "crates/emela-codegen-emb/tools/flow-implementation-routes.json",
-    "sha256": "d4c0810c6b500888cbea59887f269c64786e1d9cd4697a3ade91e5544dd9e7b7"
+    "sha256": "6e16694b09bad0b457049c53fdafe5984132dacfc4700d84887385e1f6aa3344"
   },
   "sources": [
     {
@@ -76,8 +76,8 @@
       "sha256": "13b7b3bfac12204c3fd09a1d0425fc9d27011a3952ee05a0a1118e6106f49141"
     },
     {
-      "path": "crates/emela-codegen-emb/src/lib.rs",
-      "sha256": "b413cce70c2c8fdcae9861f105770848f9211560c42c1c3b5b0679c62e778cc5"
+      "path": "crates/emela-codegen-emb/src/input/mod.rs",
+      "sha256": "e057872922f1a46489a753673674ecd9bbcfe3f1439ddeb48c6dbd6974a5dcde"
     },
     {
       "path": "crates/emela-lir/src/verify.rs",
@@ -87,7 +87,7 @@
   "routes": [
     {
       "id": "reject-runtime",
-      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "path": "crates/emela-codegen-emb/src/input/mod.rs",
       "symbol": "verify_flow",
       "owner": "emela_lir::RuntimeOp",
       "selector": "match",
@@ -110,7 +110,7 @@
     },
     {
       "id": "reject-builtin",
-      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "path": "crates/emela-codegen-emb/src/input/mod.rs",
       "symbol": "verify_flow",
       "owner": "emela_core::Builtin",
       "selector": "match",
@@ -720,9 +720,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -769,9 +769,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1021,9 +1021,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1650,9 +1650,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1699,9 +1699,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1748,9 +1748,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -2145,9 +2145,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 376,
-            "end_line": 389
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 81,
+            "end_line": 94
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -3902,9 +3902,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 367,
-            "end_line": 375
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 72,
+            "end_line": 80
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -3951,9 +3951,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 367,
-            "end_line": 375
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 72,
+            "end_line": 80
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -4000,9 +4000,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 367,
-            "end_line": 375
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 72,
+            "end_line": 80
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -4165,9 +4165,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 367,
-            "end_line": 375
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 72,
+            "end_line": 80
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -4214,9 +4214,9 @@
             "input"
           ],
           "source": {
-            "path": "crates/emela-codegen-emb/src/lib.rs",
-            "line": 367,
-            "end_line": 375
+            "path": "crates/emela-codegen-emb/src/input/mod.rs",
+            "line": 72,
+            "end_line": 80
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6162,9 +6162,9 @@
       "route": "reject-runtime",
       "pattern": "_",
       "source": {
-        "path": "crates/emela-codegen-emb/src/lib.rs",
-        "line": 390,
-        "end_line": 390
+        "path": "crates/emela-codegen-emb/src/input/mod.rs",
+        "line": 95,
+        "end_line": 95
       },
       "body_sha256": "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91"
     },
@@ -6172,9 +6172,9 @@
       "route": "reject-builtin",
       "pattern": "_",
       "source": {
-        "path": "crates/emela-codegen-emb/src/lib.rs",
-        "line": 390,
-        "end_line": 390
+        "path": "crates/emela-codegen-emb/src/input/mod.rs",
+        "line": 95,
+        "end_line": 95
       },
       "body_sha256": "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91"
     },

@@ -39,7 +39,7 @@ pub(crate) fn emit_runtime(
         .map(|&id| "while evaluating const : ".len() + module.functions[id].name.len())
         .sum();
     let emergency = prefix_bytes + 64;
-    if emergency > usize::from(u16::MAX) || options.const_diagnostic_bytes == 0 {
+    if emergency > usize::from(u16::MAX) || options.const_diagnostic_bytes() == 0 {
         return Err(vec![Error {
             kind: ErrorKind::InvalidOptions,
             message: "runtime const diagnostics require a nonzero diagnostic capacity and const context names fitting uint16_t".into(),
@@ -47,7 +47,7 @@ pub(crate) fn emit_runtime(
     }
     writer.line(&format!(
         "#define EMELA_CONST_DIAGNOSTIC_BYTES UINT32_C({})",
-        options.const_diagnostic_bytes
+        options.const_diagnostic_bytes()
     ));
     writer.line(&format!(
         "#define EMELA_CONST_EMERGENCY_BYTES {}",

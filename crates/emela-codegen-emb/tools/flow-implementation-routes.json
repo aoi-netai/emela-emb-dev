@@ -109,7 +109,7 @@
   "routes": [
     {
       "id": "reject-runtime",
-      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "path": "crates/emela-codegen-emb/src/input/mod.rs",
       "symbol": "verify_flow",
       "owner": "emela_lir::RuntimeOp",
       "selector": "match",
@@ -129,7 +129,7 @@
     },
     {
       "id": "reject-builtin",
-      "path": "crates/emela-codegen-emb/src/lib.rs",
+      "path": "crates/emela-codegen-emb/src/input/mod.rs",
       "symbol": "verify_flow",
       "owner": "emela_core::Builtin",
       "selector": "match",

@@ -4,6 +4,8 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 [実装範囲と実装状況](docs/implementation.md)に、入力契約、各variantへの対応、メモリ方針と既存の検証をまとめています。
 
+[ディレクトリ構成の調査と改善案](docs/directory-design-review.md)に、現在の責務の混在、段階別の分離と同じ生成物をboard／nativeへ接続する実装計画をまとめています。
+
 ## 主な入口
 
 - `compile_flow(flow, options)`：検証済みのFlow段階を入力とする主入口です。入力を検証し、Cソースとヘッダーを`Output`として返します。

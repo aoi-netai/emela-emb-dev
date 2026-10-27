@@ -2400,8 +2400,8 @@
         "path": "src/backend/compiler/foundation/external.rs",
         "symbol": "resolve",
         "line": 74,
-        "end_line": 222,
-        "body_sha256": "b36c49eaf153334bf0f9e04045bdddb912e20a98ced55252201dcad6b5ef0708"
+        "end_line": 224,
+        "body_sha256": "2b351e761fa6182145971d5d0b6ceb733bc6aa24621d871780d760be0a234fe8"
       },
       "phase_entries": [],
       "tests": [],
@@ -2419,8 +2419,8 @@
         "path": "src/backend/compiler/foundation/external.rs",
         "symbol": "resolve",
         "line": 74,
-        "end_line": 222,
-        "body_sha256": "b36c49eaf153334bf0f9e04045bdddb912e20a98ced55252201dcad6b5ef0708"
+        "end_line": 224,
+        "body_sha256": "2b351e761fa6182145971d5d0b6ceb733bc6aa24621d871780d760be0a234fe8"
       },
       "phase_entries": [],
       "tests": [],
@@ -2438,8 +2438,8 @@
         "path": "src/backend/compiler/foundation/external.rs",
         "symbol": "resolve",
         "line": 74,
-        "end_line": 222,
-        "body_sha256": "b36c49eaf153334bf0f9e04045bdddb912e20a98ced55252201dcad6b5ef0708"
+        "end_line": 224,
+        "body_sha256": "2b351e761fa6182145971d5d0b6ceb733bc6aa24621d871780d760be0a234fe8"
       },
       "phase_entries": [],
       "tests": [],
@@ -2457,8 +2457,8 @@
         "path": "src/backend/compiler/foundation/external.rs",
         "symbol": "resolve",
         "line": 74,
-        "end_line": 222,
-        "body_sha256": "b36c49eaf153334bf0f9e04045bdddb912e20a98ced55252201dcad6b5ef0708"
+        "end_line": 224,
+        "body_sha256": "2b351e761fa6182145971d5d0b6ceb733bc6aa24621d871780d760be0a234fe8"
       },
       "phase_entries": [],
       "tests": [],
@@ -2476,8 +2476,8 @@
         "path": "src/backend/compiler/foundation/external.rs",
         "symbol": "resolve",
         "line": 74,
-        "end_line": 222,
-        "body_sha256": "b36c49eaf153334bf0f9e04045bdddb912e20a98ced55252201dcad6b5ef0708"
+        "end_line": 224,
+        "body_sha256": "2b351e761fa6182145971d5d0b6ceb733bc6aa24621d871780d760be0a234fe8"
       },
       "phase_entries": [],
       "tests": [],
@@ -6090,10 +6090,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "a7930a48d755e83842af335b5bd3630a0cc9ef25d89250f51470f961f95120e6",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/c/names.rs",
         "symbol": "function_name",
-        "line": 1746,
-        "end_line": 1753,
+        "line": 72,
+        "end_line": 79,
         "body_sha256": "6e1a860ea72beb9dea50428a13fef81083cf55d2817e3eac9638902884930149"
       },
       "phase_entries": [],
@@ -6109,11 +6109,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "a9072886e557ea47ba6f3c4f7b61af8e73238e30e9e6d3991b28f7a4ba2f5a7b",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6128,11 +6128,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "0e5290b74dc2e3c6847dd6f6d3562f894968656297b67631b534b6e2ee78ca6f",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6147,11 +6147,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "d2c6da994ce3f8a1657e0ff5d6b105d74a4efcc2a80145e26ffdc6c62badfe92",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6166,11 +6166,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "af425200959638cacea08dbb9d32f72c3eef9d72c5e9bea5c40e183f88c1c30e",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6185,11 +6185,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "b31b44e8b8cc40abee4cbc39b3743e7da31d2b9210cd7bad6a2416383f4c0974",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6204,11 +6204,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "635ac15d96005cbfed1beb0472a005e61209d7fc14f840c9e0c50d7dced68cdb",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6223,11 +6223,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "a9ca49d9cbc0183cda59ca2c3a721e25c03ee55cb7b50f70dd226cdd31aab39a",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6242,11 +6242,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "4de11bcdc644430d7ba933045b41c18e12b363ca5424f57079ee31352c61f617",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6261,11 +6261,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "9d0ee9ab4e0547166efccfb6466b5f498f17e2b74d48066ca39c4d8abc6c2a37",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6280,11 +6280,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "72710f777d07e50bd610aee5302dcb8f5c8c82893b5f2ba1971dfabe58db0e3d",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6299,11 +6299,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "d64f59fbbcf881f090ac62df251056de4b288163f0e4dd3567bc5e265f0de9c5",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6318,11 +6318,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "46e9a2f2de63363e7aed81a1e63cec2430e7d3a705646b76a805487e9f471063",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6337,11 +6337,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "647dc307017d89952292a8284968077423c1fa1bce9c74c378b944a3e4a4412d",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6356,11 +6356,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "d4753f30e80b949fe1c970e00a36d0194892232994d021822dac05a9ffd498cb",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6375,11 +6375,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "379cb8cbc6218216df831e5535c7fbf772fd1364c42abece6bf823df82f85490",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6394,11 +6394,11 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "53d96baaa3693f1f2a8ae773b67b7af0e1620849246fdc2c1042efa1887639ad",
       "entry": {
-        "path": "src/backend/compiler/emit.rs",
+        "path": "src/backend/compiler/emit/mod.rs",
         "symbol": "emit",
         "line": 5,
-        "end_line": 842,
-        "body_sha256": "a85fcc6fe245c1710374dc6cac6c6f15e707b1ecadaa2b920b4f6946f4b33fdf"
+        "end_line": 752,
+        "body_sha256": "ce6cdc48d764d541db5b85d07c6294eb4f6a6250e983a5f6c2ae4c4c5d095f2f"
       },
       "phase_entries": [],
       "tests": [],
@@ -6472,8 +6472,8 @@
       "entry": {
         "path": "src/backend/compiler/mod.rs",
         "symbol": "compile_flow",
-        "line": 94,
-        "end_line": 131,
+        "line": 97,
+        "end_line": 134,
         "body_sha256": "f1ab656dafc337adf76d64c9e13367d456b3de94b6e1a10f05f50dedf7bbe1c8"
       },
       "phase_entries": [],
@@ -6491,8 +6491,8 @@
       "entry": {
         "path": "src/backend/compiler/mod.rs",
         "symbol": "compile_flow",
-        "line": 94,
-        "end_line": 131,
+        "line": 97,
+        "end_line": 134,
         "body_sha256": "f1ab656dafc337adf76d64c9e13367d456b3de94b6e1a10f05f50dedf7bbe1c8"
       },
       "phase_entries": [],
@@ -6510,8 +6510,8 @@
       "entry": {
         "path": "src/backend/compiler/mod.rs",
         "symbol": "compile_flow",
-        "line": 94,
-        "end_line": 131,
+        "line": 97,
+        "end_line": 134,
         "body_sha256": "f1ab656dafc337adf76d64c9e13367d456b3de94b6e1a10f05f50dedf7bbe1c8"
       },
       "phase_entries": [],
@@ -6529,8 +6529,8 @@
       "entry": {
         "path": "src/backend/compiler/mod.rs",
         "symbol": "compile_flow",
-        "line": 94,
-        "end_line": 131,
+        "line": 97,
+        "end_line": 134,
         "body_sha256": "f1ab656dafc337adf76d64c9e13367d456b3de94b6e1a10f05f50dedf7bbe1c8"
       },
       "phase_entries": [],
@@ -6548,8 +6548,8 @@
       "entry": {
         "path": "src/backend/compiler/mod.rs",
         "symbol": "compile_flow",
-        "line": 94,
-        "end_line": 131,
+        "line": 97,
+        "end_line": 134,
         "body_sha256": "f1ab656dafc337adf76d64c9e13367d456b3de94b6e1a10f05f50dedf7bbe1c8"
       },
       "phase_entries": [],
@@ -8455,10 +8455,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "74f2855a0f001db66f4b61ba0b0176cad564f10ff662f58a61f10a398dee307d",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/emit/control.rs",
         "symbol": "emit_compound_sequence",
-        "line": 951,
-        "end_line": 998,
+        "line": 127,
+        "end_line": 174,
         "body_sha256": "fdd2a575830515473568619bdd5c5714a9a5784419176a4369f9de9342597dfa"
       },
       "phase_entries": [],
@@ -8474,10 +8474,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "49cd63b5604e3330f325558fb23a465773b51dee83c4a0f258d64825951e31f2",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/emit/control.rs",
         "symbol": "emit_compound_sequence",
-        "line": 951,
-        "end_line": 998,
+        "line": 127,
+        "end_line": 174,
         "body_sha256": "fdd2a575830515473568619bdd5c5714a9a5784419176a4369f9de9342597dfa"
       },
       "phase_entries": [],
@@ -8493,10 +8493,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "00949179d2b1922c94965d45f02fc87ef2ff110eb6cf04da874be2f7abb9ea3a",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/emit/control.rs",
         "symbol": "emit_compound_sequence",
-        "line": 951,
-        "end_line": 998,
+        "line": 127,
+        "end_line": 174,
         "body_sha256": "fdd2a575830515473568619bdd5c5714a9a5784419176a4369f9de9342597dfa"
       },
       "phase_entries": [],
@@ -8512,10 +8512,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "b3c219051037c1bcb33da830af69006da8d47f10c25a56be3f06f95fd2a53e15",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/emit/control.rs",
         "symbol": "emit_compound_sequence",
-        "line": 951,
-        "end_line": 998,
+        "line": 127,
+        "end_line": 174,
         "body_sha256": "fdd2a575830515473568619bdd5c5714a9a5784419176a4369f9de9342597dfa"
       },
       "phase_entries": [],
@@ -9785,10 +9785,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "cba2f17d76c09d70fafe74bbf391a90e25bfbbbf143a9f74ce8a0f696d70d9f1",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/emit/control.rs",
         "symbol": "emit_statement",
-        "line": 824,
-        "end_line": 900,
+        "line": 17,
+        "end_line": 93,
         "body_sha256": "6a49e5a4cc0b433068bb02c046d0ce2b7697e5e3b6b1cd83d31bd9ad1103b85a"
       },
       "phase_entries": [],
@@ -13187,10 +13187,10 @@
       "review_status": "unreviewed",
       "observed_definition_sha256": "ed4864e97efe7e48a8957c4f8ae4aa6445b05982f69dd70aebd78691b08c5dc2",
       "entry": {
-        "path": "src/backend/compiler/mod.rs",
+        "path": "src/backend/compiler/c/names.rs",
         "symbol": "variable_name",
-        "line": 1777,
-        "end_line": 1779,
+        "line": 103,
+        "end_line": 105,
         "body_sha256": "dfb02b0025d657107c503fa59095695f7734478830ede2fdd9bed0531f06b37c"
       },
       "phase_entries": [],

@@ -5,7 +5,7 @@ use crate::{Error, ErrorKind, GeneratedFile, Options, Output};
 struct Native;
 impl Target for Native {
     fn validate(&self, context: &LinkContext<'_, '_>) -> Result<(), Vec<Error>> {
-        if !context.options.isr_entries.is_empty() {
+        if !context.options.isr_entries().is_empty() {
             return Err(vec![Error {
                 kind: ErrorKind::InvalidOptions,
                 message: "the native sample does not support hardware ISR entries".into(),

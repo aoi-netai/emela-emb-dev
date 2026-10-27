@@ -1,6 +1,6 @@
 //! Explicit synchronous generated-value board adapters.
 use super::*;
-use crate::{ExternalAdapter, ExternalResult};
+use crate::ExternalResult;
 
 #[derive(Clone)]
 pub(in crate::backend) struct Binding {
@@ -125,11 +125,13 @@ pub(in crate::backend) fn resolve(
         }
         let original = symbol(f)?;
         let adapter = options
-            .external_adapters
+            .external_adapters()
             .iter()
             .find(|(name, _)| *name == original)
             .map(|(_, a)| a);
-        let binding = if let Some(ExternalAdapter { symbol, result }) = adapter {
+        let binding = if let Some(adapter) = adapter {
+            let symbol = adapter.symbol();
+            let result = adapter.result();
             if !is_c_identifier(symbol)
                 || generated.contains(symbol)
                 || symbol.starts_with("emela_")
@@ -139,15 +141,15 @@ pub(in crate::backend) fn resolve(
                     "external adapter symbol conflicts with a generated declaration or is invalid",
                 ));
             }
-            if *result == ExternalResult::StringBuffer && f.ret != TypeId::STRING {
+            if result == ExternalResult::StringBuffer && f.ret != TypeId::STRING {
                 return Err(unsupported(
                     &f.name,
                     "StringBuffer external adapter requires a String result",
                 ));
             }
             Binding {
-                symbol: symbol.clone(),
-                result: *result,
+                symbol: symbol.to_owned(),
+                result,
                 adapted: true,
                 target_owned: false,
             }
@@ -270,7 +272,7 @@ pub(in crate::backend) fn isr_symbol<'a>(
     }
     let original = symbol(function)?;
     if let Some((_, adapter)) = options
-        .external_adapters
+        .external_adapters()
         .iter()
         .find(|(s, _)| *s == original)
     {
@@ -283,7 +285,7 @@ pub(in crate::backend) fn isr_symbol<'a>(
                 &format!("non-scalar external adapter reachable from ISR entry `{entry}`"),
             ));
         }
-        Ok(&adapter.symbol)
+        Ok(adapter.symbol())
     } else {
         Ok(native)
     }

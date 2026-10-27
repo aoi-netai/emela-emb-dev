@@ -80,11 +80,13 @@ pub(super) fn validate(
         }
     }
     if enabled
-        && (options.fiber_capacity == 0 || options.frame_capacity == 0 || options.frame_bytes == 0)
+        && (options.fiber_capacity() == 0
+            || options.frame_capacity() == 0
+            || options.frame_bytes() == 0)
     {
         return Err(vec![Error { kind: ErrorKind::InvalidOptions, message: "fiber_capacity, frame_capacity, and frame_bytes must be positive for suspend functions".into() }]);
     }
-    if has_tasks(flow, emitted) && (options.task_capacity == 0 || options.event_capacity == 0) {
+    if has_tasks(flow, emitted) && (options.task_capacity() == 0 || options.event_capacity() == 0) {
         return Err(vec![Error {
             kind: ErrorKind::InvalidOptions,
             message: "task_capacity and event_capacity must be positive for suspend external calls"
@@ -177,7 +179,7 @@ pub(super) fn external_symbol(
         emela_core::HostRef::Global(name) | emela_core::HostRef::Import { name, .. } => name,
     };
     let (_, symbol) = options
-        .task_adapters
+        .task_adapters()
         .iter()
         .find(|(name, _)| name == original)
         .ok_or_else(|| {
@@ -222,7 +224,7 @@ pub(super) fn emit_runtime(
     if deferred {
         writer.line(&format!(
             "#define EMELA_DEFERRED_CAPACITY {}",
-            options.deferred_capacity
+            options.deferred_capacity()
         ));
     }
     if scopes {
@@ -236,24 +238,24 @@ pub(super) fn emit_runtime(
     }
     writer.line(&format!(
         "#define EMELA_FIBER_CAPACITY {}",
-        options.fiber_capacity
+        options.fiber_capacity()
     ));
     writer.line(&format!(
         "#define EMELA_FRAME_CAPACITY {}",
-        options.frame_capacity
+        options.frame_capacity()
     ));
     writer.line(&format!(
         "#define EMELA_FRAME_BYTES {}",
-        options.frame_bytes
+        options.frame_bytes()
     ));
     if tasks {
         writer.line(&format!(
             "#define EMELA_TASK_CAPACITY {}",
-            options.task_capacity
+            options.task_capacity()
         ));
         writer.line(&format!(
             "#define EMELA_EVENT_CAPACITY {}",
-            options.event_capacity
+            options.event_capacity()
         ));
     }
     writer.line(include_str!("../../runtime/scheduler.c"));

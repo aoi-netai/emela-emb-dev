@@ -206,31 +206,31 @@
 | `emela_lir::Const::String` | variant_entry / emit | `emela_lir::Const::String` | [string_value](../../src/backend/compiler/features/constants.rs#L38) |  | [emit::emits_a_static_string_const_as_a_view](../../tests/emit.rs#L2079) |
 | `emela_lir::Const::String.0` | member_of_variant / emit | `emela_lir::Const::String` | [string_value](../../src/backend/compiler/features/constants.rs#L38) |  | [emit::emits_a_static_string_const_as_a_view](../../tests/emit.rs#L2079) |
 | `emela_lir::Const::Unit` | variant_entry / emit | `emela_lir::Const::Unit` | [unit_value](../../src/backend/compiler/features/constants.rs#L52) |  | [emit::constructs_inline_tuples_and_keeps_unit_field_positions](../../tests/emit.rs#L4626) |
-| `emela_lir::FnId` | shared_declaration / schema | `emela_lir::FnId` | [function_name](../../src/backend/compiler/mod.rs#L1746) |  |  |
-| `emela_lir::Function` | shared_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.body` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.constant` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.defects` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.env` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.exported` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.external` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.fails` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.labels` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.name` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.params` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.ret` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.seqs` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.stmts` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.suspends` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
-| `emela_lir::Function.vars` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit.rs#L5) |  |  |
+| `emela_lir::FnId` | shared_declaration / schema | `emela_lir::FnId` | [function_name](../../src/backend/compiler/c/names.rs#L72) |  |  |
+| `emela_lir::Function` | shared_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.body` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.constant` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.defects` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.env` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.exported` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.external` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.fails` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.labels` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.name` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.params` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.ret` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.seqs` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.stmts` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.suspends` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
+| `emela_lir::Function.vars` | member_of_declaration / schema | `emela_lir::Function` | [emit](../../src/backend/compiler/emit/mod.rs#L5) |  |  |
 | `emela_lir::LabelData` | shared_declaration / schema | `emela_lir::LabelData` | [emit](../../src/backend/compiler/features/statements/block.rs#L3) |  |  |
 | `emela_lir::LabelData.hint` | member_of_declaration / schema | `emela_lir::LabelData` | [emit](../../src/backend/compiler/features/statements/block.rs#L3) |  |  |
 | `emela_lir::LabelId` | shared_declaration / schema | `emela_lir::LabelId` | [emit](../../src/backend/compiler/features/statements/block.rs#L3) |  |  |
-| `emela_lir::Module` | shared_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L94) |  |  |
-| `emela_lir::Module.core` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L94) |  |  |
-| `emela_lir::Module.error_shows` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L94) |  |  |
-| `emela_lir::Module.functions` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L94) |  |  |
-| `emela_lir::Module.stage` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L94) |  |  |
+| `emela_lir::Module` | shared_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L97) |  |  |
+| `emela_lir::Module.core` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L97) |  |  |
+| `emela_lir::Module.error_shows` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L97) |  |  |
+| `emela_lir::Module.functions` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L97) |  |  |
+| `emela_lir::Module.stage` | member_of_declaration / schema | `emela_lir::Module` | [compile_flow](../../src/backend/compiler/mod.rs#L97) |  |  |
 | `emela_lir::OnFail` | shared_declaration / schema | `emela_lir::OnFail` | [emit](../../src/backend/compiler/features/failures.rs#L123) |  | [emit::cell::cell_references_in_native_error_payloads_outlive_the_failing_frame](../../tests/cell/mod.rs#L518) / [emit::propagates_failure_from_a_captured_closure_through_its_indirect_call](../../tests/emit.rs#L369) / [flow::rejects_heap_only_failure_handle_at_flow_stage](../../tests/flow.rs#L165) |
 | `emela_lir::OnFail::Break` | variant_entry / emit | `emela_lir::OnFail::Break` | [break_edge](../../src/backend/compiler/features/failures.rs#L2) | [lower](../../src/backend/compiler/features/failures.rs#L192) | [emit::cell::cell_references_in_native_error_payloads_outlive_the_failing_frame](../../tests/cell/mod.rs#L518) |
 | `emela_lir::OnFail::Break.0` | member_of_variant / emit | `emela_lir::OnFail::Break` | [break_edge](../../src/backend/compiler/features/failures.rs#L2) |  | [emit::cell::cell_references_in_native_error_payloads_outlive_the_failing_frame](../../tests/cell/mod.rs#L518) |
@@ -279,10 +279,10 @@
 | `emela_lir::RuntimeOp::Unhold` | variant_entry / emit | `emela_lir::RuntimeOp::Unhold` | [unhold](../../src/backend/compiler/features/runtime.rs#L190) | [string_behavior](../../src/backend/compiler/features/runtime.rs#L277) / [string_bound](../../src/backend/compiler/features/runtime.rs#L302) / [needs_heap](../../src/backend/compiler/features/runtime.rs#L417) / [require_runtime](../../src/backend/compiler/features/runtime.rs#L393) | [flow::isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls](../../tests/flow.rs#L281) |
 | `emela_lir::RuntimeOp::Yield` | variant_entry / reject | `emela_lir::RuntimeOp::Yield` | [yield_operation](../../src/backend/compiler/features/runtime.rs#L219) | [string_behavior](../../src/backend/compiler/features/runtime.rs#L277) / [string_bound](../../src/backend/compiler/features/runtime.rs#L302) / [needs_heap](../../src/backend/compiler/features/runtime.rs#L417) / [require_runtime](../../src/backend/compiler/features/runtime.rs#L393) | [flow::rejects_heap_only_runtime_operations_at_flow_stage](../../tests/flow.rs#L195) |
 | `emela_lir::RuntimeOp::YieldPerform` | variant_entry / reject | `emela_lir::RuntimeOp::YieldPerform` | [yield_perform](../../src/backend/compiler/features/runtime.rs#L227) | [string_behavior](../../src/backend/compiler/features/runtime.rs#L277) / [string_bound](../../src/backend/compiler/features/runtime.rs#L302) / [needs_heap](../../src/backend/compiler/features/runtime.rs#L417) / [require_runtime](../../src/backend/compiler/features/runtime.rs#L393) | [flow::rejects_heap_only_runtime_operations_at_flow_stage](../../tests/flow.rs#L195) |
-| `emela_lir::Seq` | shared_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/mod.rs#L951) |  |  |
-| `emela_lir::Seq.stmts` | member_of_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/mod.rs#L951) |  |  |
-| `emela_lir::Seq.term` | member_of_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/mod.rs#L951) |  |  |
-| `emela_lir::SeqId` | shared_declaration / schema | `emela_lir::SeqId` | [emit_compound_sequence](../../src/backend/compiler/mod.rs#L951) |  |  |
+| `emela_lir::Seq` | shared_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/emit/control.rs#L127) |  |  |
+| `emela_lir::Seq.stmts` | member_of_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/emit/control.rs#L127) |  |  |
+| `emela_lir::Seq.term` | member_of_declaration / schema | `emela_lir::Seq` | [emit_compound_sequence](../../src/backend/compiler/emit/control.rs#L127) |  |  |
+| `emela_lir::SeqId` | shared_declaration / schema | `emela_lir::SeqId` | [emit_compound_sequence](../../src/backend/compiler/emit/control.rs#L127) |  |  |
 | `emela_lir::Stage` | shared_declaration / schema | `emela_lir::Stage` | [verify](../../src/backend/compiler/features/stages.rs#L31) |  | [flow::lowers_and_verifies_core_as_flow_ir](../../tests/flow.rs#L27) / [flow::rejects_every_heap_stage_before_codegen](../../tests/flow.rs#L64) |
 | `emela_lir::Stage::ClosuresConverted` | variant_entry / reject | `emela_lir::Stage::ClosuresConverted` | [closures_converted](../../src/backend/compiler/features/stages.rs#L5) |  | [flow::rejects_every_heap_stage_before_codegen](../../tests/flow.rs#L64) |
 | `emela_lir::Stage::DefectsExplicit` | variant_entry / reject | `emela_lir::Stage::DefectsExplicit` | [defects_explicit](../../src/backend/compiler/features/stages.rs#L8) |  | [flow::rejects_every_heap_stage_before_codegen](../../tests/flow.rs#L64) |
@@ -322,7 +322,7 @@
 | `emela_lir::Stmt::Switch.default` | member_of_variant / emit | `emela_lir::Stmt::Switch` | [emit](../../src/backend/compiler/features/statements/switch.rs#L3) |  | [emit::emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag](../../tests/emit.rs#L4757) |
 | `emela_lir::Stmt::Switch.dst` | member_of_variant / emit | `emela_lir::Stmt::Switch` | [emit](../../src/backend/compiler/features/statements/switch.rs#L3) |  | [emit::emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag](../../tests/emit.rs#L4757) |
 | `emela_lir::Stmt::Switch.on` | member_of_variant / emit | `emela_lir::Stmt::Switch` | [emit](../../src/backend/compiler/features/statements/switch.rs#L3) |  | [emit::emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag](../../tests/emit.rs#L4757) |
-| `emela_lir::StmtId` | shared_declaration / schema | `emela_lir::StmtId` | [emit_statement](../../src/backend/compiler/mod.rs#L824) |  |  |
+| `emela_lir::StmtId` | shared_declaration / schema | `emela_lir::StmtId` | [emit_statement](../../src/backend/compiler/emit/control.rs#L17) |  |  |
 | `emela_lir::Suspend` | shared_declaration / schema | `emela_lir::Suspend` | [emit](../../src/backend/compiler/features/statements/let_.rs#L3) |  |  |
 | `emela_lir::Suspend.saved` | member_of_declaration / schema | `emela_lir::Suspend` | [emit](../../src/backend/compiler/features/statements/let_.rs#L3) |  |  |
 | `emela_lir::Suspend.state` | member_of_declaration / schema | `emela_lir::Suspend` | [emit](../../src/backend/compiler/features/statements/let_.rs#L3) |  |  |
@@ -424,4 +424,4 @@
 | `emela_lir::VarData.hint` | member_of_declaration / schema | `emela_lir::VarData` | [TypeLayouts::new](../../src/backend/compiler/foundation/layouts.rs#L78) |  |  |
 | `emela_lir::VarData.repr` | member_of_declaration / schema | `emela_lir::VarData` | [TypeLayouts::new](../../src/backend/compiler/foundation/layouts.rs#L78) |  |  |
 | `emela_lir::VarData.ty` | member_of_declaration / schema | `emela_lir::VarData` | [TypeLayouts::new](../../src/backend/compiler/foundation/layouts.rs#L78) |  |  |
-| `emela_lir::VarId` | shared_declaration / schema | `emela_lir::VarId` | [variable_name](../../src/backend/compiler/mod.rs#L1777) |  |  |
+| `emela_lir::VarId` | shared_declaration / schema | `emela_lir::VarId` | [variable_name](../../src/backend/compiler/c/names.rs#L103) |  |  |

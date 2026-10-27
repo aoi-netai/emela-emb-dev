@@ -24,7 +24,7 @@ pub(in crate::backend) fn emit(
         deferred_pool,
         ..
     } = compiled.clone();
-    if deferred_pool && options.deferred_capacity == 0 {
+    if deferred_pool && options.deferred_capacity() == 0 {
         return Err(vec![Error {
             kind: ErrorKind::InvalidOptions,
             message: "deferred_capacity must be positive for Deferred operations".into(),
@@ -206,107 +206,20 @@ pub(in crate::backend) fn emit(
         ));
     }
 
-    let mut header = Writer::new();
-    header.line("#ifndef EMELA_EMBEDDED_H");
-    header.line("#define EMELA_EMBEDDED_H");
-    header.blank();
-    header.line("#include <stdint.h>");
-    header.blank();
-    layouts.emit_string_declaration(&mut header);
-    if has_scheduler
-        || layouts
-            .function_types
-            .iter()
-            .any(|&ty| matches!(&layouts.types[ty], Type::Fn(ft) if ft.suspends))
-    {
-        header.line("typedef struct emela_fiber emela_fiber;");
-    }
-    if layouts.has_error_abi || layouts.any_abi {
-        header.line("typedef struct EmelaError EmelaError;");
-        if layouts.any_abi {
-            header.line("typedef struct EmelaError EmelaAny;");
-        }
-        header.blank();
-    }
-    layouts.emit_declarations(&mut header);
-    external::emit_header(
+    let header = header::emit(header::Context {
         flow,
-        &external_bindings,
-        &layouts,
+        layouts: &layouts,
+        emitted_functions: &emitted_functions,
+        external_bindings: &external_bindings,
+        names: &names,
+        public_names: &public_names,
+        string_output_functions: &string_output_functions,
+        task_value_types: &task_value_types,
+        has_scheduler,
+        has_tasks,
         heap_required,
-        &mut header,
-    );
-    if has_scheduler {
-        header.line(include_str!("../../runtime/scheduler.h"));
-    }
-    if has_tasks {
-        header.line("#define EMELA_HAS_TASK_RUNTIME 1");
-        header.line(include_str!("../../runtime/task.h"));
-        if !task_value_types.is_empty() || suspend::has_failing_tasks(flow, &emitted_functions) {
-            header.line(include_str!("../../runtime/task_context.h"));
-        }
-        if suspend::has_failing_tasks(flow, &emitted_functions) {
-            header.line(include_str!("../../runtime/task_failure.h"));
-        }
-        task_values::emit_header(&layouts, &task_value_types, &mut header);
-        for (id, function) in flow
-            .functions
-            .iter()
-            .filter(|(id, f)| emitted_functions.contains(id) && f.suspends && f.external.is_some())
-        {
-            if !suspend::scalar(&layouts.types, function.ret) {
-                header.line(&format!("/* Success: emela_task_complete_value_{}. Arguments are borrowed only during start. */", function.ret.index()));
-            }
-            header.line(&format!(
-                "{};",
-                suspend::task_signature(&layouts, function, &names[&id])
-            ));
-        }
-    }
-    if !layouts.aggregates.is_empty() {
-        header.blank();
-    }
-
-    for (id, function) in flow
-        .functions
-        .iter()
-        .filter(|(id, f)| emitted_functions.contains(id) && f.exported)
-    {
-        if function.suspends {
-            header.line(&format!(
-                "{};",
-                suspend::start_signature(&layouts, function, &public_names[&id])
-            ));
-            continue;
-        }
-        let name = &public_names[&id];
-        let takes_string_output = string_output_functions.contains(&id);
-        if takes_string_output {
-            header.line("/* Caller provides this output buffer; the returned EmelaString points into it. */");
-        }
-        header.line(&format!(
-            "{};",
-            signature(&layouts, function, name, false, false, takes_string_output)
-        ));
-    }
-    if main_entry.is_some() {
-        header.line(target.entry_declaration());
-    }
-    if heap_required {
-        header.line("/* Retains a value allocated from the fixed heap. */");
-        header.line("void emela_embedded_retain(void *value);");
-        header.line("/* Releases a value allocated from the fixed heap. */");
-        header.line("void emela_embedded_release(void *value);");
-        header.line("/* Retains the backing owner of an EmelaString value. */");
-        header.line("void emela_embedded_retain_string(const EmelaString *value);");
-        header.line("/* Releases the backing owner of an EmelaString value. */");
-        header.line("void emela_embedded_release_string(EmelaString *value);");
-        layouts.emit_public_release_declarations(&mut header);
-        layouts.emit_public_function_ownership_declarations(&mut header);
-    }
-
-    header.blank();
-    header.line("#endif");
+        entry_declaration: main_entry.map(|_| target.entry_declaration()),
+    });
 
     let mut runtime = runtime_plan::Requirements::collect(flow, &emitted_functions);
     derived_plan.require_runtime(&layouts, &mut runtime);
@@ -374,10 +287,10 @@ pub(in crate::backend) fn emit(
         if layouts.has_child_waits() {
             source.line("#define EMELA_CHILD_WAIT_RUNTIME");
         }
-        source.line(include_str!("../../runtime/scope_types.c"));
+        source.line(include_str!("../../../runtime/scope_types.c"));
     }
     if layouts.deferred_pool {
-        source.line(include_str!("../../runtime/deferred_types.c"));
+        source.line(include_str!("../../../runtime/deferred_types.c"));
     }
     cause::emit_types(&layouts, &mut source);
     error_runtime::emit_types(&layouts, &mut source);
@@ -398,7 +311,7 @@ pub(in crate::backend) fn emit(
                 "#define EMELA_DEFERRED_KIND UINT32_C({})",
                 layouts.deferred_kind()
             ));
-            source.line(include_str!("../../runtime/deferred.c"));
+            source.line(include_str!("../../../runtime/deferred.c"));
         }
         layouts.emit_heap_destroy_switch(&closures.environments, &mut source);
         layouts.emit_public_release_helpers(&mut source);
@@ -424,11 +337,11 @@ pub(in crate::backend) fn emit(
         suspend::emit_resume_runtime(&layouts, &mut source);
     }
     if layouts.has_unwind {
-        source.line(include_str!("../../runtime/unwind.c"));
+        source.line(include_str!("../../../runtime/unwind.c"));
     }
     if layouts.has_scopes {
         if layouts.has_child_waits() {
-            source.line(include_str!("../../runtime/child_wait.c"));
+            source.line(include_str!("../../../runtime/child_wait.c"));
             child::emit_runtime(&layouts, &mut source)?;
         }
         suspend::emit_scope_runtime(&layouts, &mut source)?;
@@ -821,10 +734,7 @@ pub(in crate::backend) fn emit(
             })
             .collect(),
         files: vec![
-            GeneratedFile {
-                path: HEADER_FILE.to_owned(),
-                contents: header.finish(),
-            },
+            header,
             platform_header,
             GeneratedFile {
                 path: SOURCE_FILE.to_owned(),
@@ -840,3 +750,29 @@ pub(in crate::backend) fn emit(
         .map_err(|error| vec![Error::from(error)])?;
     Ok(output)
 }
+
+mod control;
+mod functions;
+mod header;
+mod values;
+
+pub(super) use control::{
+    BlockTarget, ProtectTarget, emit_call_failure_edge, emit_compound_sequence,
+    emit_error_assignment, emit_failure_return, emit_pending_cleanups, emit_return, emit_statement,
+    emit_sync_interrupt_exit,
+};
+pub(in crate::backend) use functions::signature;
+pub(super) use functions::{
+    closure_signature, emit_any_ownership, emit_any_ownership_declarations,
+    emit_closure_capture_loads, emit_closure_environment_declarations,
+    emit_closure_string_copy_helper, emit_const_getter, emit_fallible_wrapper,
+    emit_function_coerce_adapter, emit_function_ref_adapter, emit_local_declarations,
+    emit_owned_cleanup, emit_public_string_ownership, emit_release_if_owned, emit_retain_operand,
+    function_ref_adapter_signature, function_ref_adapters,
+};
+pub(super) use values::{
+    c_type, constant_expression, emit_aggregate_field_store, emit_builtin, emit_runtime,
+    operand_expression, operand_is_float, operand_is_int, operand_is_int64, operand_is_string,
+    operand_is_string_list, operand_type, option_payload_type, option_variant_expression,
+    primitive_expression,
+};

@@ -17,8 +17,13 @@ compile_flow
 
 | 場所 | 責任 |
 | --- | --- |
-| [compiler/mod.rs](compiler/mod.rs) | 共通コンパイル、中間結果、生成処理の共有context |
-| [compiler/emit.rs](compiler/emit.rs) | 最終配置・runtime計画・C出力の組立て |
+| [../input/](../input) | Core→Flowの準備とFlow入力検証。公開入口はcrate rootから再公開 |
+| [../contract/](../contract) | 設定・診断・生成物のデータ型。compilerやplatformの実装には依存しない |
+| [compiler/mod.rs](compiler/mod.rs) | 共通コンパイル、中間結果、既存機能に対する明示的な内部facade |
+| [compiler/c/](compiler/c) | C identifier・名前・literalの規則 |
+| [compiler/diagnostics.rs](compiler/diagnostics.rs) | 入力拒否の診断と構文要素の表示名 |
+| [compiler/validation.rs](compiler/validation.rs) | 関数値と外部signatureの適合検査 |
+| [compiler/emit/](compiler/emit) | 最終配置・runtime計画・C出力の組立て。header・functions・control・valuesへ出力処理を分割 |
 | [compiler/features/](compiler/features) | Value・Stmt・Term・Builtin・FiberOp等の機能別処理 |
 | [compiler/foundation/](compiler/foundation) | 型配置、到達可能性、所有権、String buffer、heap・runtime計画 |
 | [compiler/target.rs](compiler/target.rs) | 外部binding、header、検査、adapter、起動処理の接続契約 |
@@ -27,6 +32,10 @@ compile_flow
 | [tests/separation.rs](tests/separation.rs) | 中間結果の再利用、接続先の独立性、生成Cの実行試験 |
 
 共通コンパイラーは具体的なボード接続をimportしない。C上の `emela_board_*` hook名や生成file名は既存ABIとして維持し、その実装と標準周辺機器bindingの解釈を接続側へ委ねる。`cnative` はlibrary testでのみ有効で、CLIのtargetを追加するものではない。
+
+設定のfieldはcontractの外から直接操作せず、builderと読み取りaccessorを通じて使う。公開型名・既定値・生成CのABIはこの整理では変更しない。`compiler/mod.rs`の内部facadeは既存featureのために残し、新しく分けた補助moduleは必要な依存を明示してimportする。
+
+現在は段階分離の最初の内部整理までであり、`emit`内の解析・IR書換えや上流IR型への依存は残っている。同じ最終`Output`をboard/nativeに接続する変更、独立したlower/plan契約、platformの計算と実行の分離は後続の移行対象になる。`CompiledModule`を再利用できることと、同じ生成済みC一式を再利用できることは別の条件として扱う。
 
 ## 機能と共有計画
 

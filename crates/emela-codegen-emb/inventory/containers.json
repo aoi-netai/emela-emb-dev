@@ -1,21 +1,21 @@
 {
   "emela_lir::FnId": {
-    "path": "src/backend/compiler/mod.rs",
+    "path": "src/backend/compiler/c/names.rs",
     "symbol": "function_name",
     "role": "schema"
   },
   "emela_lir::VarId": {
-    "path": "src/backend/compiler/mod.rs",
+    "path": "src/backend/compiler/c/names.rs",
     "symbol": "variable_name",
     "role": "schema"
   },
   "emela_lir::StmtId": {
-    "path": "src/backend/compiler/mod.rs",
+    "path": "src/backend/compiler/emit/control.rs",
     "symbol": "emit_statement",
     "role": "schema"
   },
   "emela_lir::SeqId": {
-    "path": "src/backend/compiler/mod.rs",
+    "path": "src/backend/compiler/emit/control.rs",
     "symbol": "emit_compound_sequence",
     "role": "schema"
   },
@@ -35,7 +35,7 @@
     "role": "schema"
   },
   "emela_lir::Function": {
-    "path": "src/backend/compiler/emit.rs",
+    "path": "src/backend/compiler/emit/mod.rs",
     "symbol": "emit",
     "role": "schema"
   },
@@ -50,7 +50,7 @@
     "role": "schema"
   },
   "emela_lir::Seq": {
-    "path": "src/backend/compiler/mod.rs",
+    "path": "src/backend/compiler/emit/control.rs",
     "symbol": "emit_compound_sequence",
     "role": "schema"
   },
