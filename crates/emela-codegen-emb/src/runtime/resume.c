@@ -37,7 +37,7 @@ static void emela_resume_boundary(emela_fiber *fiber) {
     if (resume->used) emela_resume_wake(resume);
   }
 }
-static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
+static inline EMELA_UNUSED emela_fiber *emela_operation_begin(emela_fiber *caller, void *result,
                                         const char *message, uint16_t length
 #ifdef EMELA_FAILURE_RUNTIME
     , EmelaError *error_out
@@ -60,7 +60,7 @@ static inline emela_fiber *emela_operation_begin(emela_fiber *caller, void *resu
   caller->state = EMELA_FIBER_WAITING;
   return implementation;
 }
-static inline emela_resume *emela_resume_prepare(void *environment) {
+static inline EMELA_UNUSED emela_resume *emela_resume_prepare(void *environment) {
   emela_resume *resume = (emela_resume *)environment;
   if (resume == NULL) emela_scheduler_invalid();
   /* Checking the root first also makes callbacks from previous invocations harmless. */
@@ -103,7 +103,7 @@ static void emela_resume_after_step(emela_fiber *fiber) {
   emela_heap_release(resume);
   emela_fiber_release((EmelaFiber){(uint32_t)(fiber - emela_fibers), fiber->generation});
 }
-static inline void emela_resume_commit(emela_resume *resume) {
+static inline EMELA_UNUSED void emela_resume_commit(emela_resume *resume) {
   if (resume->initial) return;
   emela_fiber *caller = emela_resume_live(resume->caller);
   if (caller == NULL || caller->state != EMELA_FIBER_WAITING) emela_scheduler_invalid();

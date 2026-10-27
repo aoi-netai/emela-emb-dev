@@ -201,7 +201,7 @@ device_read = "read"
 device_poll_start = "poll"
 ```
 
-左辺はC alias、右辺は実際に公開したEmela関数名である。`emela_embedded_exports.h`が`Output.exports`の情報に基づいて生成C symbolへ対応付ける。suspend関数のaliasは開始関数を指す。
+左辺はC alias、右辺は`@export(c, "...")`で公開したEmela関数名である。`pub`だけではCへ公開されない。`emela_embedded_exports.h`が`Output.exports`の情報に基づいて生成C symbolへ対応付ける。suspend関数のaliasは開始関数を指す。
 
 未知・曖昧な公開関数名、不正なC識別子、生成runtimeや外部symbolと衝突するaliasは診断する。既存C macroとの衝突はheader内で検出する。board選択時は`board_main_start`をentryへ自動登録し、別の関数を同じaliasへ指定した設定は拒否する。
 

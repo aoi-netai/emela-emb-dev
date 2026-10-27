@@ -26,7 +26,8 @@
 //! - Borrowed (the owner keeps it): the callee of `call_indirect` and the handler of `call_op`,
 //!   the arguments of external functions, builtins, `runtime` operations and concurrency
 //!   operations (the runtime dups what it keeps), primitive operations, the base of views, and
-//!   what `tag`, `list_is_empty`, `is_error` and `switch` look at.
+//!   what `tag`, `list_is_empty`, `is_error` and `switch` look at. Builtins borrow so that the
+//!   runtime written in C need not care about ownership.
 //!
 //! Where the pass puts `dup` and `drop`, from liveness (a backward analysis over the structured
 //! control, with a fixpoint at loops):
@@ -177,7 +178,7 @@ pub(crate) fn term_consumes(f: &Function, t: &Term) -> Vec<VarId> {
         Term::Yield(v) | Term::Return(v) | Term::Break { value: v, .. } => {
             operand_vars(f, &v.iter().collect::<Vec<_>>())
         }
-        Term::Fail(v) | Term::Defect(v) => operand_vars(f, &[v]),
+        Term::Fail(v) | Term::Defect(v, _) => operand_vars(f, &[v]),
         Term::Recur(args) => operand_vars(f, &args.iter().collect::<Vec<_>>()),
         Term::Unwind | Term::Unreachable => Vec::new(),
     }
@@ -554,7 +555,7 @@ impl<'a> Counter<'a> {
             Term::Yield(_) => Some(yield_target.clone()),
             Term::Break { label, .. } => Some(self.label_target[label].clone()),
             Term::Recur(_) => Some(loop_target.cloned().unwrap_or_default()),
-            Term::Return(_) | Term::Fail(_) | Term::Unwind | Term::Defect(_) => {
+            Term::Return(_) | Term::Fail(_) | Term::Unwind | Term::Defect(..) => {
                 Some(Set::default())
             }
             Term::Unreachable => None,

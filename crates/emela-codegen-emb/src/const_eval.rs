@@ -112,7 +112,7 @@ fn evaluate_body(
     match &sequence.term {
         Term::Return(None) => Ok(Outcome::Value(Const::Unit)),
         Term::Return(Some(operand)) => Ok(Outcome::Value(operand_value(operand, &values)?)),
-        Term::Defect(operand) => {
+        Term::Defect(operand, _) => {
             let Const::String(message) = operand_value(operand, &values)? else {
                 return Err("const defect message is not a String");
             };

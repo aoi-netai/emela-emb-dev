@@ -13,7 +13,7 @@ static int emela_scope_has_failure(emela_fiber *fiber, emela_frame *base) {
   emela_scope_frame *frame = (emela_scope_frame *)base;
   return frame->body_error.tag != 0 || frame->scope->first_error.tag != 0;
 }
-static inline int emela_child_has_failure(emela_fiber *fiber, emela_frame *base) {
+static inline EMELA_UNUSED int emela_child_has_failure(emela_fiber *fiber, emela_frame *base) {
   (void)base;
   return fiber->child != NULL && fiber->child->error.tag != 0;
 }
@@ -161,7 +161,7 @@ static int emela_scope_unwind(emela_fiber *fiber, emela_frame *base) {
   emela_scope_finish(scope);
   return 0;
 }
-static inline emela_scope *emela_scope_begin(emela_fiber *fiber
+static inline EMELA_UNUSED emela_scope *emela_scope_begin(emela_fiber *fiber
 #ifdef EMELA_FAILURE_RUNTIME
     , EmelaError *error_out
 #endif
@@ -185,7 +185,7 @@ static void emela_scope_check(emela_scope *scope) {
   if (scope == NULL || scope->closed)
     emela_board_defect(EMELA_DEFECT_PANIC, "fiber scope was used after it ended", UINT16_C(34));
 }
-static inline emela_fiber *emela_child_begin(emela_scope *scope) {
+static inline EMELA_UNUSED emela_fiber *emela_child_begin(emela_scope *scope) {
   emela_scope_check(scope);
   EmelaFiber handle = emela_fiber_create();
   emela_fiber *fiber = emela_fiber_get(handle);
@@ -199,7 +199,7 @@ static inline emela_fiber *emela_child_begin(emela_scope *scope) {
   fiber->child = child;
   return fiber;
 }
-static inline EmelaAny emela_deferred_create(emela_scope *scope) {
+static inline EMELA_UNUSED EmelaAny emela_deferred_create(emela_scope *scope) {
   emela_scope_check(scope);
 #ifdef EMELA_DEFERRED_CAPACITY
   return emela_deferred_allocate(scope);

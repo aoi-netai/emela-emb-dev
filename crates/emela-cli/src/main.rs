@@ -1,8 +1,16 @@
+//! The `emela` command (spec `[cmd]`).
+//!
+//! The `--help` text uses the same words as the Commands table in the README. Defaults are written
+//! by hand at the end of each description in clap's `[default: …]` form, not with
+//! `default_value`, because the `Option<PathBuf>` defaults (`.`, the per-target output directory)
+//! are decided in this file after the project is found. The test `help_is_english` keeps the text
+//! ASCII.
+
 use clap::{CommandFactory, Parser, Subcommand};
 use emela_driver::{
     Analysis, Backend, CoreC, CoreEmbedded, CoreJs, CoreWasm, Diagnostic, EmbeddedProject,
-    FileSystem, Input, Lower, LowerTests, MemoryFiles, OsFs, Output, RunOptions, SourceDb, Target,
-    TestBackend, TestModule, TestOptions, Typecheck,
+    FileSystem, Input, Lower, LowerTests, MemoryFiles, OsFs, Output, Reporter, RunOptions,
+    SourceDb, Target, TestBackend, TestModule, TestOptions, Typecheck,
 };
 use std::ffi::OsString;
 use std::io::{IsTerminal, Read, Write};
@@ -21,6 +29,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create a new Pome in a new directory
+    New {
+        /// A name (`hello`) or a source path (`github.com/alice/hello`, `github:alice/hello`)
+        name: String,
+        /// Create a library (`src/lib.emel`) instead of an application (`src/main.emel`)
+        #[arg(long)]
+        lib: bool,
+    },
     /// Report diagnostics without compiling
     Check {
         /// Entry file or project directory [default: .]
@@ -94,6 +110,10 @@ enum Command {
         /// The target [default: `[build].target` of Pome.toml, or js]
         #[arg(long, value_enum)]
         target: Option<TargetArg>,
+        /// How results are shown [default: agent inside a coding agent, pretty at a terminal,
+        /// plain otherwise]
+        #[arg(long, value_enum)]
+        reporter: Option<ReporterArg>,
     },
     /// Format the sources in place
     Fmt {
@@ -151,6 +171,27 @@ impl From<TargetArg> for Target {
     }
 }
 
+/// How `emela test` shows its results (`[cmd.test.reporter]`).
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ReporterArg {
+    /// For a person at a terminal: marks, color and elapsed time
+    Pretty,
+    /// One line per test and the failures at the end; the same input gives the same output
+    Plain,
+    /// Only the failures and the summary line, for a coding agent
+    Agent,
+}
+
+impl From<ReporterArg> for Reporter {
+    fn from(reporter: ReporterArg) -> Self {
+        match reporter {
+            ReporterArg::Pretty => Reporter::Pretty,
+            ReporterArg::Plain => Reporter::Plain,
+            ReporterArg::Agent => Reporter::Agent,
+        }
+    }
+}
+
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum DocFormat {
     /// Pages with a sidebar of modules, highlighted signatures and links between types
@@ -163,6 +204,7 @@ const DIAGNOSTIC_FAILURE: u8 = 1;
 
 fn main() -> ExitCode {
     match Cli::parse().command {
+        Command::New { name, lib } => new_pome(&name, lib),
         Command::Check { path, board } => check(&path_or_current(path), board),
         Command::Build {
             path,
@@ -203,7 +245,8 @@ fn main() -> ExitCode {
             filter,
             out_dir,
             target,
-        } => test(&path_or_current(path), filter, out_dir, target),
+            reporter,
+        } => test(&path_or_current(path), filter, out_dir, target, reporter),
         Command::Fmt { paths, check } => fmt(paths, check),
         Command::Doc {
             path,
@@ -214,6 +257,52 @@ fn main() -> ExitCode {
         Command::Pome { command } => pome::pome(command),
         Command::Lsp => lsp(),
     }
+}
+
+fn new_pome(name: &str, lib: bool) -> ExitCode {
+    let pome = match emela_driver::new(name, lib) {
+        Ok(pome) => pome,
+        Err(diagnostic) => {
+            print_diagnostics(&[diagnostic], &SourceDb::new());
+            return ExitCode::from(DIAGNOSTIC_FAILURE);
+        }
+    };
+
+    let dir = Path::new(&pome.dir);
+    let exists = dir.symlink_metadata().is_ok();
+    if exists {
+        print_diagnostics(
+            &[Diagnostic::error(format!(
+                "`{}` already exists",
+                dir.display()
+            ))],
+            &SourceDb::new(),
+        );
+        return ExitCode::from(DIAGNOSTIC_FAILURE);
+    }
+
+    // Files written before a failure are left in place.
+    for file in &pome.files {
+        let path = dir.join(&file.path);
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, &file.contents));
+        if let Err(error) = written {
+            print_diagnostics(
+                &[Diagnostic::error(format!(
+                    "cannot write `{}`: {error}",
+                    path.display()
+                ))],
+                &SourceDb::new(),
+            );
+            return ExitCode::from(DIAGNOSTIC_FAILURE);
+        }
+    }
+
+    let kind = if lib { "library" } else { "application" };
+    eprintln!("created {kind} `{}`", pome.dir);
+    ExitCode::SUCCESS
 }
 
 fn path_or_current(path: Option<PathBuf>) -> PathBuf {
@@ -454,7 +543,7 @@ fn run_with<B: Backend<emela_driver::CoreModule>>(
     backend: &mut B,
 ) -> ExitCode {
     // Diagnostics go out before the program starts, so warnings show first even if it never
-    // ends.
+    // ends. The command follows them, so it is the last line before the program's own output.
     let mut diagnostics_code = ExitCode::SUCCESS;
     let mut reported = 0;
     let (analysis, output) = emela_driver::run(
@@ -463,9 +552,12 @@ fn run_with<B: Backend<emela_driver::CoreModule>>(
         &mut Lower::default().with_target(target),
         backend,
         options,
-        |analysis| {
+        |analysis, command| {
             diagnostics_code = report(analysis);
             reported = analysis.diagnostics.len();
+            if let Some(command) = command {
+                eprintln!("running `{}`", command.command_line());
+            }
         },
     );
     match output {
@@ -490,6 +582,7 @@ fn test(
     filter: Option<String>,
     out_dir: Option<PathBuf>,
     target: Option<TargetArg>,
+    reporter: Option<ReporterArg>,
 ) -> ExitCode {
     let Some(input) = resolve_input(&OsFs, path, true) else {
         return ExitCode::from(DIAGNOSTIC_FAILURE);
@@ -502,6 +595,14 @@ fn test(
         node: emela_driver::node_program(),
         filter,
         output: Output::Inherit,
+        reporter: match reporter {
+            Some(reporter) => reporter.into(),
+            None => Reporter::detect(
+                emela_driver::runs_in_agent(|name| std::env::var_os(name)),
+                std::io::stdout().is_terminal(),
+            ),
+        },
+        color: stdout_color(),
     };
     match target {
         Target::Js => test_with(&input, &options, target, &mut CoreJs),
@@ -736,5 +837,15 @@ fn print_rendered(text: &str) {
 
 /// Only when stderr is a terminal and `NO_COLOR` is unset or empty.
 fn stderr_color() -> bool {
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+    std::io::stderr().is_terminal() && no_color_unset()
+}
+
+/// Color for the `pretty` reporter: only when stdout is a terminal and `NO_COLOR` is unset or
+/// empty (`[cmd.test.output]`).
+fn stdout_color() -> bool {
+    std::io::stdout().is_terminal() && no_color_unset()
+}
+
+fn no_color_unset() -> bool {
+    std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
 }

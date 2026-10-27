@@ -188,6 +188,8 @@ pub enum SyntaxKind {
     ANNOT_ARG_LIST,
     /// `js` `"Math.sin"` `name: "x"`
     ANNOT_ARG,
+    /// `Http.serve`, the argument of `@entry` (spec 17.3 `qualified`)
+    ANNOT_PATH,
     /// `pub fn find(id: Int) -> User fails NotFound use Users { ... }`
     FN_DECL,
     /// `type User(id: Int, name: String) derive Eq`
@@ -217,6 +219,8 @@ pub enum SyntaxKind {
     /// The base of a label (an effect declared `of` another). `of Console default`
     EFFECT_LABEL,
     /// `handler PostgresUsers(conn: Connection): Users { ... }`
+    ///
+    /// The `:` is a direct child, as in `trait Ord: Eq`, so the formatter puts no space before it.
     HANDLER_DECL,
     /// The effect a handler implements, after `:`. `Users`, `State[Int]`
     HANDLER_EFFECT,
@@ -332,6 +336,9 @@ pub enum SyntaxKind {
     ///
     /// A bare `..` is also accepted so that it can be read as the left side of a binding.
     /// `User(name:, ..) = user`
+    ///
+    /// Kept apart from a list's REST_EXPR. Whether the callee is a constructor is not checked by
+    /// the parser.
     SPREAD_ARG,
     /// `user.name`
     FIELD_EXPR,
@@ -353,6 +360,9 @@ pub enum SyntaxKind {
     /// `if c { a } else { b }`
     IF_EXPR,
     /// `x match { ... }`
+    ///
+    /// Children: the scrutinee, `match`, MATCH_ARM_LIST. The scrutinee is still the first
+    /// expression child, as in the old prefix form, so nothing after the parser had to change.
     MATCH_EXPR,
     /// The arms of `match` and `escape`. `{ A -> 1⏎ B -> 2 }`
     MATCH_ARM_LIST,
@@ -364,6 +374,9 @@ pub enum SyntaxKind {
     WITH_EXPR,
     /// An item of `with` that plugs a provider into a label. `AuditLog by HandlerA`
     WITH_BY,
+    /// A handler with the arguments of its init, as an item of `with` or `layer` or the right
+    /// of `by`. `WorkerKv(binding: "KV")`. Without arguments, the item is a bare PATH.
+    SUPPLY,
     /// `find(id) escape { NotFound(_) -> guest() }`
     ESCAPE_EXPR,
     /// `fn(n) { n + 1 }`

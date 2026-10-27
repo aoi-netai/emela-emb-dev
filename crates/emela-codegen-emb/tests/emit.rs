@@ -54,7 +54,7 @@ fn dynamically_dispatches_through_a_fixed_heap_evidence_table() {
                }\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a program with a dynamic effect handler");
     let output = compile(&core, &Options::default().with_heap_bytes(2048))
@@ -79,7 +79,7 @@ fn passes_dynamic_effect_evidence_to_a_captured_closure() {
                }\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a closure that uses a dynamically handled effect");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -105,7 +105,7 @@ fn state_run_shares_owned_cell_storage_with_its_handler() {
                value + final\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a local State.run program");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -335,7 +335,7 @@ fn captures_runtime_values_in_a_fixed_heap_closure_environment() {
             "main.emel",
             "pub fn apply(x: Int) -> Int {\n  add = fn(y: Int) { x + y }\n  add(2)\n}\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a closure with a runtime capture");
     let output = compile(&core, &Options::default().with_heap_bytes(2048))
@@ -353,7 +353,7 @@ fn lifts_nested_closures_that_capture_outer_closure_values() {
             "main.emel",
             "pub fn apply(x: Int) -> Int {\n  outer = fn(y: Int) {\n    inner = fn(z: Int) { x + y + z }\n    inner(1)\n  }\n  outer(1)\n}\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower nested closures with runtime captures");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -4139,6 +4139,7 @@ fn defers_a_statically_known_const_defect_until_reference() {
         .set_constant();
     constant.term(Term::Defect(
         Const::String("division by zero".to_owned()).into(),
+        None,
     ));
     let constant = constant.finish();
     let mut flow = Module::new(core);
@@ -4343,7 +4344,7 @@ fn sends_dynamic_defect_string_views_to_the_board_hook() {
     let mut builder = FnBuilder::new(&core, "panic_message");
     let message = builder.param("message", TypeId::STRING);
     builder.set_ret(TypeId::NEVER).set_exported();
-    builder.term(Term::Defect(Operand::Var(message)));
+    builder.term(Term::Defect(Operand::Var(message), None));
     let function = builder.finish();
     let mut flow = Module::new(core);
     flow.add(function);
@@ -4371,9 +4372,10 @@ fn classifies_a_static_todo_defect() {
     builder.protect(
         None,
         |builder| {
-            builder.term(Term::Defect(Operand::Const(Const::String(
-                "not yet implemented".to_owned(),
-            ))));
+            builder.term(Term::Defect(
+                Operand::Const(Const::String("not yet implemented".to_owned())),
+                None,
+            ));
         },
         |builder| {
             builder.let_(
@@ -5969,7 +5971,7 @@ pub fn classify(n: Int) -> Int {
 pub fn length() -> Int { List.length([1, 2, 3]) }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     compile_and_run(
@@ -6003,7 +6005,7 @@ pub fn capture(n: Int) -> (fn() -> String) {
 }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     let flow = emela_codegen_emb::flow_from_core(&core).unwrap();

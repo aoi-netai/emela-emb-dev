@@ -438,14 +438,22 @@ impl Diagnostic {
                 )),
                 span,
             ),
-            emela_core::LowerError::ConstrainedExport { name, param, span } => (
+            emela_core::LowerError::SuspendingExport { name, span } => (
                 Diagnostic::error(format!(
-                    "cannot export `{name}`: its type parameter `{param}` has a trait bound"
+                    "exported function `{name}` may suspend, which target `c` does not support"
                 ))
-                .with_code(code::CONSTRAINED_EXPORT)
-                .with_help(
-                    "make a `pub` fn that calls it with concrete types, and export that instead",
-                ),
+                .with_code(code::SUSPENDING_EXPORT),
+                span,
+            ),
+            emela_core::LowerError::WasmExport { name, span } => (
+                Diagnostic::error(format!(
+                    "exported function `{name}` has a `wasm` export, which the WASI 0.3 component target does not support yet"
+                )),
+                span,
+            ),
+            emela_core::LowerError::HttpServiceOnC { span } => (
+                Diagnostic::error("HTTP services are not supported on target `c` yet")
+                    .with_code(code::HTTP_SERVICE_ON_C),
                 span,
             ),
             emela_core::LowerError::MissingCoreFile { path, span } => (
@@ -599,6 +607,11 @@ impl Diagnostic {
                 Some(code::MISSING_PARAM_TYPE),
                 format!("parameter `{param}` of a top-level function needs a type"),
             ),
+            TypeDiagnosticKind::MissingInitParamType { handler, param } => (
+                Severity::Error,
+                Some(code::MISSING_PARAM_TYPE),
+                format!("parameter `{param}` of the `init` of `{handler}` needs a type"),
+            ),
             TypeDiagnosticKind::NonExhaustiveMatch { missing } => (
                 Severity::Error,
                 Some(code::NON_EXHAUSTIVE_MATCH),
@@ -639,9 +652,20 @@ impl Diagnostic {
                 Some(code::UNREACHABLE_MATCH_ARM),
                 "unreachable match arm".to_owned(),
             ),
-            TypeDiagnosticKind::UnhandledErrors { errors, declared } => {
+            TypeDiagnosticKind::UnhandledErrors {
+                errors,
+                declared,
+                layer_arg,
+            } => {
                 let list = quoted_list("error", "errors", errors);
-                if *declared {
+                if let Some(arg) = layer_arg {
+                    help = Some(layer_arg_help(arg));
+                    (
+                        Severity::Error,
+                        Some(code::UNHANDLED_ERRORS),
+                        format!("unhandled {list}"),
+                    )
+                } else if *declared {
                     help = Some("add it to `fails` or handle it with `escape`".to_owned());
                     let verb = if errors.len() == 1 { "is" } else { "are" };
                     (
@@ -683,6 +707,43 @@ impl Diagnostic {
                 Some(code::UNUSED_LABEL_PROVIDER),
                 format!("label `{label}` is listed here but never used"),
             ),
+            TypeDiagnosticKind::ExportOutsideEntry { attr } => (
+                Severity::Error,
+                Some(code::EXPORT_OUTSIDE_ENTRY),
+                format!("`@{attr}` is only allowed in the entry module"),
+            ),
+            TypeDiagnosticKind::NotEntryAdapter { name } => (
+                Severity::Error,
+                Some(code::NOT_ENTRY_ADAPTER),
+                match name {
+                    Some(name) => format!("`{name}` is not an entry adapter"),
+                    None => "the argument of `@entry` must name an entry adapter".to_owned(),
+                },
+            ),
+            TypeDiagnosticKind::DuplicateExport { name, target } => (
+                Severity::Error,
+                Some(code::DUPLICATE_EXPORT),
+                format!("`{name}` is exported twice for target `{target}`"),
+            ),
+            TypeDiagnosticKind::NotBoundary { function, ty, ret } => (
+                Severity::Error,
+                Some(code::NOT_BOUNDARY_EXPORT),
+                if *ret {
+                    format!("exported function `{function}` cannot return `{ty}`")
+                } else {
+                    format!("exported function `{function}` cannot take `{ty}`")
+                },
+            ),
+            TypeDiagnosticKind::ExportFails { function, errors } => (
+                Severity::Error,
+                Some(code::UNHANDLED_EFFECTS),
+                format!("exported function `{function}` cannot fail with `{errors}`"),
+            ),
+            TypeDiagnosticKind::EntryMismatch { entry, adapter } => (
+                Severity::Error,
+                Some(code::ENTRY_MISMATCH),
+                format!("`{entry}` does not fit `{adapter}`"),
+            ),
             TypeDiagnosticKind::UnknownOperation { effect, op } => (
                 Severity::Error,
                 Some(code::UNKNOWN_OPERATION),
@@ -711,12 +772,23 @@ impl Diagnostic {
                         format!("{list} {verb} not declared in `use`")
                     }
                     EffectContext::Const => format!("constant values cannot use {list}"),
+                    EffectContext::LayerArg(arg) => {
+                        help = Some(layer_arg_help(arg));
+                        format!("arguments in layer `{}` cannot use {list}", arg.layer)
+                    }
                     EffectContext::Main => {
                         help = Some(match scope {
                             Some(scope) => format!("provide it with `with` outside `{scope}`"),
                             None => "provide it with `with`".to_owned(),
                         });
                         format!("{list} {verb} not provided in `main`")
+                    }
+                    EffectContext::Export { name } => {
+                        help = Some(match scope {
+                            Some(scope) => format!("provide it with `with` outside `{scope}`"),
+                            None => "provide it with `with`".to_owned(),
+                        });
+                        format!("{list} {verb} not provided in exported function `{name}`")
                     }
                     EffectContext::Test { name } => {
                         help = Some(match scope {
@@ -819,6 +891,23 @@ impl Diagnostic {
                     Severity::Error,
                     Some(code::MISSING_INIT),
                     format!("handler `{handler}` has fields but no `init`"),
+                )
+            }
+            TypeDiagnosticKind::MissingInitArgs { handler, params } => {
+                let args: Vec<String> = params.iter().map(|p| format!("{p}: ...")).collect();
+                help = Some(format!("write `{handler}({})`", args.join(", ")));
+                (
+                    Severity::Error,
+                    Some(code::MISSING_INIT_ARGS),
+                    format!("handler `{handler}` needs arguments for its `init`"),
+                )
+            }
+            TypeDiagnosticKind::UnexpectedInitArgs { name, kind } => {
+                help = Some(format!("write `{name}` without parentheses"));
+                (
+                    Severity::Error,
+                    Some(code::UNEXPECTED_INIT_ARGS),
+                    format!("{kind} `{name}` takes no arguments"),
                 )
             }
             TypeDiagnosticKind::ReleaseFails { handler, errors } => {
@@ -1220,6 +1309,14 @@ impl Diagnostic {
         }
         out
     }
+}
+
+/// The help of E0318 and E0402 in the arguments of a layer item (`[effect.layer]`).
+fn layer_arg_help(arg: &emela_types::LayerArg) -> String {
+    format!(
+        "the arguments in a layer must be pure; to pass this value, list `{}` after the layer: `with {}, {}(...) {{ ... }}`",
+        arg.handler, arg.layer, arg.handler
+    )
 }
 
 /// Lists names as `` `a` `` or `` fields `a`, `b` ``. Four or more show the first three and

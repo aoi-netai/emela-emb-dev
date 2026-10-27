@@ -86,6 +86,7 @@ impl Mono<'_> {
         let f = self.out.functions.alloc(Function {
             name,
             exported: false,
+            host_exports: Vec::new(),
             params: params.clone(),
             ret: TypeId::STRING,
             type_params: 0,
@@ -108,6 +109,9 @@ impl Mono<'_> {
         };
         self.out.functions[f].body = body;
         if list {
+            // The list function calls itself in tail position on the rest of the list. Lowering
+            // loopified everything before monomorphization, so this one is loopified here, to
+            // keep long lists off the stack.
             crate::tail::loopify_function(&mut self.out, f);
         }
         f

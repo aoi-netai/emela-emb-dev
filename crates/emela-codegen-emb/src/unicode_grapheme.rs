@@ -1724,7 +1724,7 @@ pub(crate) fn emit_runtime(writer: &mut Writer) {
     );
     emit_table(writer, "emela_incb_ranges", INDIC_CONJUNCT_BREAK_RANGES);
     writer.blank();
-    writer.begin_block("static inline uint32_t emela_emb_unicode_lookup(const EmelaUnicodeRange *ranges, uint32_t count, uint32_t code_point)");
+    writer.begin_block("static inline EMELA_UNUSED uint32_t emela_emb_unicode_lookup(const EmelaUnicodeRange *ranges, uint32_t count, uint32_t code_point)");
     writer.line("uint32_t low = UINT32_C(0);");
     writer.line("uint32_t high = count;");
     writer.begin_block("while (low < high)");
@@ -1746,7 +1746,7 @@ pub(crate) fn emit_runtime(writer: &mut Writer) {
     writer.line("return UINT32_C(0);");
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline uint32_t emela_emb_gcb(uint32_t code_point)");
+    writer.begin_block("static inline EMELA_UNUSED uint32_t emela_emb_gcb(uint32_t code_point)");
     writer.begin_block("if (code_point < UINT32_C(0x80))");
     writer.begin_block("if (code_point == UINT32_C(0x0d))");
     writer.line("return UINT32_C(1);");
@@ -1768,7 +1768,7 @@ pub(crate) fn emit_runtime(writer: &mut Writer) {
     ));
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline uint32_t emela_emb_incb(uint32_t code_point)");
+    writer.begin_block("static inline EMELA_UNUSED uint32_t emela_emb_incb(uint32_t code_point)");
     writer.begin_block("if (code_point < UINT32_C(0x80))");
     writer.line("return UINT32_C(0);");
     writer.end_block();
@@ -1779,7 +1779,7 @@ pub(crate) fn emit_runtime(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
     writer.begin_block(
-        "static inline int32_t emela_emb_is_extended_pictographic(uint32_t code_point)",
+        "static inline EMELA_UNUSED int32_t emela_emb_is_extended_pictographic(uint32_t code_point)",
     );
     writer.begin_block("if (code_point < UINT32_C(0x80))");
     writer.line("return INT32_C(0);");
@@ -1805,7 +1805,7 @@ fn emit_table(writer: &mut Writer, name: &str, ranges: &[(u32, u32)]) {
 }
 
 fn emit_grapheme_next(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_emb_grapheme_next(EmelaString value, uint32_t start, uint32_t *next)");
+    writer.begin_block("static inline EMELA_UNUSED int32_t emela_emb_grapheme_next(EmelaString value, uint32_t start, uint32_t *next)");
     writer.decl("uint32_t", "previous_code_point", None);
     writer.decl("uint32_t", "previous_width", None);
     writer.begin_block(

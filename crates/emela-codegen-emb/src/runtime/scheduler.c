@@ -115,13 +115,13 @@ static void emela_ready_push(emela_fiber *fiber) {
   emela_ready_tail = slot;
 }
 #ifdef EMELA_UNWIND_RUNTIME
-static inline emela_fiber *emela_resume_live(EmelaFiber handle) {
+static inline EMELA_UNUSED emela_fiber *emela_resume_live(EmelaFiber handle) {
   if (handle.slot >= EMELA_FIBER_CAPACITY) return NULL;
   emela_fiber *fiber = &emela_fibers[handle.slot];
   if (fiber->state == EMELA_FIBER_FREE || fiber->generation != handle.generation) return NULL;
   return fiber;
 }
-static inline int emela_same_fiber(EmelaFiber a, EmelaFiber b) {
+static inline EMELA_UNUSED int emela_same_fiber(EmelaFiber a, EmelaFiber b) {
   return a.slot == b.slot && a.generation == b.generation;
 }
 static void emela_ready_remove(emela_fiber *fiber) {
@@ -168,7 +168,7 @@ static EmelaFiber emela_fiber_create(void) {
 #endif
   return (EmelaFiber){slot, fiber->generation};
 }
-static inline emela_frame *emela_frame_push(emela_fiber *fiber, size_t size, emela_step step) {
+static inline EMELA_UNUSED emela_frame *emela_frame_push(emela_fiber *fiber, size_t size, emela_step step) {
   if (size > EMELA_FRAME_BYTES || emela_frame_free == EMELA_SLOT_NONE)
     emela_scheduler_exhausted();
   if (size < sizeof(emela_frame) || step == NULL) emela_scheduler_invalid();

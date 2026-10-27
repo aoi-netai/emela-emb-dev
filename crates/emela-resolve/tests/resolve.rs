@@ -786,3 +786,101 @@ fn with_body() -> Int { 1 }
 "##,
     )]));
 }
+
+/// `[effect.handler]`: the parameters of init are in scope in its body only. The arguments of
+/// `with`, `layer` and the right of `by` are resolved where the item is written.
+#[test]
+fn handler_init_arguments() {
+    insta::assert_snapshot!(run(&[(
+        "main.emel",
+        r##"pub effect Kv {
+  fn get(key: String) -> String
+}
+
+effect AuditKv of Kv
+
+const NAME: String = "KV"
+
+handler WorkerKv(binding: String): Kv {
+  init(binding: String, retries: Int) { WorkerKv(binding:) }
+  fn get(key) { self.binding }
+}
+
+layer AppLive {
+  WorkerKv(binding: NAME, retries: 3)
+}
+
+fn main() {
+  name = "KV"
+  with WorkerKv(binding: name, retries: 1) { (use Kv).get("a") }
+  with AppLive, AuditKv by WorkerKv(name, 2) { (use AuditKv).get("a") }
+}
+"##,
+    )]));
+}
+
+/// `H(...)` at a `with` is a call of init, not a construction of the handler value, so it is not
+/// a record update (E0222). The parameters of init are not seen outside it.
+#[test]
+fn handler_init_argument_errors() {
+    insta::assert_snapshot!(diagnostics(&[(
+        "main.emel",
+        r##"pub effect Kv {
+  fn get(key: String) -> String
+}
+
+handler WorkerKv(binding: String): Kv {
+  init(binding: String) { WorkerKv(binding:) }
+  fn get(key) { binding }
+}
+
+fn main(base: Int) {
+  with WorkerKv(binding: "a", ..base) { (use Kv).get("a") }
+  with WorkerKv(binding: missing) { (use Kv).get("a") }
+}
+"##,
+    )]));
+}
+
+/// `@export` and `@entry` (spec 12.7, 12.8): the export names are kept, and the argument of
+/// `@entry` is looked up as a value, in the module or through a module path.
+#[test]
+fn export_and_entry() {
+    insta::assert_snapshot!(run(&[
+        (
+            "main.emel",
+            r##"import Http
+
+@export(js, "add")
+@export(js, "default", "add")
+@export(c, "add")
+pub fn add(a: Int, b: Int) -> Int { a + b }
+
+@export(js, "default", "run")
+fn local(app: fn(Int) -> Int, x: Int) -> Int { app(x) }
+
+@entry(local)
+@entry(Http.serve)
+fn app(x: Int) -> Int { x }
+
+@entry(missing)
+fn unknown(x: Int) -> Int { x }
+
+@entry(Http.missing)
+fn unknown_member(x: Int) -> Int { x }
+
+@entry
+fn no_arg(x: Int) -> Int { x }
+
+@entry("serve")
+fn string_arg(x: Int) -> Int { x }
+"##,
+        ),
+        (
+            "http.emel",
+            r##"@export(js, "default", "fetch")
+pub fn serve(app: fn(Int) -> Int, x: Int) -> Int { app(x) }
+"##,
+        ),
+    ]));
+}

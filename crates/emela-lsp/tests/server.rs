@@ -1055,6 +1055,33 @@ fn hover_shows_stateful_handlers_and_layers() {
     client.shutdown();
 }
 
+/// `[effect.handler]`: the hover on a handler shows the parameters of its init, a parameter of
+/// init has its type, and a name in
+/// the arguments of a `with` item goes to its definition.
+#[test]
+fn handler_init_arguments() {
+    let src = "effect Kv {\n  fn get(key: String) -> String\n}\n\nconst NAME: String = \"KV\"\n\nhandler WorkerKv(binding: String): Kv {\n  init(binding: String, retries: Int) { WorkerKv(binding:) }\n  fn get(key) { self.binding }\n}\n\nfn main() {\n  with WorkerKv(binding: NAME, retries: 1) { (use Kv).get(\"a\") }\n}\n";
+    let files = [("/app/Pome.toml", ""), ("/app/src/main.emel", src)];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    let text = |hover: Option<lsp::Hover>| match hover.map(|h| h.contents) {
+        Some(lsp::HoverContents::Markup(m)) => m.value,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        text(client.hover("/app/src/main.emel", 6, 10)),
+        "```emela\nhandler WorkerKv(binding: String): Kv\ninit(binding: String, retries: Int)\n```"
+    );
+    assert_eq!(
+        text(client.hover("/app/src/main.emel", 7, 8)),
+        "```emela\nbinding: String\n```"
+    );
+    let def = client
+        .definition("/app/src/main.emel", 12, 26)
+        .expect("a definition");
+    assert_eq!(def.range, range((4, 6), (4, 10)));
+    client.shutdown();
+}
+
 /// Effects with type arguments (spec 8.1). The handler name shows `handler H: Cell[Int]`, a
 /// capability shows `use Cell[Int]`, and an operation shows its type with the arguments substituted.
 #[test]
@@ -1471,6 +1498,35 @@ fn definition_of_names() {
     );
     // A position with nothing there.
     assert_eq!(client.definition(MAIN, 2, 0), None);
+    client.shutdown();
+}
+
+/// The argument of `@entry` (`[ext.entry]`) goes to the entry adapter, and its module to the top
+/// of the module's file.
+#[test]
+fn definition_of_an_entry_adapter() {
+    let main = "import Http\n\n@entry(Http.serve)\nfn app(x: Int) -> Int { x }\n\nfn main() {}\n";
+    let http = "@export(js, \"default\", \"fetch\")\npub fn serve(app: fn(Int) -> Int fails {} use {}, x: Int) -> Int { app(x) }\n";
+    let files = [
+        ("/app/Pome.toml", ""),
+        ("/app/src/main.emel", main),
+        ("/app/src/http.emel", http),
+    ];
+    let mut client = Client::initialize(&files, Some("/app"), Typecheck::default);
+    let http_path = "/app/src/http.emel";
+    assert_eq!(
+        client.definition(MAIN, 2, 13),
+        location(http_path, (1, 7), (1, 12))
+    );
+    assert_eq!(
+        client.definition(MAIN, 2, 8),
+        location(http_path, (0, 0), (0, 0))
+    );
+    // The fn that `@entry` makes has no source: hover and inlay hints do not show it.
+    let hover = format!("{:?}", client.hover(MAIN, 2, 2));
+    assert!(!hover.contains("$entry"), "{hover}");
+    let hints = client.inlay_hints(MAIN).unwrap_or_default();
+    assert!(hints.iter().all(|(line, ..)| *line != 2), "{hints:?}");
     client.shutdown();
 }
 

@@ -22,6 +22,7 @@ mod hover;
 mod internal;
 mod js;
 mod nav;
+mod new;
 mod output;
 mod pipeline;
 mod pome;
@@ -53,10 +54,12 @@ pub use frontend::{Lower, ParseOnly, Resolve, Typecheck, TypedProgram};
 pub use hints::{HintKind, InlayHint};
 pub use hover::HoverInfo;
 pub use js::{CoreJs, JS_ENTRY_FILE};
+
 pub use nav::{
     DocumentSymbol, NavTarget, RenameError, SymbolKind, WorkspaceSymbol, document_symbols,
     workspace_symbols,
 };
+pub use new::{NewFile, NewPome, new};
 pub use output::{BuildOutput, OutputFile, write_files, write_output};
 pub use pipeline::{
     Analysis, Backend, C_EMBEDDED_OUT_DIR, C_OUT_DIR, CORE_DIR, Checked, CoreSource, DOC_OUT_DIR,
@@ -67,17 +70,18 @@ pub use pome::project_dependencies;
 pub use render::{render, render_one, summary};
 pub use run::{
     DEFECT_EXIT_CODE, DEFECT_NAME, ERROR_EXIT_CODE, FAIL_KEY, INTERRUPTED_EXIT_CODE, NODE_ENV,
-    Output, RunOutput, WASMTIME_ENV, node_program, run_node, run_wasmtime, wasmtime_program,
+    Output, ProgramCommand, RunOutput, WASMTIME_ENV, node_program, run_node, run_wasmtime,
+    wasmtime_program, with_program_cwd, with_program_timeout,
 };
 pub use signature::SignatureInfo;
 pub use source::{FileId, FileSystem, MemoryFiles, SourceDb, SourceFile};
 pub use structure::{FoldKind, FoldRange, folding_ranges, selection_ranges};
 pub use target::{Target, project_target};
 pub use testing::{
-    C_EMBEDDED_TEST_OUT_DIR, C_TEST_OUT_DIR, JS_TEST_ENTRY_FILE, JS_TEST_OUT_DIR, LowerTests,
-    TEST_ANNOTATION, TEST_FAILURE_EXIT_CODE, TestBackend, TestCase, TestDef, TestFn, TestModule,
-    TestOptions, TestOutcome, TestReport, TestResult, collect_tests, default_test_out_dir,
-    default_test_out_dir_for, is_test_fn, test,
+    AGENT_ENV_VARS, C_EMBEDDED_TEST_OUT_DIR, C_TEST_OUT_DIR, JS_TEST_ENTRY_FILE, JS_TEST_OUT_DIR,
+    LowerTests, Reporter, TEST_ANNOTATION, TEST_FAILURE_EXIT_CODE, TestBackend, TestCase, TestDef,
+    TestFn, TestModule, TestOptions, TestOutcome, TestReport, TestResult, collect_tests,
+    default_test_out_dir, default_test_out_dir_for, is_test_fn, runs_in_agent, test,
 };
 pub use tokens::{SemanticToken, TokenKind};
 pub use wasm::{CoreWasm, WASM_ENTRY_FILE};

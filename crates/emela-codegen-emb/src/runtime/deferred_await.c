@@ -19,7 +19,7 @@ static void emela_deferred_wait_step(emela_fiber *fiber, emela_frame *base) {
   if (waiter->deliver != NULL && waiter->result != NULL) waiter->deliver(slot->value, waiter->result);
   emela_frame_return(fiber);
 }
-static inline void emela_deferred_wait(emela_fiber *fiber, emela_deferred *deferred,
+static inline EMELA_UNUSED void emela_deferred_wait(emela_fiber *fiber, emela_deferred *deferred,
                                       void *result, void (*deliver)(EmelaAny, void *)) {
   emela_deferred_slot *slot = emela_deferred_get_await(deferred);
   emela_deferred_waiter *waiter = (emela_deferred_waiter *)emela_frame_push(fiber, sizeof(*waiter), emela_deferred_wait_step);

@@ -7,30 +7,46 @@
 //! mechanically, like `emela-codegen-c` does for C.
 //!
 //! The WASM runtime is emitted into the same module (Perceus reference counting on linear memory,
-//! strings, the numeric conversions and the runtime operations) and the host is WASI, so the
-//! module is a WASI command run with an external engine (`wasmtime`).
+//! strings, the numeric conversions and the runtime operations) and the host is WASI 0.3, so the
+//! output is a component exporting `wasi:cli/run@0.3.0`, run with an external engine
+//! (`wasmtime`). An HTTP service exports `handle` of `wasi:http/handler@0.3.0` instead
+//! (`emit::runtime::http`), run with `wasmtime serve`.
 //!
-//! The first version supports no programs that suspend (the emitter does not read the state
-//! machines of the Heap IR yet), no fibers, no callbacks to host functions and no builtins that
-//! need Unicode tables; reaching them is a [`WasmError`].
+//! The target supports the WASI hosts the bundled `Std` handlers use (Console, Env, Random,
+//! Clock.now and Clock.sleep), and suspending functions are compiled as state machines with heap
+//! frames (`emit::suspend`) and a FIFO continuation scheduler (`emit::runtime::sched`). A sleep
+//! starts `wasi:clocks/monotonic-clock.wait-for` as an asynchronous subtask and the scheduler waits
+//! on its waitable set only when it has no continuation left (`emit::runtime::async_bridge`);
+//! TestClock uses the same suspension without a host timer. `Fiber.attempt` and `Std.Cause` run
+//! on the current fiber (`emit::runtime::attempt`). Fibers, other `Async` wakeups and custom host
+//! WIT are not implemented yet; reaching them is a [`WasmError`] or a stall unwound as interrupted
+//! (spec 14.5). The Unicode tables for grapheme clusters (UAX #29, Unicode 17.0.0) are
+//! part of the runtime.
 
 mod check;
+mod component;
 mod emit;
+mod std_host;
 
 pub use self::emit::layout;
 
 use emela_core::FnId;
 
-/// What the generated `_start` runs.
+/// What the generated `wasi:cli/run@0.3.0` export runs.
 #[derive(Debug, Clone)]
 pub enum Entry {
     /// The entry module's `main` (an exported fn named `main`). Without one, the program does
-    /// nothing.
+    /// nothing. For an HTTP service (`emela_core::Module::http_service`), the fn that
+    /// `@entry(Http.serve)` made instead, run for each request by the exported `handle` of
+    /// `wasi:http/handler@0.3.0` (`[target.wasm.output]`).
     Main,
     /// Test functions (spec 13.4), called one by one in order. Each result is written to stdout
     /// as a line of [`TEST_EVENT_PREFIX`] and JSON, the protocol of the JS test runner: `{"event":
     /// "result", "name": …, "outcome": "ok" | "defect" | "error", "message": …}`, then `{"event":
-    /// "done"}`.
+    /// "done"}`. `message` is left out when an error value has no display, and the defect of a
+    /// failed assert also has `"location"` (`[test.assert]`). The protocol is
+    /// internal between the module and `emela test`, so the spec only fixes what `emela test`
+    /// shows (`[cmd.test.output]`, `[cmd.test.outcome]`).
     Tests(Vec<TestEntry>),
 }
 
@@ -49,7 +65,7 @@ pub const TEST_EVENT_PREFIX: &str = "\u{1e}emela-test ";
 /// The output of [`compile`].
 #[derive(Debug, Clone)]
 pub struct WasmOutput {
-    /// The encoded module (`main.wasm`).
+    /// The encoded component (`main.wasm`), exporting `wasi:cli/run@0.3.0`.
     pub module: Vec<u8>,
     /// 線形メモリの確定した配置（`emit/layout.rs`）．出力と同じモジュールから
     /// `wasmparser` で読み取った値と突き合わせられる。
@@ -65,7 +81,7 @@ pub struct WasmError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasmErrorKind {
-    /// A feature the WASM target does not support yet (suspending code, fibers, Unicode tables).
+    /// A feature the WASM target does not support yet (fibers, `suspend fn` external functions).
     Unsupported,
     /// An external function reachable from the entry takes or returns a callback (E0427).
     Callback,
@@ -93,7 +109,16 @@ impl std::fmt::Display for WasmError {
 
 /// Compiles lowered Core IR (self tail calls loopified, as `emela_core::lower` leaves it) to WASM.
 pub fn compile(core: &emela_core::Module, entry: &Entry) -> Result<WasmOutput, Vec<WasmError>> {
+    let service = matches!(entry, Entry::Main) && core.http_service;
     let roots: Vec<FnId> = match entry {
+        // An HTTP service starts from the fn `@entry(Http.serve)` made: its `wasm` export is
+        // `handle` of `wasi:http/handler@0.3.0` (`[lib.http-service]`).
+        Entry::Main if service => core
+            .functions
+            .iter()
+            .filter(|(_, f)| f.host_exports.iter().any(|e| e.target == "wasm"))
+            .map(|(id, _)| id)
+            .collect(),
         Entry::Main => core
             .functions
             .iter()
@@ -106,7 +131,14 @@ pub fn compile(core: &emela_core::Module, entry: &Entry) -> Result<WasmOutput, V
     // The Flow IR functions are the Core functions in the same order, so a test keeps the index
     // of its copy.
     let entry = match entry {
-        Entry::Main => emit::Run::Main,
+        // Call the monomorphized copy itself: its name and `exported` flag can differ from the
+        // input's (`main[Never]` is not exported), so looking the entry up by name is fragile.
+        Entry::Main if service => emit::Run::Service(copies.iter().flatten().next().map(|copy| {
+            emela_lir::FnId::from_raw(la_arena::RawIdx::from(u32::from(copy.into_raw())))
+        })),
+        Entry::Main => emit::Run::Main(copies.iter().flatten().next().map(|copy| {
+            emela_lir::FnId::from_raw(la_arena::RawIdx::from(u32::from(copy.into_raw())))
+        })),
         Entry::Tests(tests) => emit::Run::Tests(
             tests
                 .iter()
@@ -125,7 +157,7 @@ pub fn compile(core: &emela_core::Module, entry: &Entry) -> Result<WasmOutput, V
         return Err(internal("monomorphisation", errors));
     }
     let mut lir = emela_lir::from_core(mono).map_err(|errors| internal("from_core", errors))?;
-    let errors = check::unsupported(&lir);
+    let errors = check::unsupported(&lir, &entry.roots());
     if !errors.is_empty() {
         return Err(errors);
     }

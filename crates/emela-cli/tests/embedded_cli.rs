@@ -47,7 +47,11 @@ fn c_only_build_emits_headers_and_aliases_without_a_main_or_native_compiler() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         write(root, "Pome.toml", "[build]\ntarget = \"c-embedded\"\n");
-        write(root, "src/main.emel", "pub fn answer() -> Int { 42 }\n");
+        write(
+            root,
+            "src/main.emel",
+            "@export(c, \"answer\")\npub fn answer() -> Int { 42 }\n",
+        );
         write(
             root,
             "embedded.toml",

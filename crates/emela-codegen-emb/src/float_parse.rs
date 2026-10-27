@@ -23,7 +23,7 @@ typedef struct {
   uint16_t length;
 } EmelaEmbFloatParseBig;
 
-static inline double emela_emb_float_from_bits(uint64_t bits) {
+static inline EMELA_UNUSED double emela_emb_float_from_bits(uint64_t bits) {
   union {
     uint64_t bits;
     double value;
@@ -32,7 +32,7 @@ static inline double emela_emb_float_from_bits(uint64_t bits) {
   return converted.value;
 }
 
-static inline int emela_emb_float_text_equals(EmelaString value, const char *expected, uint32_t length) {
+static inline EMELA_UNUSED int emela_emb_float_text_equals(EmelaString value, const char *expected, uint32_t length) {
   if ((uint32_t)value.length != length) {
     return 0;
   }
@@ -44,7 +44,7 @@ static inline int emela_emb_float_text_equals(EmelaString value, const char *exp
   return 1;
 }
 
-static inline int emela_emb_float_big_multiply_small(EmelaEmbFloatParseBig *value, uint32_t multiplier) {
+static inline EMELA_UNUSED int emela_emb_float_big_multiply_small(EmelaEmbFloatParseBig *value, uint32_t multiplier) {
   uint64_t carry = UINT64_C(0);
   for (uint32_t index = UINT32_C(0); index < (uint32_t)value->length; ++index) {
     const uint64_t product = (uint64_t)value->words[index] * (uint64_t)multiplier + carry;
@@ -61,7 +61,7 @@ static inline int emela_emb_float_big_multiply_small(EmelaEmbFloatParseBig *valu
   return 1;
 }
 
-static inline int emela_emb_float_big_add_small(EmelaEmbFloatParseBig *value, uint32_t addition) {
+static inline EMELA_UNUSED int emela_emb_float_big_add_small(EmelaEmbFloatParseBig *value, uint32_t addition) {
   uint64_t carry = (uint64_t)addition;
   uint32_t index = UINT32_C(0);
   while (carry != UINT64_C(0) && index < (uint32_t)value->length) {
@@ -83,7 +83,7 @@ static inline int emela_emb_float_big_add_small(EmelaEmbFloatParseBig *value, ui
   return 1;
 }
 
-static inline uint32_t emela_emb_float_big_bit_length(const EmelaEmbFloatParseBig *value) {
+static inline EMELA_UNUSED uint32_t emela_emb_float_big_bit_length(const EmelaEmbFloatParseBig *value) {
   if (value->length == UINT16_C(0)) {
     return UINT32_C(0);
   }
@@ -96,7 +96,7 @@ static inline uint32_t emela_emb_float_big_bit_length(const EmelaEmbFloatParseBi
   return bits;
 }
 
-static inline uint32_t emela_emb_float_big_shifted_word(const EmelaEmbFloatParseBig *value, uint32_t shift, uint32_t index) {
+static inline EMELA_UNUSED uint32_t emela_emb_float_big_shifted_word(const EmelaEmbFloatParseBig *value, uint32_t shift, uint32_t index) {
   const uint32_t whole_words = shift / UINT32_C(32);
   const uint32_t remaining_bits = shift % UINT32_C(32);
   if (index < whole_words) {
@@ -116,7 +116,7 @@ static inline uint32_t emela_emb_float_big_shifted_word(const EmelaEmbFloatParse
   return (lower << remaining_bits) | (upper >> (UINT32_C(32) - remaining_bits));
 }
 
-static inline int emela_emb_float_big_compare_shifted(
+static inline EMELA_UNUSED int emela_emb_float_big_compare_shifted(
     const EmelaEmbFloatParseBig *left,
     uint32_t left_shift,
     const EmelaEmbFloatParseBig *right,
@@ -143,7 +143,7 @@ static inline int emela_emb_float_big_compare_shifted(
   return 0;
 }
 
-static inline int emela_emb_float_big_shift_left(EmelaEmbFloatParseBig *value, uint32_t shift) {
+static inline EMELA_UNUSED int emela_emb_float_big_shift_left(EmelaEmbFloatParseBig *value, uint32_t shift) {
   if (value->length == UINT16_C(0) || shift == UINT32_C(0)) {
     return 1;
   }
@@ -179,14 +179,14 @@ static inline int emela_emb_float_big_shift_left(EmelaEmbFloatParseBig *value, u
   return 1;
 }
 
-static inline void emela_emb_float_big_normalize(EmelaEmbFloatParseBig *value) {
+static inline EMELA_UNUSED void emela_emb_float_big_normalize(EmelaEmbFloatParseBig *value) {
   while (value->length != UINT16_C(0)
       && value->words[value->length - UINT16_C(1)] == UINT32_C(0)) {
     --value->length;
   }
 }
 
-static inline void emela_emb_float_big_subtract_shifted(
+static inline EMELA_UNUSED void emela_emb_float_big_subtract_shifted(
     EmelaEmbFloatParseBig *left,
     const EmelaEmbFloatParseBig *right,
     uint32_t right_shift) {
@@ -200,7 +200,7 @@ static inline void emela_emb_float_big_subtract_shifted(
   emela_emb_float_big_normalize(left);
 }
 
-static inline int emela_emb_float_big_power_of_ten(EmelaEmbFloatParseBig *value, uint32_t exponent) {
+static inline EMELA_UNUSED int emela_emb_float_big_power_of_ten(EmelaEmbFloatParseBig *value, uint32_t exponent) {
   for (uint32_t index = UINT32_C(0); index < exponent; ++index) {
     if (!emela_emb_float_big_multiply_small(value, UINT32_C(10))) {
       return 0;
@@ -209,7 +209,7 @@ static inline int emela_emb_float_big_power_of_ten(EmelaEmbFloatParseBig *value,
   return 1;
 }
 
-static inline int emela_emb_float_parse(EmelaString value, double *result) {
+static inline EMELA_UNUSED int emela_emb_float_parse(EmelaString value, double *result) {
   if (value.length != UINT16_C(0) && value.data == NULL) {
     return 0;
   }

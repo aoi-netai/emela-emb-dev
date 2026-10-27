@@ -79,6 +79,7 @@ fn result_type(
                 | Builtin::CellSet
                 | Builtin::Panic
                 | Builtin::Todo
+                | Builtin::AssertFail
                 | Builtin::Dbg,
             ..
         } => None,

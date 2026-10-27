@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#define EMELA_UNUSED __attribute__((unused))
 #define EMELA_FIBER_CAPACITY 2
 #define EMELA_FRAME_CAPACITY 64
 #define EMELA_FRAME_BYTES 64
