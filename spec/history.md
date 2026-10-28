@@ -6,6 +6,10 @@ This is the record of changes to the specification. New entries are added at the
 
 - `[target]`, `[target.c-embedded]`, `[target.c-embedded.output]`, `[target.c-embedded.board]`, `[target.c-embedded.entry]`, `[target.c-embedded.project]`, `[target.c-embedded.config]`, `[module.pome]`, `[cmd]`, `[cmd.build]`, `[cmd.flash]`: Add the target `c-embedded`, which makes C for microcontrollers, and, with a board selected by `--board` or `[embedded].board`, a firmware image. `emela flash` writes the image of the last successful build after checking that its inputs and outputs have not changed. `[pome].targets` and `[build].target` can name `c-embedded`. The `[embedded]` table of `Pome.toml` and the runtime configuration file are added. This follows the pull request #387.
 
+## 2026-10-28 (Remove the compare functions that Ord already gives)
+
+- `[api.int]`, `[api.int64]`, `[api.std.duration]`, `[api.std.instant]`, `[target.number]`, `[open.list]`: `Int.compare`, `Int64.compare`, `Duration.compare` and `Instant.compare` are removed. These types satisfy Ord, and `Ord.compare` gives the same order. With method calls (`[type.rules]`), `n.compare(m)` finds both the fn of the module and the function of Ord, and is E0335. `Float.compare` stays: Float does not satisfy Ord. Adopted in the proposal `remove-compare` (#468).
+
 ## 2026-10-27 (Method calls)
 
 - `[lex.name]`, `[data.type]`, `[type.rules]`, `[trait.call]`, `[module.resolution]`, `[api.list]`, `[api.string]`, `[api.std.http.request]`, `[api.std.http.response]`, `[api.std.http]`, `[lsp.completion]`, `[lsp.navigation]`, `[diag.list]`: `x.f(a)` can be written for `M.f(x, a)`, where M is the module that defines the type of x and f is a function of that module whose first parameter has that type at its head. The functions of a trait that the type implements can be called the same way, when the trait is visible by name. Functions are not marked. `String.join` moves to `List.join`, and the functions `Request.headers` and `Response.headers` are renamed to `header_values`. Adopted in the proposal `method-call` (#454).
