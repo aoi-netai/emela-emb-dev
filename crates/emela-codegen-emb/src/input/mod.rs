@@ -1,7 +1,7 @@
 //! Upstream Core/Flow adaptation and validation.
 
 use crate::{Error, ErrorKind};
-use crate::{const_origins, derived};
+use upstream::{const_origins, derived};
 pub(crate) mod upstream;
 
 /// Monomorphizes Core IR, lowers it to Flow IR, and verifies the Flow-stage invariants.

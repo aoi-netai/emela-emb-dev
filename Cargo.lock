@@ -454,6 +454,9 @@ dependencies = [
  "emela-syntax",
  "emela-types",
  "la-arena",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
