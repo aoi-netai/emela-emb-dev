@@ -31,3 +31,5 @@ pub fn compile_flow(flow: &emela_lir::Module, options: &Options) -> Result<Outpu
 }
 
 mod semantics;
+
+pub mod platform;
