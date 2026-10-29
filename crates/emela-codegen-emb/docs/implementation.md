@@ -40,8 +40,8 @@
 
 | 基盤 | 実装される値・操作 | 資源と実行文脈 |
 | --- | --- | --- |
-| 静的なC値と定数 | scalar、固定レイアウトのtuple/enum、String literal/view、静的に解決できるclosure/handler | 使用する値・helperだけを出力する。大きなinline値や同期再帰もC stackを使用する。 |
-| 固定heap | List、再帰型の箱、escapeしたString、動的closure/handler/evidence、Cell、Anyのbox | moduleごとに上限を確保し、システムの `malloc` を呼ばない。main側で参照管理・解放を行う。 |
+| 静的なC値と定数 | scalar、固定レイアウトのtuple/enum、String literal/view、借用Bytes view、静的に解決できるclosure/handler | 使用する値・helperだけを出力する。大きなinline値や同期再帰もC stackを使用する。 |
+| 固定heap | Bytes、List、再帰型の箱、escapeしたString、動的closure/handler/evidence、Cell、Anyのbox | moduleごとに上限を確保し、システムの `malloc` を呼ばない。main側で参照管理・解放を行う。 |
 | 機能別runtimeとpool | Fiber、suspend frame、task/event、Deferred、resume、失敗・取消の継続 | 到達可能な機能に応じて出力する。heapとは別の固定領域も持ち、各poolを独立に設定する。 |
 
 - `Int` / `Bool` はCの32 bit整数、`Int64` は64 bit整数、`Float` はbinary64の `double`。Unit/Neverには通常のC値を割り当てない。
@@ -82,6 +82,16 @@ Int / Int64の十進出力は最大11 / 20 byte、動的Float出力は最大25 b
 静的に評価できるscalar/String等は定数へ畳む。評価のfuel・深さ・出力サイズに上限を設け、畳めない場合はruntimeの初回参照時に評価してcacheする。再帰helper、外部呼出し、closureやaggregateを返すconstも、有効な入力IRと必要な資源があればこの経路で扱う。通常のdefectはcontext付きでcacheし、自己参照は専用の診断を行う。const初期化とその診断に必要な記憶領域も固定容量である。
 
 汎化したconstは `const_origins` が既存Core単相化APIのoriginを追跡し、既存Flowのprivate metadataへcanonical値と型別specializationの対応を保存する。`const_bridge` が型別レイアウトとcallableの橋渡しを生成し、source上の初期化を型ごとに繰り返さない。origin metadataのない直接Flow入力は、異なるconst IDを独立したcacheとして扱う。source/Coreの関数値constとAsync具体化には第1節の制約がある。
+
+### Bytesの表現と所有権
+
+`Std.Bytes.Bytes`は`EmelaBytes { const uint8_t *data; uint32_t length; void *owner; }`として渡す。不変のbyte列で、長さは`Int`の範囲内。String用の容量とは独立しており、`from_list`・`to_list`・`slice`・`concat`・`encode_utf8`に必要なメモリは固定heapから確保する。heapの容量不足や長さのoverflowは`EMELA_DEFECT_HEAP_EXHAUSTED`になる。
+
+`size`と`get`は確保せず、`get`は範囲外と負のindexに`None`を返す。`slice`は両端を0から長さへclampして新しいbyte列を作る。UTF-8の妥当性、16進表記、Eq・Ord・Showは`Std.Bytes`の共有実装に従う。`decode_valid_utf8`は検査済み入力をString用の計画済みbufferへコピーし、`string_capacity`を超える場合はString容量defectになる。
+
+生成した公開入口への借用入力は`owner = NULL`のviewで渡せる。戻り値・closure・State・中断frameに保存する際は所有を確保する。返されたBytesは`emela_embedded_release_bytes(&value)`で解放し、独立した参照を増やす場合は`emela_embedded_retain_bytes(&value)`を使う。同期externalのBytesは既存の生成値adapterを通し、`Borrowed`はwrapperがコピーし、`Owned`は同じ固定heapの参照を移譲する。
+
+外部taskの引数にもBytesを渡せる。Bytes結果のtyped producerはmain文脈で呼び、contextの解放前に所有済みの値を取得する。完了通知を受理した後にキャンセルされた場合もcontextを一度だけ解放する。
 
 ## 3. 失敗・defect・suspendの契約
 
@@ -336,14 +346,14 @@ host試験は生成Cの値・制御・所有権・容量defectを確認する。
 | `Builtin::FloatCeil` | 正方向へ丸めてIntにする | 対応 | [builtins/float.rs](../src/compiler/emit/features/builtins/float.rs)：`emit_builtin`、`emit_float_to_int_helper` | `float_rounding_builtins_match_spec_and_defect_out_of_range` | 共通helperのoperation1。 |
 | `Builtin::FloatRound` | tieを0から遠ざけてIntにする | 対応 | [builtins/float.rs](../src/compiler/emit/features/builtins/float.rs)：`emit_builtin`、`emit_float_to_int_helper` | `float_rounding_builtins_match_spec_and_defect_out_of_range` | 正負tie、Int境界とNaNを確認。 |
 | `Builtin::FloatTruncate` | 小数部を捨ててIntにする | 対応 | [builtins/float.rs](../src/compiler/emit/features/builtins/float.rs)：`emit_builtin`、`emit_float_to_int_helper` | `float_rounding_builtins_match_spec_and_defect_out_of_range` | 共通helperのoperation3。 |
-| `Builtin::BytesFromList` | IntのListからBytesを作る（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesToList` | BytesをIntのListにする（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesSize` | byte数（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesGet` | 位置のbyteをOptionで返す（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesSlice` | 範囲を切り出す（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesConcat` | BytesのListを結合する（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesEncodeUtf8` | StringのUTF-8 byte列（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
-| `Builtin::BytesDecodeValidUtf8` | 検査済みUTF-8をStringにする（`[api.std.bytes]`） | 未対応 | [builtins/mod.rs](../src/compiler/emit/features/builtins/mod.rs)：`emit_builtin`は`unsupported`を返す | — | embeddedのBytes表現は未定。 |
+| `Builtin::BytesFromList` | IntのListからBytesを作る（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_from_list` | `bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8` | 0〜255以外の要素は`None`。検査後に固定heapへコピーする。 |
+| `Builtin::BytesToList` | BytesをIntのListにする（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_to_list` | `bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8` | 0〜255のIntを持つListを固定heapへ構築する。 |
+| `Builtin::BytesSize` | byte数（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_size` | `bytes::bytes_size_and_get_are_heapless_and_keep_lengths_above_u16` | 確保なし、O(1)。String容量に依存しない。 |
+| `Builtin::BytesGet` | 位置のbyteをOptionで返す（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_get` | `bytes::bytes_size_and_get_are_heapless_and_keep_lengths_above_u16`、`bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8` | 確保なし、O(1)。負数・範囲外は`None`。 |
+| `Builtin::BytesSlice` | 範囲を切り出す（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_slice` | `bytes::bytes_dynamic_capacity_is_independent_of_string_capacity`、`bytes::bytes_survive_suspension_and_release_on_completion_and_cancellation` | 両端をclampし、固定heapへコピーする。空の範囲は空列。 |
+| `Builtin::BytesConcat` | BytesのListを結合する（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_concat` | `bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8` | 長さのoverflowを検査し、全要素を順番にコピーする。 |
+| `Builtin::BytesEncodeUtf8` | StringのUTF-8 byte列（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_encode_utf8` | `bytes::bytes_returns_lists_and_aliases_preserve_ownership_and_release_the_heap`、`bytes::bytes_require_a_fixed_heap_and_defect_when_its_capacity_is_exhausted` | NULを含むUTF-8 bytesを固定heapへコピーする。 |
+| `Builtin::BytesDecodeValidUtf8` | 検査済みUTF-8をStringにする（`[api.std.bytes]`） | 対応 | [builtins/bytes.rs](../src/compiler/emit/features/builtins/bytes.rs)：`bytes_decode_valid_utf8` | `bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8`、`bytes::bytes_decoding_checks_string_capacity_before_truncating_the_length` | 計画済みString bufferへコピーする。String容量を超える場合はdefect。 |
 | `Builtin::Panic` | message付きdefectを発生させる | Flow禁止（lower先に対応） | [builtins/rejected.rs](../src/compiler/emit/features/builtins/rejected.rs)：`from_core::Lower::builtin`、`emit_return`のDefect分岐、`lib::verify_flow`の入口guard | `sends_dynamic_defect_string_views_to_the_board_hook`、`rejects_source_builtins_that_must_lower_to_flow_control_or_runtime` | sourceのlower先は実装済み。生BuiltinはInvalidFlowIr。組み込み契約に従いdefect時はcleanupを省略する。 |
 | `Builtin::AssertFail` | 失敗したassertのdefectを場所つきで発生させる | Flow禁止（lower先に対応） | [input/upstream/verify.rs](../src/input/upstream/verify.rs)：`reject_assert_fail` | `rejects_source_builtins_that_must_lower_to_flow_control_or_runtime` | `Term::Defect`の場所はboard hookに渡さず、messageだけを使う。生BuiltinはInvalidFlowIr。 |
 | `Builtin::Todo` | 未実装defectを発生させる | Flow禁止（lower先に対応） | [builtins/rejected.rs](../src/compiler/emit/features/builtins/rejected.rs)：`from_core::Lower::builtin`、`emit_return`のDefect分岐、入口guard | `classifies_a_static_todo_defect`、`rejects_source_builtins_that_must_lower_to_flow_control_or_runtime` | 同じlower経路でTODO kindに分類。生BuiltinはInvalidFlowIr。defectの即時停止契約を維持。 |

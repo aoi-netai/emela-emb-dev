@@ -1,7 +1,16 @@
+pub(in crate::compiler::plan) mod bytes;
 use super::*;
 
 pub(in crate::compiler::plan) fn string_behavior(op: Builtin, args: &[Operand]) -> StringBehavior {
     match op {
+        Builtin::BytesFromList
+        | Builtin::BytesToList
+        | Builtin::BytesSize
+        | Builtin::BytesGet
+        | Builtin::BytesSlice
+        | Builtin::BytesConcat
+        | Builtin::BytesEncodeUtf8
+        | Builtin::BytesDecodeValidUtf8 => bytes::string_behavior(op),
         Builtin::StringAppend => string_append::string_behavior(args),
         Builtin::StringByteSize => string_byte_size::string_behavior(args),
         Builtin::StringContains => string_contains::string_behavior(args),
@@ -61,6 +70,7 @@ pub(in crate::compiler::plan) fn string_bound(
     bounds: &StringBounds<'_>,
 ) -> Option<usize> {
     match op {
+        Builtin::BytesDecodeValidUtf8 => Some(usize::from(bounds.capacity)),
         Builtin::StringAppend => string_append::string_bound(args, bounds),
         Builtin::StringTrim => string_trim::string_bound(args, bounds),
         Builtin::StringJoin => string_join::string_bound(args, bounds),
@@ -110,6 +120,13 @@ pub(in crate::compiler::plan) fn string_bound(
         | Builtin::CellGet
         | Builtin::CellSet
         | Builtin::ShowString
+        | Builtin::BytesFromList
+        | Builtin::BytesToList
+        | Builtin::BytesSize
+        | Builtin::BytesGet
+        | Builtin::BytesSlice
+        | Builtin::BytesConcat
+        | Builtin::BytesEncodeUtf8
         | Builtin::DebugPrint => None,
     }
 }
@@ -168,6 +185,14 @@ pub(in crate::compiler::plan) fn result_ownership(
         | Builtin::CellGet
         | Builtin::CellSet
         | Builtin::ShowString
+        | Builtin::BytesFromList
+        | Builtin::BytesToList
+        | Builtin::BytesSize
+        | Builtin::BytesGet
+        | Builtin::BytesSlice
+        | Builtin::BytesConcat
+        | Builtin::BytesEncodeUtf8
+        | Builtin::BytesDecodeValidUtf8
         | Builtin::DebugPrint => ResultOwnership::Owned,
     }
 }
@@ -178,6 +203,14 @@ pub(in crate::compiler::plan) fn require_runtime(
     requirements: &mut crate::contract::runtime::RuntimeRequirements,
 ) {
     match op {
+        Builtin::BytesFromList
+        | Builtin::BytesToList
+        | Builtin::BytesSize
+        | Builtin::BytesGet
+        | Builtin::BytesSlice
+        | Builtin::BytesConcat
+        | Builtin::BytesEncodeUtf8
+        | Builtin::BytesDecodeValidUtf8 => bytes::require_runtime(op, requirements),
         Builtin::StringAppend => string_append::require_runtime(args, requirements),
         Builtin::IntToString => int_to_string::require_runtime(args, requirements),
         Builtin::Int64ToString => int64_to_string::require_runtime(args, requirements),
@@ -232,6 +265,14 @@ pub(in crate::compiler::plan) fn require_runtime(
 
 pub(in crate::compiler::plan) fn needs_heap(op: Builtin) -> bool {
     match op {
+        Builtin::BytesFromList
+        | Builtin::BytesToList
+        | Builtin::BytesSize
+        | Builtin::BytesGet
+        | Builtin::BytesSlice
+        | Builtin::BytesConcat
+        | Builtin::BytesEncodeUtf8
+        | Builtin::BytesDecodeValidUtf8 => bytes::needs_heap(op),
         Builtin::CellNew => cells::needs_heap(op),
         Builtin::StringLength
         | Builtin::StringByteSize

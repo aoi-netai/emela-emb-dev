@@ -137,10 +137,11 @@ pub(super) fn prepare<'a>(
                 && !f.constant
                 && f.external.is_none()
                 && !matches!(layouts.shapes.types[f.ret], Type::String)
-                && layouts.has_inline_string(f.ret)
+                && layouts.has_borrowed_views(f.ret)
         })
         .filter(|(id, f)| {
             runtime_consts.contains(id)
+                || layouts.has_byte_views(f.ret)
                 || !StringBufferPlan::new(
                     &layouts,
                     *id,
@@ -451,7 +452,7 @@ pub(super) fn prepare<'a>(
             && function.external.is_none()
             && !const_bridges.getters.contains_key(&id)
             && !buffers.declarations.is_empty()
-            && layouts.has_inline_string(function.ret)
+            && layouts.has_borrowed_views(function.ret)
             && !layouts
                 .functions
                 .owned_string_returns

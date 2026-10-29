@@ -1122,5 +1122,103 @@
       "target": "flow",
       "name": "rejects_heap_only_runtime_operations_at_flow_stage"
     }
+  ],
+  "emela_core::Builtin::BytesFromList": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_list_round_trips_and_invalid_elements_reclaim_every_allocation"
+    }
+  ],
+  "emela_core::Builtin::BytesToList": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_list_round_trips_and_invalid_elements_reclaim_every_allocation"
+    }
+  ],
+  "emela_core::Builtin::BytesSize": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_size_and_get_are_heapless_and_keep_lengths_above_u16"
+    }
+  ],
+  "emela_core::Builtin::BytesGet": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_size_and_get_are_heapless_and_keep_lengths_above_u16"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8"
+    }
+  ],
+  "emela_core::Builtin::BytesSlice": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_dynamic_capacity_is_independent_of_string_capacity"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_survive_suspension_and_release_on_completion_and_cancellation"
+    }
+  ],
+  "emela_core::Builtin::BytesConcat": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8"
+    }
+  ],
+  "emela_core::Builtin::BytesEncodeUtf8": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_returns_lists_and_aliases_preserve_ownership_and_release_the_heap"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_require_a_fixed_heap_and_defect_when_its_capacity_is_exhausted"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::discarded_bytes_still_check_capacity_and_release_owned_results"
+    }
+  ],
+  "emela_core::Builtin::BytesDecodeValidUtf8": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_decoding_checks_string_capacity_before_truncating_the_length"
+    }
+  ],
+  "emela_core::Type::Bytes": [
+    {
+      "target": "emit",
+      "name": "bytes::bytes_returns_lists_and_aliases_preserve_ownership_and_release_the_heap"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_captured_in_closures_and_state_keep_their_owners"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_finite_flow_derivations_compare_and_display_unsigned_bytes"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_external_adapters_snapshot_borrowed_data_and_transfer_owned_data"
+    },
+    {
+      "target": "emit",
+      "name": "bytes::bytes_external_tasks_snapshot_arguments_and_results_and_release_cancelled_contexts"
+    }
   ]
 }

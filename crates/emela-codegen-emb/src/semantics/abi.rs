@@ -46,7 +46,8 @@ pub(crate) trait LayoutRead: Sized {
     fn evidence_node_kind(&self) -> u32;
     fn handler_kind(&self, effect: EffectId) -> u32;
     fn error_declaration_dependencies(&self) -> HashSet<usize>;
-    fn has_inline_string(&self, ty: TypeId) -> bool;
+    fn has_borrowed_views(&self, ty: TypeId) -> bool;
+    fn has_byte_views(&self, ty: TypeId) -> bool;
 }
 impl LayoutRead for LayoutBuilder<'_> {
     fn has_child_waits(&self) -> bool {
@@ -101,6 +102,7 @@ impl LayoutRead for LayoutBuilder<'_> {
             Type::Float => "double".to_owned(),
             Type::Unit | Type::Never | Type::Set(_) => "void".to_owned(),
             Type::String => "EmelaString".to_owned(),
+            Type::Bytes => "EmelaBytes".to_owned(),
             Type::Tuple(_) => type_name(ty),
             Type::Fn(_) => function_type_name(ty),
             Type::Enum(id, _) if self.enum_is_i32(id) => "int32_t".to_owned(),
@@ -239,6 +241,7 @@ impl LayoutRead for LayoutBuilder<'_> {
         if matches!(
             self.shapes.types[ty],
             Type::String
+                | Type::Bytes
                 | Type::List(_)
                 | Type::Cell(_)
                 | Type::Handler(_)
@@ -445,11 +448,8 @@ impl LayoutRead for LayoutBuilder<'_> {
         visited
     }
 
-    fn has_inline_string(&self, ty: TypeId) -> bool {
-        if let Some(properties) = &self.properties {
-            return properties.types[ty.index()].inline_string;
-        }
-        if matches!(self.shapes.types[ty], Type::String) {
+    fn has_byte_views(&self, ty: TypeId) -> bool {
+        if matches!(self.shapes.types[ty], Type::Bytes) {
             return true;
         }
         let Some(&index) = self.shapes.aggregate_ids.get(&ty) else {
@@ -461,7 +461,29 @@ impl LayoutRead for LayoutBuilder<'_> {
         };
         fields.iter().enumerate().any(|(variant, fields)| {
             fields.iter().enumerate().any(|(field, &field_ty)| {
-                !self.is_recursive_box_field(ty, variant, field) && self.has_inline_string(field_ty)
+                !self.is_recursive_box_field(ty, variant, field) && self.has_byte_views(field_ty)
+            })
+        })
+    }
+
+    fn has_borrowed_views(&self, ty: TypeId) -> bool {
+        if let Some(properties) = &self.properties {
+            return properties.types[ty.index()].borrowed_views;
+        }
+        if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
+            return true;
+        }
+        let Some(&index) = self.shapes.aggregate_ids.get(&ty) else {
+            return false;
+        };
+        let fields = match &self.shapes.aggregates[index].kind {
+            AggregateKind::Tuple(fields) => vec![fields.as_slice()],
+            AggregateKind::Enum(variants) => variants.iter().map(Vec::as_slice).collect(),
+        };
+        fields.iter().enumerate().any(|(variant, fields)| {
+            fields.iter().enumerate().any(|(field, &field_ty)| {
+                !self.is_recursive_box_field(ty, variant, field)
+                    && self.has_borrowed_views(field_ty)
             })
         })
     }

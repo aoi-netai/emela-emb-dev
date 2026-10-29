@@ -125,8 +125,7 @@
     }
   ],
   "summary": {
-    "candidate_found": 198,
-    "missing_evidence": 8,
+    "candidate_found": 206,
     "rejection_evidence": 20
   },
   "items": [
@@ -2812,8 +2811,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2826,8 +2828,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2840,8 +2845,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2854,8 +2862,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2868,8 +2879,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2882,8 +2896,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2896,8 +2913,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -2910,8 +2930,11 @@
       "contexts": [
         {
           "context": "common",
-          "status": "missing_evidence",
-          "routes": []
+          "status": "candidate_found",
+          "routes": [
+            "builtin",
+            "upstream-adapter-builtin"
+          ]
         }
       ]
     },
@@ -3668,23 +3691,6 @@
     "emela_core::FiberOp::CauseKind.kind",
     "emela_core::FiberOp::CauseRaise.fails"
   ],
-  "representation_gaps": [
-    {
-      "owner": "emela_core::Builtin",
-      "representation_owner": "crate::contract::ir::Builtin",
-      "missing_variants": [
-        "BytesConcat",
-        "BytesDecodeValidUtf8",
-        "BytesEncodeUtf8",
-        "BytesFromList",
-        "BytesGet",
-        "BytesSize",
-        "BytesSlice",
-        "BytesToList"
-      ],
-      "extra_variants": [],
-      "missing_adapter": false
-    }
-  ],
+  "representation_gaps": [],
   "route_errors": []
 }

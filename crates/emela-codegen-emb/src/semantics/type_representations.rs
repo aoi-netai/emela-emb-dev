@@ -19,6 +19,9 @@ pub(crate) fn bool_repr(_layouts: &TypeLayouts<'_>, _ty: &Type) -> Repr {
 pub(crate) fn string_repr(_layouts: &TypeLayouts<'_>, _ty: &Type) -> Repr {
     Repr::Ref
 }
+pub(crate) fn bytes_repr(_layouts: &TypeLayouts<'_>, _ty: &Type) -> Repr {
+    Repr::Ref
+}
 pub(crate) fn unit_repr(_layouts: &TypeLayouts<'_>, _ty: &Type) -> Repr {
     Repr::Void
 }
@@ -72,6 +75,7 @@ pub(crate) fn repr(layouts: &TypeLayouts<'_>, ty: &Type) -> Repr {
         Type::Float => float_repr(layouts, ty),
         Type::Bool => bool_repr(layouts, ty),
         Type::String => string_repr(layouts, ty),
+        Type::Bytes => bytes_repr(layouts, ty),
         Type::Unit => unit_repr(layouts, ty),
         Type::Never => never_repr(layouts, ty),
         Type::Tuple(..) => tuple_repr(layouts, ty),

@@ -35,7 +35,7 @@ pub(super) fn emit_helpers(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
         }
         writer.end_block();
         writer.blank();
-        if layouts.has_inline_string(aggregate.ty) {
+        if layouts.has_borrowed_views(aggregate.ty) {
             writer.begin_block(&format!(
                 "static inline EMELA_UNUSED void emela_heap_freeze_value_{index}({} *value)",
                 layouts.c_type(aggregate.ty)

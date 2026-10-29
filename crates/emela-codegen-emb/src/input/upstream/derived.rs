@@ -146,6 +146,7 @@ impl crate::semantics::derived::TypeGraph for Module {
             | Type::Float
             | Type::Bool
             | Type::String
+            | Type::Bytes
             | Type::Unit
             | Type::Never => Shape::Scalar,
             Type::Fn(_) => Shape::Function,

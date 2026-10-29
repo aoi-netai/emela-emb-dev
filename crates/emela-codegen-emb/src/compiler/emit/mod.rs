@@ -121,6 +121,7 @@ pub(super) fn render(plan: &PlannedModule<'_>) -> Result<Output, Vec<Error>> {
             layouts.has_cell_cycles(),
         );
         emit_closure_string_copy_helper(layouts, &mut source);
+        bytes_runtime::emit(layouts, &mut source);
         error_runtime::emit_ownership_declarations(layouts, &mut source);
         emit_any_ownership_declarations(layouts, &mut source);
         layouts.emit_heap_ownership_helpers(&mut source);
@@ -604,6 +605,7 @@ const SOURCE_FILE: &str = "emela_embedded.c";
 mod entry;
 mod services;
 
+mod bytes_runtime;
 mod heap;
 
 mod float_parse;

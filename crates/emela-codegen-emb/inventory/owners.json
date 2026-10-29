@@ -1792,5 +1792,162 @@
     "path": "src/input/upstream/verify.rs",
     "symbol": "reject_defect_at",
     "role": "reject"
+  },
+  "emela_core::Builtin::BytesFromList": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_from_list",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesToList": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_to_list",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesSize": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_size",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesGet": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_get",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesSlice": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_slice",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesConcat": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_concat",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesEncodeUtf8": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_encode_utf8",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Builtin::BytesDecodeValidUtf8": {
+    "path": "src/compiler/emit/features/builtins/bytes.rs",
+    "symbol": "bytes_decode_valid_utf8",
+    "role": "emit",
+    "phase_owners": [
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "string_behavior"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "needs_heap"
+      },
+      {
+        "path": "src/compiler/plan/operations/builtins/bytes.rs",
+        "symbol": "require_runtime"
+      }
+    ]
+  },
+  "emela_core::Type::Bytes": {
+    "path": "src/semantics/type_representations.rs",
+    "symbol": "bytes_repr",
+    "role": "metadata"
   }
 }

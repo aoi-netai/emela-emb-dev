@@ -820,7 +820,7 @@ pub(super) fn freeze(layouts: LayoutBuilder<'_>) -> CLayoutPlan<'_> {
                 representation: layouts.type_repr(ty),
                 owned: layouts.is_managed_value(ty),
                 heap: layouts.contains_heap_ref(ty, &mut HashSet::new()),
-                inline_string: layouts.has_inline_string(ty),
+                borrowed_views: layouts.has_borrowed_views(ty),
                 cell_cycles: layouts.cell_content_can_cycle(ty, &mut HashSet::new()),
             }
         })

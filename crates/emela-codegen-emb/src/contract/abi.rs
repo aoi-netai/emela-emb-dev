@@ -100,7 +100,7 @@ pub(crate) struct TypeProperties {
     pub(crate) representation: Repr,
     pub(crate) owned: bool,
     pub(crate) heap: bool,
-    pub(crate) inline_string: bool,
+    pub(crate) borrowed_views: bool,
     pub(crate) cell_cycles: bool,
 }
 

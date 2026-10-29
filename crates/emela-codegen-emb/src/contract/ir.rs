@@ -402,6 +402,7 @@ pub(crate) enum Type {
     Float,
     Bool,
     String,
+    Bytes,
     Unit,
     Never,
     Tuple(Vec<TypeId>),
@@ -507,6 +508,14 @@ pub(crate) enum Builtin {
     FloatCeil,
     FloatRound,
     FloatTruncate,
+    BytesFromList,
+    BytesToList,
+    BytesSize,
+    BytesGet,
+    BytesSlice,
+    BytesConcat,
+    BytesEncodeUtf8,
+    BytesDecodeValidUtf8,
     Panic,
     AssertFail,
     Todo,
@@ -539,6 +548,7 @@ impl TypeId {
     pub const EVIDENCE: TypeId = TypeId(7);
     pub const FIBER_SCOPE: TypeId = TypeId(8);
     pub const ANY: TypeId = TypeId(9);
+    pub const BYTES: TypeId = TypeId(10);
     pub fn index(self) -> usize {
         self.0 as usize
     }

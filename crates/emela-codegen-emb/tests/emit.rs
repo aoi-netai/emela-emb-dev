@@ -9,6 +9,7 @@ mod support;
 mod any_data;
 mod binding_metadata;
 mod builtin_audit;
+mod bytes;
 mod cell;
 mod completion_types;
 mod const_runtime;

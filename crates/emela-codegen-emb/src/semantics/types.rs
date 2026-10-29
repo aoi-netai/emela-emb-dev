@@ -20,10 +20,12 @@ impl Default for TypeTable {
             Type::Evidence,
             Type::FiberScope,
             Type::Any,
+            Type::Bytes,
         ] {
             table.intern(t);
         }
         debug_assert_eq!(table.types[TypeId::ANY.index()], Type::Any);
+        debug_assert_eq!(table.types[TypeId::BYTES.index()], Type::Bytes);
         table
     }
 }

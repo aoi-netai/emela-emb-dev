@@ -10,25 +10,17 @@
 
 | 状態 | variant × 必須経路の件数 |
 | --- | --- |
-| candidate_found | 198 |
-| missing_evidence | 8 |
+| candidate_found | 206 |
 | rejection_evidence | 20 |
 
 ## 上流IRへの未追従
 
-- <code>emela_core::Builtin</code> → <code>crate::contract::ir::Builtin</code>: 不足 <code>BytesConcat, BytesDecodeValidUtf8, BytesEncodeUtf8, BytesFromList, BytesGet, BytesSize, BytesSlice, BytesToList</code>、定義外 <code></code>、adapter登録欠落 false
+なし。
 
 ## 根拠が見つからない項目
 
-- <code>emela_core::Builtin::BytesFromList</code> / common
-- <code>emela_core::Builtin::BytesToList</code> / common
-- <code>emela_core::Builtin::BytesSize</code> / common
-- <code>emela_core::Builtin::BytesGet</code> / common
-- <code>emela_core::Builtin::BytesSlice</code> / common
-- <code>emela_core::Builtin::BytesConcat</code> / common
-- <code>emela_core::Builtin::BytesEncodeUtf8</code> / common
-- <code>emela_core::Builtin::BytesDecodeValidUtf8</code> / common
-representation emela_core::Builtin: missing=["BytesConcat", "BytesDecodeValidUtf8", "BytesEncodeUtf8", "BytesFromList", "BytesGet", "BytesSize", "BytesSlice", "BytesToList"], extra=[], missing_adapter=false
+なし。ただし構文上の候補の有無だけの集計であり、対応や動作の保証ではない。
+
 ## 比較表
 
 | ID | Flow入力（設定） | 必須経路 | 抽出結果 | route | 注記 |
@@ -215,14 +207,14 @@ representation emela_core::Builtin: missing=["BytesConcat", "BytesDecodeValidUtf
 | <code>emela_core::Builtin::FloatCeil</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
 | <code>emela_core::Builtin::FloatRound</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
 | <code>emela_core::Builtin::FloatTruncate</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesFromList</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesToList</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesSize</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesGet</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesSlice</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesConcat</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesEncodeUtf8</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
-| <code>emela_core::Builtin::BytesDecodeValidUtf8</code> | unreviewed | common | missing_evidence |  | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesFromList</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesToList</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesSize</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesGet</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesSlice</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesConcat</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesEncodeUtf8</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
+| <code>emela_core::Builtin::BytesDecodeValidUtf8</code> | unreviewed | common | candidate_found | builtin, upstream-adapter-builtin | 未review。型・フィールド条件・到達性は別監査。 |
 | <code>emela_core::Builtin::Panic</code> | forbidden_by_config | input | rejection_evidence | reject-builtin | Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。 |
 | <code>emela_core::Builtin::Todo</code> | forbidden_by_config | input | rejection_evidence | reject-builtin | Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。 |
 | <code>emela_core::Builtin::Dbg</code> | forbidden_by_config | input | rejection_evidence | reject-builtin | Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。 |

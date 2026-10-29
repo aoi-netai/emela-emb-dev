@@ -57,6 +57,7 @@ pub(in crate::compiler::plan) fn function_value_abi_type_supported(
         | Type::Unit
         | Type::Never
         | Type::String
+        | Type::Bytes
         | Type::Any
         | Type::List(_)
         | Type::Cell(_)

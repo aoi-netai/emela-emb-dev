@@ -1,5 +1,6 @@
 // Keep analysis dispatch exhaustive: every new variant needs an explicit planning decision.
 use super::*;
+pub(in crate::compiler::emit) mod bytes;
 pub(in crate::compiler::emit) mod cells;
 pub(in crate::compiler::emit) mod float;
 pub(in crate::compiler::emit) mod float_parse;
@@ -74,6 +75,14 @@ pub(in crate::compiler::emit) fn emit(
         Builtin::FloatCeil => float::float_ceil(context, dst, args),
         Builtin::FloatRound => float::float_round(context, dst, args),
         Builtin::FloatTruncate => float::float_truncate(context, dst, args),
+        Builtin::BytesFromList => bytes::bytes_from_list(context, dst, args),
+        Builtin::BytesToList => bytes::bytes_to_list(context, dst, args),
+        Builtin::BytesSize => bytes::bytes_size(context, dst, args),
+        Builtin::BytesGet => bytes::bytes_get(context, dst, args),
+        Builtin::BytesSlice => bytes::bytes_slice(context, dst, args),
+        Builtin::BytesConcat => bytes::bytes_concat(context, dst, args),
+        Builtin::BytesEncodeUtf8 => bytes::bytes_encode_utf8(context, dst, args),
+        Builtin::BytesDecodeValidUtf8 => bytes::bytes_decode_valid_utf8(context, dst, args),
         Builtin::AssertFail => rejected::assert_fail(context, dst, args),
         Builtin::Panic => rejected::panic(context, dst, args),
         Builtin::Todo => rejected::todo(context, dst, args),

@@ -125,11 +125,11 @@ pub(in crate::compiler::plan) fn function_needs_heap(
                 .contains(&function.name))
         || statement_needs_heap
         || (function.suspends
-            && (layouts.has_inline_string(function.ret)
+            && (layouts.has_borrowed_views(function.ret)
                 || function
                     .vars
                     .iter()
-                    .any(|(_, var)| layouts.has_inline_string(var.ty))))
+                    .any(|(_, var)| layouts.has_borrowed_views(var.ty))))
         || returns_managed_alias
         || local_managed_value
         || returns_managed_aggregate

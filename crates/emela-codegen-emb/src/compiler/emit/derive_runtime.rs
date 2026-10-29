@@ -135,10 +135,19 @@ impl Emission for Plan {
         match &l.shapes.types[ty] {
             Type::Fn(_) if !eq => text(w, "<fn>"),
             Type::Int | Type::Int64 | Type::Float | Type::Bool if eq => w.line("return a == b;"),
-            Type::String if eq => {
+            Type::String | Type::Bytes if eq => {
                 w.line("if (a.length != b.length) return INT32_C(0);");
                 w . line ("for (uint32_t i = 0; i < a.length; ++i) if (a.data[i] != b.data[i]) return INT32_C(0);") ;
                 w.line("return INT32_C(1);");
+            }
+            Type::Bytes => {
+                text(w, "Bytes.hex(\"");
+                w.line("static const char digits[] = \"0123456789abcdef\";");
+                w.begin_block("for (uint32_t i = 0; i < value.length; ++i)");
+                w.line("char pair[2] = { digits[value.data[i] >> 4], digits[value.data[i] & UINT8_C(15)] };");
+                w.line("emela_derived_text(w, pair, UINT16_C(2));");
+                w.end_block();
+                text(w, "\")");
             }
             Type::Int | Type::Int64 | Type::Float | Type::String => {
                 let call = match l.shapes.types[ty] {

@@ -46,6 +46,12 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
     header.line("#include <stdint.h>");
     header.blank();
     layouts.emit_string_declaration(&mut header);
+    header.line(
+        "/* Immutable bytes; length is at most INT32_MAX. owner is NULL for borrowed views. */",
+    );
+    header
+        .line("typedef struct { const uint8_t *data; uint32_t length; void *owner; } EmelaBytes;");
+    header.blank();
     if has_scheduler
         || layouts
             .shapes
@@ -129,6 +135,11 @@ pub(super) fn emit(context: Context<'_, '_>) -> GeneratedFile {
         header.line("void emela_embedded_retain_string(const EmelaString *value);");
         header.line("/* Releases the backing owner of an EmelaString value. */");
         header.line("void emela_embedded_release_string(EmelaString *value);");
+        header.line(
+            "/* Retain/release the backing owner of a Bytes value returned by the program. */",
+        );
+        header.line("void emela_embedded_retain_bytes(const EmelaBytes *value);");
+        header.line("void emela_embedded_release_bytes(EmelaBytes *value);");
         layouts.emit_public_release_declarations(&mut header);
         layouts.emit_public_function_ownership_declarations(&mut header);
     }

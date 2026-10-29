@@ -239,7 +239,7 @@ pub(in crate::compiler::emit) fn emit_const_getter(
         writer.line(&format!("{initializer}();"));
     } else {
         writer.line(&format!("{cache} = {initializer}();"));
-        if layouts.has_inline_string(function.ret) {
+        if layouts.has_borrowed_views(function.ret) {
             layouts.emit_freeze_value_in_place(function.ret, &cache, writer);
         }
     }

@@ -55,6 +55,7 @@ fn boundary_type(layouts: &TypeLayouts<'_>, ty: TypeId, seen: &mut HashSet<TypeI
         | Type::Unit
         | Type::Never
         | Type::String
+        | Type::Bytes
         | Type::Any => true,
         Type::List(element) => boundary_type(layouts, *element, seen),
         Type::Tuple(_) | Type::Enum(_, _) => {

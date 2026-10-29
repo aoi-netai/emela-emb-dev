@@ -46,7 +46,7 @@ impl LayoutEmission for CLayoutPlan<'_> {
             writer.line(&format!("emela_heap_retain({expression});"));
         } else if matches!(self.shapes.types[ty], Type::Any) {
             writer.line(&format!("emela_any_retain({expression});"));
-        } else if matches!(self.shapes.types[ty], Type::String) {
+        } else if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
             writer.line(&format!("emela_heap_retain(({expression}).owner);"));
         } else if matches!(self.shapes.types[ty], Type::Fn(_)) {
             writer.line(&format!("emela_heap_retain(({expression}).env);"));
@@ -79,7 +79,7 @@ impl LayoutEmission for CLayoutPlan<'_> {
             writer.line(&format!(
                 "emela_any_enqueue({expression}, {pending}, {tail});"
             ));
-        } else if matches!(self.shapes.types[ty], Type::String) {
+        } else if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
             writer.line(&format!(
                 "emela_heap_enqueue(({expression}).owner, {pending}, {tail});"
             ));
@@ -105,7 +105,7 @@ impl LayoutEmission for CLayoutPlan<'_> {
             writer.line(&format!("emela_heap_release({expression});"));
         } else if matches!(self.shapes.types[ty], Type::Any) {
             writer.line(&format!("emela_any_release({expression});"));
-        } else if matches!(self.shapes.types[ty], Type::String) {
+        } else if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
             writer.line(&format!("emela_heap_release(({expression}).owner);"));
         } else if matches!(self.shapes.types[ty], Type::Fn(_)) {
             writer.line(&format!("emela_heap_release(({expression}).env);"));
@@ -862,11 +862,16 @@ impl LayoutEmission for CLayoutPlan<'_> {
     }
 
     fn emit_freeze_value_in_place(&self, ty: TypeId, value: &str, writer: &mut Writer) {
-        if matches!(self.shapes.types[ty], Type::String) {
+        if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
             writer.begin_block(&format!("if (({value}).owner == NULL)"));
-            writer.assign(value, &format!("emela_heap_copy_string({value})"));
+            let copy = if matches!(self.shapes.types[ty], Type::Bytes) {
+                "emela_heap_copy_bytes"
+            } else {
+                "emela_heap_copy_string"
+            };
+            writer.assign(value, &format!("{copy}({value})"));
             writer.end_block();
-        } else if self.has_inline_string(ty) {
+        } else if self.has_borrowed_views(ty) {
             let index = self.shapes.aggregate_ids[&ty];
             writer.line(&format!("emela_heap_freeze_value_{index}(&({value}));"));
         }
@@ -875,8 +880,13 @@ impl LayoutEmission for CLayoutPlan<'_> {
     fn emit_own_value_in_place(&self, ty: TypeId, value: &str, writer: &mut Writer) {
         if matches!(self.shapes.types[ty], Type::Any) && self.is_managed_value(ty) {
             writer.line(&format!("emela_any_own(&({value}));"));
-        } else if matches!(self.shapes.types[ty], Type::String) {
-            writer.assign(value, &format!("emela_heap_own_string({value})"));
+        } else if matches!(self.shapes.types[ty], Type::String | Type::Bytes) {
+            let own = if matches!(self.shapes.types[ty], Type::Bytes) {
+                "emela_heap_own_bytes"
+            } else {
+                "emela_heap_own_string"
+            };
+            writer.assign(value, &format!("{own}({value})"));
         } else if let Some(index) = self.aggregate_helper_index(ty) {
             writer.line(&format!("emela_heap_own_value_{index}(&({value}));"));
         } else if self.is_managed_value(ty) {
