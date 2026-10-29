@@ -1782,5 +1782,15 @@
     "path": "src/semantics/variants.rs",
     "symbol": "named",
     "role": "metadata"
+  },
+  "emela_core::Builtin::AssertFail": {
+    "path": "src/input/upstream/verify.rs",
+    "symbol": "reject_assert_fail",
+    "role": "reject"
+  },
+  "emela_lir::RuntimeOp::DefectAt": {
+    "path": "src/input/upstream/verify.rs",
+    "symbol": "reject_defect_at",
+    "role": "reject"
   }
 }

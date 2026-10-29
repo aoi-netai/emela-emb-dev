@@ -6,7 +6,7 @@ pub(super) fn emit_helpers(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
             continue;
         }
         writer.begin_block(&format!(
-            "static inline void emela_heap_own_value_{index}({} *value)",
+            "static inline EMELA_UNUSED void emela_heap_own_value_{index}({} *value)",
             layouts.c_type(aggregate.ty)
         ));
         match &aggregate.kind {
@@ -37,7 +37,7 @@ pub(super) fn emit_helpers(layouts: &TypeLayouts<'_>, writer: &mut Writer) {
         writer.blank();
         if layouts.has_inline_string(aggregate.ty) {
             writer.begin_block(&format!(
-                "static inline void emela_heap_freeze_value_{index}({} *value)",
+                "static inline EMELA_UNUSED void emela_heap_freeze_value_{index}({} *value)",
                 layouts.c_type(aggregate.ty)
             ));
             match &aggregate.kind {

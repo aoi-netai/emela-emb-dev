@@ -33,6 +33,31 @@
 //! arguments (`Type::Enum(id, args)`), from which backends compute field representations. Effects
 //! are rebuilt: the output has each effect instance that is used once, keyed like lowering's
 //! evidence table keys (the declaration and the type arguments without E and R).
+//!
+//! The keys, the worklist and the substitution do not depend on the shape of the Core tree, so
+//! that the pass can later run on another IR (a flow IR) as well.
+//!
+//! # Why JS is monomorphized too
+//!
+//! Traits are then resolved in one place, here, and JS needs no dictionary passing of its own.
+//! The C and WASM backends monomorphize the IR they receive again; on monomorphic IR that changes
+//! neither names nor shapes (it starts from roots without type parameters and follows only calls
+//! without type arguments).
+//!
+//! Suspending copies from lowering (`name$suspend<bits>`) overlap with what set summaries say, but
+//! stay: the bits that pick a copy and the `suspends` flag of a summary come from the same set, so
+//! they cannot disagree, and since the key includes the summaries each copy is its own
+//! instantiation.
+//!
+//! # Cost
+//!
+//! Measured on 2026-10-15 (release builds). On a generated program of 4000 functions, the part
+//! reachable from main (1005 functions) took 6 ms; with every function as a root (4139, 35
+//! generic, giving 4153) 23 ms, and `verify_monomorphic` 8 ms, against 1.3–1.5 s for type
+//! checking, lowering and verification. For `emela build` of generated generic-heavy programs, the
+//! JS output grew 4.6–5.1 times (shortening the names still leaves 4.3–4.8: it is the number of
+//! copies, as each instantiation of `List.map` also copies `fold`, `reverse` and `reverse_onto`)
+//! and the time 1.1–1.3 times; the programs in `examples/` changed by 0.97–1.14 times.
 
 mod debug;
 mod derive;
@@ -93,8 +118,8 @@ pub struct Monomorphized {
     /// Trait functions called for a type without an impl, as `Show.show` and the type's name.
     /// The type checker accepts only types with an impl, so this guards against the two
     /// disagreeing: such a call reaches the trait function's body, which panics. A generic root
-    /// instantiated at `Any` has no trait-bounded type parameter (lowering does not export one,
-    /// E0327), so it reaches no trait function through its type parameters.
+    /// instantiated at `Any` is an exported fn, whose parameters and return value are boundary
+    /// types (E0436), so it gets no value of a type parameter to call a trait function on.
     pub missing_impls: Vec<(String, String)>,
 }
 
@@ -104,12 +129,10 @@ pub struct Monomorphized {
 ///
 /// Unlike [`monomorphize_from`], a generic root is instantiated whether or not it takes arguments.
 /// It has no single instantiation, so it is instantiated for callers that see every value the same
-/// way (JS, to which the entry
-/// module's generic `pub` fns are exported): `Type::Any` for each type parameter, and for each set
-/// type parameter a set that fails and needs the evidence table but does not suspend, the flags
-/// polymorphic lowering gives such a function. The copy keeps the original name and whether it is
-/// exported. A root with a trait-bounded type parameter would have no impl to call at `Any`;
-/// lowering reports it (E0327) instead of exporting it.
+/// way (the host, for an exported fn with a type parameter its boundary types do not use):
+/// `Type::Any` for each type parameter, and for each set type parameter a set that fails and needs
+/// the evidence table but does not suspend, the flags polymorphic lowering gives such a function.
+/// The copy keeps the original name, whether it is exported and its host names.
 pub fn monomorphize_traced(m: &Module, roots: &[FnId]) -> Monomorphized {
     let mut mono = Mono::new(m);
     let out_roots = roots.iter().map(|&f| mono.root(f)).collect();
@@ -229,6 +252,7 @@ impl<'a> Mono<'a> {
             // For a later pass on the output (the C and WASM backends monomorphize again).
             trait_impls: m.trait_impls.clone(),
             show_trait: m.show_trait,
+            http_service: m.http_service,
             ..Module::default()
         };
         Mono {
@@ -441,12 +465,14 @@ impl<'a> Mono<'a> {
         }
         let args = self.uniform_args(f);
         let new = self.target(f, &args).f;
-        let (name, exported) = (old.name.clone(), old.exported);
+        let (name, exported, host_exports) =
+            (old.name.clone(), old.exported, old.host_exports.clone());
         // Other copies of `f` have type arguments in their names, so the plain name is free.
         self.names.insert(name.clone());
         let copy = &mut self.out.functions[new];
         copy.name = name;
         copy.exported = exported;
+        copy.host_exports = host_exports;
         new
     }
 
@@ -552,6 +578,11 @@ impl<'a> Mono<'a> {
         let new = self.out.functions.alloc(Function {
             name,
             exported: old.exported && args.is_empty(),
+            host_exports: if args.is_empty() {
+                old.host_exports.clone()
+            } else {
+                Vec::new()
+            },
             params,
             ret,
             type_params: 0,
@@ -675,6 +706,17 @@ impl<'a> Mono<'a> {
     ///
     /// Branches (`if`, `match`, `escape`) and the bodies of `let`, `with` and `loop` are adapted
     /// separately, as each may produce a different value.
+    ///
+    /// JS ignores extra arguments, so it would run without this, but WASM's `call_indirect`
+    /// traps on a wrong argument count.
+    ///
+    /// A function inside an enum's type arguments or a list's element type cannot be adapted
+    /// (`List[fn() -> Int]` used as a `List[fn() -> Int ev]`). That does not happen today: the
+    /// type checker compares the type arguments of named types for equality, and list literals
+    /// adapt element by element. [`crate::verify_monomorphic`] would catch it. Function types that
+    /// lowering builds by hand (the fiber wrappers, `State.run`'s operations, handler operation
+    /// implementations) have no `sets`, so their flags stay approximate; none takes the evidence
+    /// table, so the argument count is right anyway.
     fn coerce(&mut self, old: &'a Expr, new: Expr, slot: TypeId) -> Expr {
         let slot_is_fn = matches!(self.out.ty(slot), Type::Fn(_));
         if !slot_is_fn && slot != TypeId::EVIDENCE {
@@ -1103,7 +1145,7 @@ impl<'a> Mono<'a> {
                             let l = self.out.local("left", ty);
                             let r = self.out.local("right", ty);
                             let test = compare(self, Expr::Var(l), Expr::Var(r));
-                            let failed = self.assert_failed(show, &a.text, *op, ty, l, r);
+                            let failed = self.assert_failed(show, a, *op, ty, l, r);
                             return assert_bound(test, failed, (l, lhs), (r, rhs));
                         } else if *op_ty == OpTy::Structural
                             && let Some(eq) = self.m.traits.eq
@@ -1113,7 +1155,8 @@ impl<'a> Mono<'a> {
                             let l = self.out.local("left", ty);
                             let r = self.out.local("right", ty);
                             let decide = self.structural_eq(*op, ty, Expr::Var(l), Expr::Var(r));
-                            return Assert::shown(decide, *op, ty, (l, lhs), (r, rhs), &a.text);
+                            let shown = Assert::shown(decide, *op, ty, (l, lhs), (r, rhs), &a.text);
+                            return Assert::at(shown, a.location.clone());
                         } else {
                             AssertCond::Compare {
                                 op: *op,
@@ -1141,7 +1184,7 @@ impl<'a> Mono<'a> {
                             // The sides are variables bound before the assert (`Assert::shown`).
                             && let (Expr::Var(l), Expr::Var(r)) = (&lhs, &rhs)
                         {
-                            let failed = self.assert_failed(show, &a.text, *op, ty, *l, *r);
+                            let failed = self.assert_failed(show, a, *op, ty, *l, *r);
                             return Expr::If {
                                 cond: Box::new(cond),
                                 then: Box::new(Expr::Lit(Lit::Unit)),
@@ -1162,6 +1205,7 @@ impl<'a> Mono<'a> {
                 Expr::Assert(Box::new(Assert {
                     cond,
                     text: a.text.clone(),
+                    location: a.location.clone(),
                 }))
             }
             Expr::Fail(v) => {
@@ -1325,6 +1369,8 @@ impl<'a> Mono<'a> {
             | Type::Unit
             | Type::Never
             | Type::Any => return true,
+            // Its Eq, Ord and Show are written in `std/bytes.emel`.
+            Type::Bytes => return false,
             Type::List(t) => vec![t],
             Type::Tuple(ts) => ts,
             Type::Enum(id, args) => {
@@ -1466,6 +1512,8 @@ impl<'a> Mono<'a> {
             return false;
         }
         let parts: Vec<TypeId> = match self.out.ty(ty).clone() {
+            // Its only Show is the one written in `std/bytes.emel`.
+            Type::Bytes => return true,
             Type::List(t) => vec![t],
             Type::Tuple(ts) => ts,
             Type::Enum(id, args) => {
@@ -1527,16 +1575,16 @@ impl<'a> Mono<'a> {
     fn assert_failed(
         &mut self,
         show: FnId,
-        text: &str,
+        a: &Assert,
         op: BinOp,
         ty: TypeId,
         l: Local,
         r: Local,
     ) -> Expr {
-        let head = if text.is_empty() {
+        let head = if a.text.is_empty() {
             format!("left {} right", comparison_text(op))
         } else {
-            text.to_owned()
+            a.text.clone()
         };
         let message = Expr::Concat(vec![
             StrPart::Lit(format!("assertion failed: {head}\n  left: ")),
@@ -1550,10 +1598,18 @@ impl<'a> Mono<'a> {
                 TypeId::STRING,
             ),
         ]);
+        // The location stays outside the message (`[test.assert]`).
+        let (op, args) = match &a.location {
+            Some(location) => (
+                Builtin::AssertFail,
+                vec![message, Expr::Lit(Lit::String(location.clone()))],
+            ),
+            None => (Builtin::Panic, vec![message]),
+        };
         Expr::Builtin {
-            op: Builtin::Panic,
+            op,
             ty_args: Vec::new(),
-            args: vec![message],
+            args,
         }
     }
 

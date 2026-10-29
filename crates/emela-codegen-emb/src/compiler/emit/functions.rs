@@ -72,7 +72,9 @@ pub(in crate::compiler::emit) fn emit_closure_string_copy_helper(
     writer: &mut Writer,
 ) {
     let kind = layouts.string_owner_kind();
-    writer.begin_block("static inline EmelaString emela_heap_copy_string(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_heap_copy_string(EmelaString value)",
+    );
     writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line(&format!(
         "char *bytes = (char *)emela_heap_allocate((size_t)value.length, UINT32_C({kind}));"
@@ -85,7 +87,9 @@ pub(in crate::compiler::emit) fn emit_closure_string_copy_helper(
     writer.ret(Some("copy"));
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline EmelaString emela_heap_own_string(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_heap_own_string(EmelaString value)",
+    );
     writer.line("if (value.length == UINT16_C(0)) return (EmelaString){ .data = \"\" };");
     writer.line("if (value.owner == NULL) return emela_heap_copy_string(value);");
     writer.line("emela_heap_retain(value.owner);");
@@ -265,10 +269,10 @@ pub(in crate::compiler::emit) fn emit_any_ownership_declarations(
     if !layouts.runtime.any_abi {
         return;
     }
-    writer.line("static inline void emela_any_retain(EmelaAny value);");
-    writer.line("static inline void emela_any_own(EmelaAny *value);");
-    writer.line("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail);");
-    writer.line("static inline void emela_any_release(EmelaAny value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_retain(EmelaAny value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_own(EmelaAny *value);");
+    writer.line("static inline EMELA_UNUSED void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail);");
+    writer.line("static inline EMELA_UNUSED void emela_any_release(EmelaAny value);");
 }
 
 pub(in crate::compiler::emit) fn emit_any_ownership(
@@ -279,7 +283,7 @@ pub(in crate::compiler::emit) fn emit_any_ownership(
     if !layouts.runtime.any_abi {
         return;
     }
-    writer.begin_block("static inline void emela_any_retain(EmelaAny value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_retain(EmelaAny value)");
     writer.line("(void)value;");
     if heap && layouts.runtime.any_box_required {
         writer.line("if (value.tag == 0) emela_heap_retain(value.payload.any_box);");
@@ -288,7 +292,7 @@ pub(in crate::compiler::emit) fn emit_any_ownership(
         writer.line("if (value.tag != 0) emela_error_retain(value);");
     }
     writer.end_block();
-    writer.begin_block("static inline void emela_any_own(EmelaAny *value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_own(EmelaAny *value)");
     writer.line("(void)value;");
     if heap && layouts.runtime.any_box_required {
         writer.line("if (value->tag == 0) emela_heap_retain(value->payload.any_box);");
@@ -298,7 +302,7 @@ pub(in crate::compiler::emit) fn emit_any_ownership(
     }
     writer.end_block();
     if heap {
-        writer.begin_block("static inline void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
+        writer.begin_block("static inline EMELA_UNUSED void emela_any_enqueue(EmelaAny value, emela_heap_block **pending, emela_heap_block **tail)");
         writer.line("(void)value; (void)pending; (void)tail;");
         if layouts.runtime.any_box_required {
             writer.line(
@@ -310,7 +314,7 @@ pub(in crate::compiler::emit) fn emit_any_ownership(
         }
         writer.end_block();
     }
-    writer.begin_block("static inline void emela_any_release(EmelaAny value)");
+    writer.begin_block("static inline EMELA_UNUSED void emela_any_release(EmelaAny value)");
     if heap {
         writer.line("emela_heap_block *pending = NULL, *tail = NULL;");
         writer.line("emela_any_enqueue(value, &pending, &tail); emela_heap_drain(pending, tail);");

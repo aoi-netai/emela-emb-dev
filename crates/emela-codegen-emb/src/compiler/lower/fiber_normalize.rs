@@ -336,7 +336,7 @@ pub(crate) fn erase_inert_failures(module: &mut Module, closures: &mut ClosureLo
                     s,
                     Stmt::Let {
                         value: Value::Fiber {
-                            op: FiberOp::CauseRaise,
+                            op: FiberOp::CauseRaise { .. },
                             ..
                         },
                         ..

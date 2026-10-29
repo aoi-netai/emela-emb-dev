@@ -3,7 +3,7 @@ use super::*;
 
 pub(in crate::compiler::emit) fn emit_string_matches_at_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_matches_at(EmelaString value, EmelaString needle, uint32_t offset)",
     );
     writer.begin_block(
         "if (offset > (uint32_t)value.length || (uint32_t)needle.length > (uint32_t)value.length - offset)",
@@ -22,7 +22,7 @@ pub(in crate::compiler::emit) fn emit_string_matches_at_helper(writer: &mut Writ
 
 pub(in crate::compiler::emit) fn emit_utf8_decode_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
+        "static inline EMELA_UNUSED int32_t emela_emb_utf8_decode(EmelaString value, uint32_t offset, uint32_t *code_point, uint32_t *width)",
     );
     writer.begin_block("if (offset >= (uint32_t)value.length)");
     writer.line("return INT32_C(0);");
@@ -82,7 +82,7 @@ pub(in crate::compiler::emit) fn emit_utf8_decode_helper(writer: &mut Writer) {
 
 pub(in crate::compiler::emit) fn emit_int_to_string_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_int_to_string(int64_t value, char *buffer, uint16_t capacity)",
     );
     writer.line("uint64_t magnitude = value < INT64_C(0) ? (uint64_t)(-(value + INT64_C(1))) + UINT64_C(1) : (uint64_t)value;");
     writer.line("uint32_t digit_count = UINT32_C(1);");

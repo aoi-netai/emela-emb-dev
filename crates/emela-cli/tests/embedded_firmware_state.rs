@@ -143,9 +143,13 @@ fn dry_run_uses_literal_arguments_and_rejects_changed_sources_before_the_flasher
         .iter()
         .position(|arg| *arg == "--output-dir")
         .unwrap();
+    // The CLI passes the canonical path, which differs from the temporary path on macOS
+    // (`/var` is a link to `/private/var`).
     assert_eq!(
-        Path::new(arguments[output_index + 1]),
-        project.output.join("firmware")
+        Path::new(arguments[output_index + 1])
+            .canonicalize()
+            .unwrap(),
+        project.output.join("firmware").canonicalize().unwrap()
     );
     assert!(!project.root.join("should-not-exist").exists());
     assert_eq!(project.calls(), "build\nflash\n");

@@ -15,7 +15,7 @@ use crate::code;
 use crate::diagnostic::Diagnostic;
 use crate::output::{BuildOutput, OutputFile};
 use crate::pipeline::{Analysis, Backend, Runner};
-use crate::run::{Output, RunOutput, exit_code};
+use crate::run::{Output, ProgramCommand, RunOutput};
 use crate::testing::{TestBackend, TestModule};
 
 /// The program written to the output directory.
@@ -127,6 +127,8 @@ impl TestBackend<TestModule> for CoreC {
     }
 }
 
+/// emela-codegen-c's errors as diagnostics (spec `[target.c.unsupported]`). They have no location:
+/// the Heap IR that codegen reads carries no source positions.
 fn diagnostics(errors: Vec<CError>) -> Vec<Diagnostic> {
     errors
         .into_iter()
@@ -134,6 +136,7 @@ fn diagnostics(errors: Vec<CError>) -> Vec<Diagnostic> {
             let d = Diagnostic::error(e.message);
             match e.kind {
                 CErrorKind::Callback => d.with_code(code::CALLBACK_EXTERNAL),
+                CErrorKind::Bytes => d.with_code(code::BYTES_ON_C),
                 CErrorKind::Unsupported | CErrorKind::Internal => d,
             }
         })
@@ -212,25 +215,21 @@ fn cc_spawn_error(cc: &Path, err: &io::Error) -> Diagnostic {
     }
 }
 
+/// The command that runs the executable `program` with `args`.
+pub(crate) fn native_command(program: &Path, args: &[OsString]) -> ProgramCommand {
+    let mut command = Command::new(program);
+    command.args(args).stdin(Stdio::inherit());
+    let program = program.to_path_buf();
+    ProgramCommand::new(command, move |err| {
+        Diagnostic::error(format!("cannot start `{}`: {err}", program.display()))
+    })
+}
+
 /// Runs the executable `program` with `args`.
 pub fn run_native(
     program: &Path,
     args: &[OsString],
     output: Output,
 ) -> Result<RunOutput, Diagnostic> {
-    let mut command = Command::new(program);
-    command.args(args).stdin(Stdio::inherit());
-    let result = match output {
-        Output::Inherit => command.status().map(|status| RunOutput {
-            code: exit_code(status),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }),
-        Output::Capture => command.output().map(|out| RunOutput {
-            code: exit_code(out.status),
-            stdout: out.stdout,
-            stderr: out.stderr,
-        }),
-    };
-    result.map_err(|err| Diagnostic::error(format!("cannot start `{}`: {err}", program.display())))
+    native_command(program, args).run(output)
 }

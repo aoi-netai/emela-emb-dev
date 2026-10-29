@@ -7,7 +7,7 @@ use std::{
 };
 
 fn source_flow(source: &str) -> Module {
-    let core = support::try_lower(&[("main.emel", source)], Roots::Exported).unwrap();
+    let core = support::try_lower(&[("main.emel", source)], Roots::Public).unwrap();
     crate::flow_from_core(&core).unwrap()
 }
 

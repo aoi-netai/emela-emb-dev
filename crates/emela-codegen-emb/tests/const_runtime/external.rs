@@ -32,14 +32,15 @@ pub fn discard() { VALUE
  () }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
-    for policy in [
+    let policies = [
         ExternalResult::Borrowed,
         ExternalResult::Owned,
         ExternalResult::StringBuffer,
-    ] {
+    ];
+    for_each_in_parallel(policies, |policy| {
         for gc in [false, true] {
             for via_flow in [false, true] {
                 let options = Options::default()
@@ -91,7 +92,7 @@ int main(void) {{
                 );
             }
         }
-    }
+    });
 }
 
 #[test]
@@ -108,7 +109,7 @@ const TOKEN = token()
 pub fn read() -> Token { TOKEN }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     for policy in [ExternalResult::Borrowed, ExternalResult::Owned] {
@@ -162,7 +163,7 @@ pub fn first() -> String { (_,values)=VALUE
  _ -> "" } }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     for gc in [false, true] {
@@ -241,7 +242,7 @@ const VALUE = value()
 pub fn size() -> Int { String.byte_size(VALUE) }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     let output = compile(

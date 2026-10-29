@@ -26,7 +26,7 @@ pub(in crate::compiler::emit) fn emit(
 }
 
 pub(in crate::compiler::emit) fn emit_string_comparison_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
+    writer.begin_block("static inline EMELA_UNUSED int32_t emela_emb_string_compare(const EmelaString *left, const EmelaString *right)");
     // Valid UTF-8 has the same lexicographic byte order as Unicode scalar values.
     writer.line("uint32_t length = left->length < right->length ? left->length : right->length;");
     writer.begin_block("for (uint32_t i = 0; i < length; i++)");
@@ -40,7 +40,8 @@ pub(in crate::compiler::emit) fn emit_string_comparison_helper(writer: &mut Writ
 }
 
 pub(in crate::compiler::emit) fn emit_i32_division_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int32_t emela_i32_div(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -53,7 +54,8 @@ pub(in crate::compiler::emit) fn emit_i32_division_helpers(writer: &mut Writer) 
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int32_t emela_i32_rem(int32_t lhs, int32_t rhs)");
     writer.begin_block("if (rhs == INT32_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -68,7 +70,8 @@ pub(in crate::compiler::emit) fn emit_i32_division_helpers(writer: &mut Writer) 
 }
 
 pub(in crate::compiler::emit) fn emit_i64_division_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_div(int64_t lhs, int64_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int64_t emela_i64_div(int64_t lhs, int64_t rhs)");
     writer.begin_block("if (rhs == INT64_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",
@@ -81,7 +84,8 @@ pub(in crate::compiler::emit) fn emit_i64_division_helpers(writer: &mut Writer) 
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int64_t emela_i64_rem(int64_t lhs, int64_t rhs)");
+    writer
+        .begin_block("static inline EMELA_UNUSED int64_t emela_i64_rem(int64_t lhs, int64_t rhs)");
     writer.begin_block("if (rhs == INT64_C(0))");
     writer.line(
         "emela_board_defect(EMELA_DEFECT_DIVISION_BY_ZERO, \"division by zero\", UINT16_C(16));",

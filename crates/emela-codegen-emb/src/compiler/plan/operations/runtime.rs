@@ -22,6 +22,7 @@ pub(in crate::compiler::plan) fn string_behavior(
         },
         RuntimeOp::Retire
         | RuntimeOp::Defect
+        | RuntimeOp::DefectAt
         | RuntimeOp::DefectTake
         | RuntimeOp::DefectResume
         | RuntimeOp::Hold
@@ -51,6 +52,7 @@ pub(in crate::compiler::plan) fn string_bound(
         RuntimeOp::DebugPrint
         | RuntimeOp::Retire
         | RuntimeOp::Defect
+        | RuntimeOp::DefectAt
         | RuntimeOp::DefectTake
         | RuntimeOp::DefectResume
         | RuntimeOp::Hold
@@ -75,6 +77,7 @@ pub(in crate::compiler::plan) fn require_runtime(
         RuntimeOp::DebugPrint => requirements.debug = true,
         RuntimeOp::Retire
         | RuntimeOp::Defect
+        | RuntimeOp::DefectAt
         | RuntimeOp::DefectTake
         | RuntimeOp::DefectResume
         | RuntimeOp::Hold
@@ -90,6 +93,7 @@ pub(in crate::compiler::plan) fn needs_heap(op: RuntimeOp) -> bool {
         RuntimeOp::ShowString
         | RuntimeOp::DebugPrint
         | RuntimeOp::Defect
+        | RuntimeOp::DefectAt
         | RuntimeOp::DefectTake
         | RuntimeOp::DefectResume
         | RuntimeOp::Hold

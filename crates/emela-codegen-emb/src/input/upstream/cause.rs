@@ -1,10 +1,10 @@
 use emela_core::{FiberOp, Type, TypeId, TypeTable};
 use emela_lir::{Module, Stmt, Term, Value};
-// CauseRaise has a conservative failure bit even when the monomorphic error set is empty.
-// Keep compile_flow strict; adapt only Core output after Core's own monomorphic verification.
 
-// CauseRaise has a conservative failure bit even when the monomorphic error set is empty.
-// Keep compile_flow strict; adapt only Core output after Core's own monomorphic verification.
+// A CauseRaise in a body that cannot fail carries no failure edge (`fails: false`), or a
+// conservative Propagate when the monomorphic error set is empty. The runtime still checks the
+// cause's kind, so both get a local landing. Keep compile_flow strict; adapt only Core output
+// after Core's own monomorphic verification.
 pub(crate) fn normalize_infallible_cause_raise(module: &mut Module) {
     fn visit(
         types: &TypeTable,
@@ -34,8 +34,8 @@ pub(crate) fn normalize_infallible_cause_raise(module: &mut Module) {
                     dst: None,
                     value:
                         Value::Fiber {
-                            op: FiberOp::CauseRaise,
-                            on_fail: Some(emela_lir::OnFail::Propagate),
+                            op: FiberOp::CauseRaise { .. },
+                            on_fail: None | Some(emela_lir::OnFail::Propagate),
                             ..
                         },
                     ..
@@ -49,10 +49,11 @@ pub(crate) fn normalize_infallible_cause_raise(module: &mut Module) {
                         hint: "empty_cause_failure".into(),
                     });
                     if let Stmt::Let {
-                        value: Value::Fiber { on_fail, .. },
+                        value: Value::Fiber { op, on_fail, .. },
                         ..
                     } = &mut f.stmts[id]
                     {
+                        *op = FiberOp::CauseRaise { fails: true };
                         *on_fail = Some(emela_lir::OnFail::Break(label));
                     }
                     let body = f.seqs.alloc(emela_lir::Seq {

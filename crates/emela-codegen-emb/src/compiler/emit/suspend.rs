@@ -963,7 +963,7 @@ pub(super) fn emit_resume_runtime(layouts: &TypeLayouts<'_>, writer: &mut Writer
                 ty,
                 &format!("emela_resume_value_{}", ty.index()),
             )
-            .replacen("static ", "static inline ", 1),
+            .replacen("static ", "static inline EMELA_UNUSED ", 1),
         );
         writer.line("emela_resume *resume = emela_resume_prepare(emela_env);");
         writer.line("if (resume == NULL) return;");
@@ -1044,7 +1044,7 @@ pub(super) fn emit_scope_runtime(
         writer.line("emela_frame_return(fiber);");
         writer.end_block();
         writer.begin_block(&format!(
-            "static inline EmelaAny emela_fork_{index}(emela_scope *scope, {cty} body)"
+            "static inline EMELA_UNUSED EmelaAny emela_fork_{index}(emela_scope *scope, {cty} body)"
         ));
         writer.line("emela_fiber *fiber = emela_child_begin(scope);");
         writer.line(&format!("emela_fork_frame_{index} *frame = (emela_fork_frame_{index} *)emela_frame_push(fiber, sizeof(*frame), emela_fork_step_{index});"));

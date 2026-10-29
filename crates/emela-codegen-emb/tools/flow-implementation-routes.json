@@ -139,7 +139,8 @@
         "DefectTake",
         "DefectResume",
         "Yield",
-        "YieldPerform"
+        "YieldPerform",
+        "DefectAt"
       ]
     },
     {
@@ -161,7 +162,8 @@
         "Inspect",
         "ShowNested",
         "ShowString",
-        "DebugPrint"
+        "DebugPrint",
+        "AssertFail"
       ]
     },
     {
@@ -865,6 +867,16 @@
       "id": "emela_lir::OnFail::Handle",
       "route": "reject-heap-failure",
       "reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。"
+    },
+    {
+      "id": "emela_core::Builtin::AssertFail",
+      "route": "reject-builtin",
+      "reason": "Flow input validation rejects this upstream operation before adaptation."
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectAt",
+      "route": "reject-runtime",
+      "reason": "Flow input validation rejects this upstream operation before adaptation."
     }
   ]
 }

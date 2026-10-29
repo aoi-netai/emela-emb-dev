@@ -390,7 +390,7 @@ fn visit_sequence(
                 add_operand(slice, value);
             }
         }
-        Term::Fail(value) | Term::Defect(value) => add_operand(slice, value),
+        Term::Fail(value) | Term::Defect(value, _) => add_operand(slice, value),
         Term::Break { label, value } => {
             slice.labels.insert(*label);
             if let Some(value) = value {
@@ -598,7 +598,9 @@ fn remap_term(
                 .map(|value| remap_operand(value, variables, owner))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        Term::Defect(value) => Term::Defect(remap_operand(value, variables, owner)?),
+        Term::Defect(value, location) => {
+            Term::Defect(remap_operand(value, variables, owner)?, location.clone())
+        }
         Term::Unwind => Term::Unwind,
         Term::Unreachable => Term::Unreachable,
     })

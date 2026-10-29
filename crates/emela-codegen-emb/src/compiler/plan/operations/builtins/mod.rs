@@ -43,6 +43,7 @@ pub(in crate::compiler::plan) fn string_behavior(op: Builtin, args: &[Operand]) 
         | Builtin::FloatRound
         | Builtin::FloatTruncate
         | Builtin::Panic
+        | Builtin::AssertFail
         | Builtin::Todo
         | Builtin::Dbg
         | Builtin::Inspect
@@ -101,6 +102,7 @@ pub(in crate::compiler::plan) fn string_bound(
         | Builtin::FloatRound
         | Builtin::FloatTruncate
         | Builtin::Panic
+        | Builtin::AssertFail
         | Builtin::Todo
         | Builtin::Dbg
         | Builtin::Inspect
@@ -158,6 +160,7 @@ pub(in crate::compiler::plan) fn result_ownership(
         | Builtin::FloatRound
         | Builtin::FloatTruncate
         | Builtin::Panic
+        | Builtin::AssertFail
         | Builtin::Todo
         | Builtin::Dbg
         | Builtin::Inspect
@@ -215,6 +218,7 @@ pub(in crate::compiler::plan) fn require_runtime(
         | Builtin::Int64BitNot
         | Builtin::FloatFromInt
         | Builtin::Panic
+        | Builtin::AssertFail
         | Builtin::Todo
         | Builtin::Dbg
         | Builtin::Inspect
@@ -270,6 +274,7 @@ pub(in crate::compiler::plan) fn needs_heap(op: Builtin) -> bool {
         | Builtin::FloatRound
         | Builtin::FloatTruncate
         | Builtin::Panic
+        | Builtin::AssertFail
         | Builtin::Todo
         | Builtin::Dbg
         | Builtin::Inspect

@@ -102,7 +102,7 @@ pub(in crate::compiler::emit) fn emit_string_join(
 
 pub(in crate::compiler::emit) fn emit_string_join_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline void emela_emb_string_join_put(char *buffer, uint16_t capacity, uint32_t *length, EmelaString value)",
+        "static inline EMELA_UNUSED void emela_emb_string_join_put(char *buffer, uint16_t capacity, uint32_t *length, EmelaString value)",
     );
     writer.begin_block("if ((uint32_t)value.length > (uint32_t)capacity - *length)");
     writer.line(

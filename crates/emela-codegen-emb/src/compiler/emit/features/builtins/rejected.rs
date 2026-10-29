@@ -75,3 +75,14 @@ pub(in crate::compiler::emit) fn debug_print(
         "unlowered builtin DebugPrint at stage Flow",
     ))
 }
+
+pub(in crate::compiler::emit) fn assert_fail(
+    context: &mut BuiltinContext<'_, '_>,
+    _dst: Option<VarId>,
+    _args: &[Operand],
+) -> Result<(), Vec<Error>> {
+    Err(invalid_flow_ir(
+        &context.function.name,
+        "unlowered builtin AssertFail at stage Flow",
+    ))
+}

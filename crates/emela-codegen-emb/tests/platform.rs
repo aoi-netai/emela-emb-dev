@@ -198,7 +198,7 @@ pub fn main() -> Int use Async {
 }
 "#,
         )],
-        emela_core::Roots::Exported,
+        emela_core::Roots::Public,
     )
     .unwrap();
     let output = emela_codegen_emb::compile(
@@ -233,7 +233,7 @@ pub fn wait_ms() -> Int use Async {
 }
 "#,
         )],
-        emela_core::Roots::Exported,
+        emela_core::Roots::Public,
     )
     .unwrap();
     let output = emela_codegen_emb::compile(

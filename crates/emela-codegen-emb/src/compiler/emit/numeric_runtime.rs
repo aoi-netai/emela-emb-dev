@@ -2,7 +2,9 @@
 use super::*;
 
 pub(in crate::compiler::emit) fn emit_negative_shift_helper(writer: &mut Writer) {
-    writer.begin_block("static inline void emela_emb_negative_shift_defect(int32_t amount)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED void emela_emb_negative_shift_defect(int32_t amount)",
+    );
     writer.line("char message[48];");
     writer.line("static const char prefix[] = \"negative shift amount: \";");
     writer.line("uint16_t prefix_length = (uint16_t)(sizeof prefix - 1);");
@@ -29,7 +31,7 @@ pub(in crate::compiler::emit) fn emit_negative_shift_helper(writer: &mut Writer)
 }
 
 pub(in crate::compiler::emit) fn emit_i64_wrap_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_from_bits(uint64_t bits)");
+    writer.begin_block("static inline EMELA_UNUSED int64_t emela_i64_from_bits(uint64_t bits)");
     writer.begin_block("if (bits <= (uint64_t)INT64_MAX)");
     writer.line("return (int64_t)bits;");
     writer.end_block();
@@ -39,7 +41,7 @@ pub(in crate::compiler::emit) fn emit_i64_wrap_helper(writer: &mut Writer) {
 }
 
 pub(in crate::compiler::emit) fn emit_i32_from_bits_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_i32_from_bits(uint32_t bits)");
+    writer.begin_block("static inline EMELA_UNUSED int32_t emela_i32_from_bits(uint32_t bits)");
     writer.begin_block("if (bits <= (uint32_t)INT32_MAX)");
     writer.line("return (int32_t)bits;");
     writer.end_block();

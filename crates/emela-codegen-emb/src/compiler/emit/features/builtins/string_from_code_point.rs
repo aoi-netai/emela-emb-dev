@@ -79,57 +79,70 @@ pub(in crate::compiler::emit) fn string_from_code_point(
             writer.begin_block(&format!("if ({length_name} > {capacity})"));
             writer . line ("emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));" ,) ;
             writer.end_block();
+            // Only the encodings that fit a fixed array are emitted: clang rejects
+            // constant indexes past its end even behind the capacity defect above.
+            let fits = |bytes: u16| {
+                string_buffers
+                    .array_capacity(dst)
+                    .is_none_or(|capacity| bytes <= capacity)
+            };
             writer.begin_block(&format!("if ({length_name} == UINT16_C(1))"));
             writer.assign(&format!("{buffer}[0]"), &format!("(char){value_name}"));
             writer.end_block();
-            writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
-            writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[2]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
-            writer.begin_block("else");
-            writer.assign(
-                &format!("{buffer}[0]"),
-                &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
-            );
-            writer.assign(
-                &format!("{buffer}[1]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[2]"),
-                &format!(
-                    "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
-                ),
-            );
-            writer.assign(
-                &format!("{buffer}[3]"),
-                &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
-            );
-            writer.end_block();
+            if fits(2) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(2))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xc0) | ({value_name} >> UINT32_C(6)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
+            if fits(3) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(3))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xe0) | ({value_name} >> UINT32_C(12)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[2]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
+            if fits(4) {
+                writer.begin_block(&format!("else if ({length_name} == UINT16_C(4))"));
+                writer.assign(
+                    &format!("{buffer}[0]"),
+                    &format!("(char)(UINT32_C(0xf0) | ({value_name} >> UINT32_C(18)))"),
+                );
+                writer.assign(
+                    &format!("{buffer}[1]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(12)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[2]"),
+                    &format!(
+                        "(char)(UINT32_C(0x80) | (({value_name} >> UINT32_C(6)) & UINT32_C(0x3f)))"
+                    ),
+                );
+                writer.assign(
+                    &format!("{buffer}[3]"),
+                    &format!("(char)(UINT32_C(0x80) | ({value_name} & UINT32_C(0x3f)))"),
+                );
+                writer.end_block();
+            }
             writer.assign(&variable_name(dst), &some);
             writer.end_block();
         }

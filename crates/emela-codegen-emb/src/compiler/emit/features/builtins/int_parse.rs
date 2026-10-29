@@ -54,7 +54,9 @@ pub(in crate::compiler::emit) fn int_parse(
 }
 
 pub(in crate::compiler::emit) fn emit_int_parse_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int emela_emb_int_parse(EmelaString value, int32_t *result)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int emela_emb_int_parse(EmelaString value, int32_t *result)",
+    );
     writer.begin_block("if (value.length == UINT16_C(0))");
     writer.line("return 0;");
     writer.end_block();

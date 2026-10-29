@@ -28,7 +28,7 @@ pub(in crate::compiler::emit) fn string_contains(
 
 pub(in crate::compiler::emit) fn emit_string_contains_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_contains(EmelaString value, EmelaString needle)",
     );
     writer.begin_block("if (needle.length > value.length)");
     writer.line("return INT32_C(0);");

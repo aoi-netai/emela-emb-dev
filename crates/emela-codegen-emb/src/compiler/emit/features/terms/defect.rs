@@ -94,7 +94,7 @@ pub(in crate::compiler::emit) fn emit_suspend(
 
 pub(in crate::compiler::emit) fn emit_dynamic_defect_kind_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
+        "static inline EMELA_UNUSED int emela_emb_string_matches(EmelaString value, const char *expected, uint16_t length, int exact)",
     );
     writer.begin_block("if (value.length < length || (exact && value.length != length))");
     writer.line("return 0;");
@@ -107,7 +107,9 @@ pub(in crate::compiler::emit) fn emit_dynamic_defect_kind_helper(writer: &mut Wr
     writer.line("return 1;");
     writer.end_block();
     writer.blank();
-    writer.begin_block("static inline EmelaDefectKind emela_emb_defect_kind(EmelaString message)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaDefectKind emela_emb_defect_kind(EmelaString message)",
+    );
     for (message, kind, exact) in [
         ("not yet implemented", "TODO", "1"),
         ("unreachable: no match arm matched", "NO_MATCH", "1"),

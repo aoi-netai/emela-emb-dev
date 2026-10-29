@@ -35,15 +35,15 @@ typedef struct {
   int forced;
 #endif
 } emela_protection;
-static inline void emela_interrupt_hold(emela_fiber *fiber) {
+static inline EMELA_UNUSED void emela_interrupt_hold(emela_fiber *fiber) {
   if (fiber->holds == UINT32_MAX) emela_scheduler_exhausted();
   fiber->holds++;
 }
-static inline void emela_interrupt_unhold(emela_fiber *fiber) {
+static inline EMELA_UNUSED void emela_interrupt_unhold(emela_fiber *fiber) {
   if (fiber->holds == 0) emela_scheduler_invalid();
   fiber->holds--;
 }
-static inline void emela_protection_leave(emela_fiber *fiber, emela_protection *guards,
+static inline EMELA_UNUSED void emela_protection_leave(emela_fiber *fiber, emela_protection *guards,
                                          uint32_t depth, uint32_t keep, uint32_t next, uint32_t *pc) {
   if (keep > depth) emela_scheduler_invalid();
   if (keep == depth) { *pc = next; return; }
@@ -60,7 +60,7 @@ static inline void emela_protection_leave(emela_fiber *fiber, emela_protection *
   emela_interrupt_hold(fiber);
   *pc = guard->cleanup;
 }
-static inline int emela_protection_finish(emela_fiber *fiber, emela_protection *guards,
+static inline EMELA_UNUSED int emela_protection_finish(emela_fiber *fiber, emela_protection *guards,
                                          uint32_t *depth, uint32_t *pc) {
   if (*depth == 0 || !guards[*depth - 1].running) emela_scheduler_invalid();
   emela_protection guard = guards[--*depth];
@@ -196,7 +196,7 @@ static void emela_resume_drive(emela_fiber *target) {
 }
 
 #ifdef EMELA_FAILURE_RUNTIME
-static inline void emela_force_interrupt(emela_fiber *fiber) {
+static inline EMELA_UNUSED void emela_force_interrupt(emela_fiber *fiber) {
   for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {
     emela_fiber *context = &emela_fibers[slot];
     if (context->state != EMELA_FIBER_FREE && emela_same_fiber(context->root, fiber->root)) {

@@ -28,7 +28,7 @@ pub(in crate::compiler::emit) fn string_starts_with(
 
 pub(in crate::compiler::emit) fn emit_string_starts_with_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_starts_with(EmelaString value, EmelaString prefix)",
     );
     writer.line("return emela_emb_string_matches_at(value, prefix, UINT32_C(0));");
     writer.end_block();

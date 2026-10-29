@@ -55,7 +55,7 @@ fn dynamically_dispatches_through_a_fixed_heap_evidence_table() {
                }\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a program with a dynamic effect handler");
     let output = compile(&core, &Options::default().with_heap_bytes(2048))
@@ -80,7 +80,7 @@ fn passes_dynamic_effect_evidence_to_a_captured_closure() {
                }\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a closure that uses a dynamically handled effect");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -106,7 +106,7 @@ fn state_run_shares_owned_cell_storage_with_its_handler() {
                value + final\n\
              }\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a local State.run program");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -336,7 +336,7 @@ fn captures_runtime_values_in_a_fixed_heap_closure_environment() {
             "main.emel",
             "pub fn apply(x: Int) -> Int {\n  add = fn(y: Int) { x + y }\n  add(2)\n}\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower a closure with a runtime capture");
     let output = compile(&core, &Options::default().with_heap_bytes(2048))
@@ -354,7 +354,7 @@ fn lifts_nested_closures_that_capture_outer_closure_values() {
             "main.emel",
             "pub fn apply(x: Int) -> Int {\n  outer = fn(y: Int) {\n    inner = fn(z: Int) { x + y + z }\n    inner(1)\n  }\n  outer(1)\n}\n",
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .expect("lower nested closures with runtime captures");
     let output = compile(&core, &Options::default().with_heap_bytes(4096))
@@ -4140,6 +4140,7 @@ fn defers_a_statically_known_const_defect_until_reference() {
         .set_constant();
     constant.term(Term::Defect(
         Const::String("division by zero".to_owned()).into(),
+        None,
     ));
     let constant = constant.finish();
     let mut flow = Module::new(core);
@@ -4344,7 +4345,7 @@ fn sends_dynamic_defect_string_views_to_the_board_hook() {
     let mut builder = FnBuilder::new(&core, "panic_message");
     let message = builder.param("message", TypeId::STRING);
     builder.set_ret(TypeId::NEVER).set_exported();
-    builder.term(Term::Defect(Operand::Var(message)));
+    builder.term(Term::Defect(Operand::Var(message), None));
     let function = builder.finish();
     let mut flow = Module::new(core);
     flow.add(function);
@@ -4372,9 +4373,10 @@ fn classifies_a_static_todo_defect() {
     builder.protect(
         None,
         |builder| {
-            builder.term(Term::Defect(Operand::Const(Const::String(
-                "not yet implemented".to_owned(),
-            ))));
+            builder.term(Term::Defect(
+                Operand::Const(Const::String("not yet implemented".to_owned())),
+                None,
+            ));
         },
         |builder| {
             builder.let_(
@@ -5289,7 +5291,7 @@ fn emits_and_runs_int32_primitive_operations() {
         ),
     ];
 
-    for (op, args, result_type, expected) in cases {
+    for_each_in_parallel(cases, |(op, args, result_type, expected)| {
         let core = emela_core::Module::new();
         let mut builder = FnBuilder::new(&core, "probe");
         builder.set_ret(result_type).set_exported();
@@ -5312,7 +5314,7 @@ fn emits_and_runs_int32_primitive_operations() {
             "#include \"emela_embedded.h\"\nint main(void) {{ return emela_export_probe_0() == {expected} ? 0 : 1; }}\n"
         );
         compile_and_run(output, &harness);
-    }
+    });
 }
 
 #[test]
@@ -5404,13 +5406,13 @@ fn emits_and_runs_int64_primitive_operations_with_wrapping_semantics() {
         ),
     ];
 
-    for (op, args, result_type, expected) in cases {
+    for_each_in_parallel(cases, |(op, args, result_type, expected)| {
         let output = compile_i64_prim(op, args, result_type);
         let harness = format!(
             "#include <stdint.h>\n#include <stdlib.h>\n#include \"emela_embedded.h\"\n#include \"emela_board.h\"\n_Noreturn void emela_board_defect(EmelaDefectKind kind, const char *message, uint16_t length) {{ (void)kind; (void)message; (void)length; exit(1); }}\nint main(void) {{ return emela_export_probe_0() == {expected} ? 0 : 1; }}\n"
         );
         compile_and_run(output, &harness);
-    }
+    });
 }
 
 #[test]
@@ -5515,7 +5517,7 @@ fn emits_and_runs_float_primitive_operations() {
         ),
     ];
 
-    for (op, args, result_type, expected) in cases {
+    for_each_in_parallel(cases, |(op, args, result_type, expected)| {
         let output = compile_f64_prim(op, args, result_type);
         let actual_type = if result_type == TypeId::FLOAT {
             "double"
@@ -5526,7 +5528,7 @@ fn emits_and_runs_float_primitive_operations() {
             "#include <math.h>\n#include <stdint.h>\n#include \"emela_embedded.h\"\nint main(void) {{ {actual_type} actual = emela_export_probe_0(); return ({expected}) ? 0 : 1; }}\n"
         );
         compile_and_run(output, &harness);
-    }
+    });
 }
 
 #[test]
@@ -5903,6 +5905,26 @@ fn compile_constant_function(name: &str, return_type: TypeId, value: Const) -> O
     compile_flow(&flow, &Options::default()).expect("emit scalar constant")
 }
 
+/// Calls `f` on every item from as many threads as there are CPUs. The items of a test that builds
+/// and runs a C program for each run in parallel this way; a panic fails the test once every
+/// thread has finished.
+fn for_each_in_parallel<T: Send>(items: impl IntoIterator<Item = T>, f: impl Fn(T) + Sync) {
+    let items = std::sync::Mutex::new(items.into_iter().collect::<Vec<_>>().into_iter());
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let Some(item) = items.lock().unwrap_or_else(|e| e.into_inner()).next() else {
+                        break;
+                    };
+                    f(item);
+                }
+            });
+        }
+    });
+}
+
 fn compile_and_run(output: Output, harness_source: &str) {
     let temp = TempDir::new();
     let needs_board_lifecycle = output.files.iter().any(|file| {
@@ -5974,7 +5996,7 @@ pub fn classify(n: Int) -> Int {
 pub fn length() -> Int { List.length([1, 2, 3]) }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     compile_and_run(
@@ -6008,7 +6030,7 @@ pub fn capture(n: Int) -> (fn() -> String) {
 }
 "#,
         )],
-        Roots::Exported,
+        Roots::Public,
     )
     .unwrap();
     let flow = emela_codegen_emb::flow_from_core(&core).unwrap();

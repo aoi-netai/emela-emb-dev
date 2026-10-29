@@ -170,10 +170,17 @@ pub fn check(crate_root: &Path) -> Result<Vec<(String, usize)>, String> {
             if public.len() != emela_core::Builtin::ALL.len() {
                 return Err("Builtin::ALL has duplicate entries".into());
             }
-            let internal = ["CellNew", "CellGet", "CellSet", "ShowString", "DebugPrint"]
-                .map(str::to_owned)
-                .into_iter()
-                .collect();
+            let internal = [
+                "CellNew",
+                "CellGet",
+                "CellSet",
+                "ShowString",
+                "DebugPrint",
+                "AssertFail",
+            ]
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
             if public.union(&internal).cloned().collect::<BTreeSet<_>>() != expected {
                 return Err("Builtin enum differs from ALL plus internal lowering builtins".into());
             }

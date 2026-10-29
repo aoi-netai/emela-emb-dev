@@ -125,12 +125,12 @@ impl LayoutEmission for CLayoutPlan<'_> {
             }
             let aggregate_type = self.c_type(aggregate.ty);
             writer.begin_block(&format!(
-                "static inline void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
+                "static inline EMELA_UNUSED void emela_heap_retain_value_{index}(const {aggregate_type} *value)"
             ));
             writer.line("(void)value;");
             writer.end_block();
             writer.begin_block(&format!(
-                "static inline void emela_heap_release_value_{index}({aggregate_type} *value)"
+                "static inline EMELA_UNUSED void emela_heap_release_value_{index}({aggregate_type} *value)"
             ));
             writer.line("(void)value;");
             writer.end_block();

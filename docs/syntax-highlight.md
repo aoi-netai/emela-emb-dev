@@ -1,15 +1,21 @@
 # Syntax highlighting
 
 Emela source files use the `.emel` extension. Editors don't share one
-highlighting format, so this repository ships two definitions under `editors/`,
-each covering comments, strings, numbers, keywords, built-in types, and
-operators:
+highlighting format, so this repository ships several definitions under
+`editors/`, each covering comments, strings, numbers, keywords, built-in types,
+and operators:
 
 - [`editors/emela.sublime-syntax`](../editors/emela.sublime-syntax) — a Sublime
   Text definition, also read by any [syntect](https://github.com/trishume/syntect)-based
   tool such as the [`bat`](https://github.com/sharkdp/bat) pager.
 - [`editors/nvim/`](../editors/nvim) — a Vim/Neovim syntax plugin
   (`syntax/emela.vim` plus `ftdetect/emela.vim` for `.emel` filetype detection).
+- [`editors/tree-sitter-emela/`](../editors/tree-sitter-emela) — a
+  [tree-sitter](https://tree-sitter.github.io/) grammar with highlight, fold,
+  indent and text-object queries, used by Neovim and Zed.
+- [`editors/zed/`](../editors/zed) — a Zed extension built on that grammar.
+- [`editors/vscode/`](../editors/vscode) — a VS Code extension with a TextMate
+  grammar, which also starts the `emela lsp` language server.
 
 ## `bat`
 
@@ -25,14 +31,14 @@ Verify that `bat` picked it up:
 
 ```sh
 bat --list-languages | grep Emela      # => Emela:emel
-bat examples/hello.emel                # highlighted
+bat examples/hello/src/main.emel       # highlighted
 ```
 
 `bat` selects the syntax from the `.emel` extension automatically. To force it
 (for example when reading from stdin), pass `--language=Emela`:
 
 ```sh
-cat examples/hello.emel | bat --language=Emela
+cat examples/hello/src/main.emel | bat --language=Emela
 ```
 
 To pick up later changes to the definition, edit
@@ -68,9 +74,23 @@ Open any `.emel` file and confirm the filetype and highlighting are active:
 " e.g. Keyword / Type / String under the cursor
 ```
 
-For a full Tree-sitter grammar (incremental parsing, more precise highlights)
-you would need a separate `tree-sitter-emela` parser; this repository does not
-ship one yet, and the Vim syntax file above is the lightweight equivalent.
+In Neovim, the tree-sitter grammar in `editors/tree-sitter-emela` gives
+incremental parsing and more precise highlights. Once its parser is installed,
+the filetype plugin uses it instead of the Vim syntax file. See
+[`editors/nvim/README.md`](../editors/nvim/README.md#tree-sitter-neovim) for
+installing it with nvim-treesitter or by hand.
+
+## Zed
+
+Install [`editors/zed/`](../editors/zed) as a dev extension (`zed: install dev
+extension` in the command palette). See
+[`editors/zed/README.md`](../editors/zed/README.md).
+
+## VS Code
+
+Build and install [`editors/vscode/`](../editors/vscode) as described in
+[`editors/vscode/README.md`](../editors/vscode/README.md). It needs `emela` on
+`PATH` (or the setting `emela.serverPath`) for the language server.
 
 ## Sublime Text
 

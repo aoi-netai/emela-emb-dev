@@ -78,7 +78,7 @@ static void emela_child_wait_step(emela_fiber *fiber, emela_frame *base) {
   if (waiter->deliver != NULL && waiter->result != NULL) waiter->deliver(child, waiter->result);
   emela_frame_return(fiber);
 }
-static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int verb,
+static inline EMELA_UNUSED void emela_child_wait(emela_fiber *fiber, emela_child *child, int verb,
                                    void *result, void (*deliver)(emela_child *, void *)) {
   emela_child_check(child, verb);
   emela_child_waiter *waiter = (emela_child_waiter *)emela_frame_push(fiber, sizeof(*waiter), emela_child_wait_step);
@@ -101,7 +101,7 @@ static inline void emela_child_wait(emela_fiber *fiber, emela_child *child, int 
     emela_resume_boundary(fiber);
   }
 }
-static inline void emela_child_interrupt(emela_fiber *fiber, emela_child *child) {
+static inline EMELA_UNUSED void emela_child_interrupt(emela_fiber *fiber, emela_child *child) {
   emela_child_check(child, EMELA_WAIT_INTERRUPT);
   if (child->status != 0) return;
   for (uint32_t slot = 0; slot < EMELA_FIBER_CAPACITY; slot++) {

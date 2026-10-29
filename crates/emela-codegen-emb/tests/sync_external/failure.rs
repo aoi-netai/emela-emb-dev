@@ -49,6 +49,7 @@ pub(super) fn flow() -> Module {
             }
             b.term(Term::Defect(
                 Const::String("expected failure".into()).into(),
+                None,
             ));
         });
         let concrete = b.assign(

@@ -71,7 +71,7 @@ pub(in crate::compiler::emit) fn string_append(
 
 pub(in crate::compiler::emit) fn emit_string_append_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_append(EmelaString left, EmelaString right, char *buffer, uint16_t capacity, int copy_left)",
     );
     writer.begin_block(
         "if (left.length > capacity || right.length > (uint16_t)(capacity - left.length))",

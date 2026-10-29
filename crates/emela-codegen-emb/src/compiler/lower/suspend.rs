@@ -83,7 +83,7 @@ fn discard_unused_child_handles(
                     count_operand(value, &mut add);
                 }
             }
-            Term::Fail(value) | Term::Defect(value) => count_operand(value, &mut add),
+            Term::Fail(value) | Term::Defect(value, _) => count_operand(value, &mut add),
             Term::Recur(values) => {
                 for value in values {
                     count_operand(value, &mut add);

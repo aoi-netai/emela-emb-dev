@@ -1,6 +1,8 @@
 //! Showing and structural equality: inline for basic types, generated functions per type for
 //! lists, tuples and enums (`show$List[Int]`, `eq$Point`). The input is monomorphic, so every type
-//! is concrete and each function is for one type.
+//! is concrete and each function is for one type. The names append the type as the Core dump
+//! writes it after a `$`, which never occurs in Emela names, so they cannot clash with the
+//! program's functions.
 //!
 //! Show follows spec 10.6 and the JS runtime (`$showInt`, `$showString`, `$showList`,
 //! `$showTuple`, the generated `$show$E`): Bool as `True` / `False`, Float by `Float.to_string`,
@@ -234,7 +236,7 @@ impl Lower<'_> {
     /// (host handle) has values, so `message` is a defect; otherwise it is never called.
     fn no_values(&mut self, external: bool, message: &str) {
         if external {
-            self.term(Term::Defect(string(message)));
+            self.term(Term::Defect(string(message), None));
         } else {
             self.term(Term::Unreachable);
         }

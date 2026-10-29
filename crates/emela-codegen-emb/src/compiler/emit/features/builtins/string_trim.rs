@@ -24,14 +24,18 @@ pub(in crate::compiler::emit) fn string_trim(
 }
 
 pub(in crate::compiler::emit) fn emit_string_trim_helper(writer: &mut Writer) {
-    writer.begin_block("static inline int32_t emela_emb_is_white_space(uint32_t code_point)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int32_t emela_emb_is_white_space(uint32_t code_point)",
+    );
     writer.line(
         "return (code_point >= UINT32_C(0x0009) && code_point <= UINT32_C(0x000d)) || code_point == UINT32_C(0x0020) || code_point == UINT32_C(0x0085) || code_point == UINT32_C(0x00a0) || code_point == UINT32_C(0x1680) || (code_point >= UINT32_C(0x2000) && code_point <= UINT32_C(0x200a)) || code_point == UINT32_C(0x2028) || code_point == UINT32_C(0x2029) || code_point == UINT32_C(0x202f) || code_point == UINT32_C(0x205f) || code_point == UINT32_C(0x3000);",
     );
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline EmelaString emela_emb_string_trim(EmelaString value)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_trim(EmelaString value)",
+    );
     writer.begin_block("if (value.length == UINT16_C(0))");
     writer.line("return value;");
     writer.end_block();

@@ -242,6 +242,7 @@ pub(in crate::compiler::emit) fn emit(
         RuntimeOp::ShowString => emit_show_string(context, dst, args),
         RuntimeOp::DebugPrint => debug_print(context, dst, args),
         RuntimeOp::Retire => retire(context, dst, args),
+        RuntimeOp::DefectAt => defect_at(context, dst, args),
         RuntimeOp::Defect => defect(context, dst, args),
         RuntimeOp::DefectTake => defect_take(context, dst, args),
         RuntimeOp::DefectResume => defect_resume(context, dst, args),
@@ -254,7 +255,7 @@ pub(in crate::compiler::emit) fn emit(
 
 pub(in crate::compiler::emit) fn emit_string_show_helpers(writer: &mut Writer) {
     writer.begin_block(
-        "static inline void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
+        "static inline EMELA_UNUSED void emela_emb_string_show_put(char *buffer, uint16_t capacity, uint32_t *length, uint8_t byte)",
     );
     writer.begin_block("if (*length >= (uint32_t)capacity)");
     writer.line(
@@ -267,7 +268,7 @@ pub(in crate::compiler::emit) fn emit_string_show_helpers(writer: &mut Writer) {
     writer.blank();
 
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_show(EmelaString value, char *buffer, uint16_t capacity)",
     );
     writer.line("uint32_t length = UINT32_C(0);");
     writer.line("emela_emb_string_show_put(buffer, capacity, &length, UINT8_C(0x22));");
@@ -315,3 +316,11 @@ pub(in crate::compiler::emit) fn emit_string_show_helpers(writer: &mut Writer) {
 }
 
 use crate::semantics::strings::show_string;
+
+pub(in crate::compiler::emit) fn defect_at(
+    context: &mut BuiltinContext<'_, '_>,
+    _dst: Option<VarId>,
+    _args: &[Operand],
+) -> Result<(), Vec<Error>> {
+    Err(unsupported(&context.function.name, "RuntimeOp::DefectAt"))
+}

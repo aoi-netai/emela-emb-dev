@@ -74,6 +74,7 @@ pub(in crate::compiler::emit) fn emit(
         Builtin::FloatCeil => float::float_ceil(context, dst, args),
         Builtin::FloatRound => float::float_round(context, dst, args),
         Builtin::FloatTruncate => float::float_truncate(context, dst, args),
+        Builtin::AssertFail => rejected::assert_fail(context, dst, args),
         Builtin::Panic => rejected::panic(context, dst, args),
         Builtin::Todo => rejected::todo(context, dst, args),
         Builtin::Dbg => rejected::dbg(context, dst, args),

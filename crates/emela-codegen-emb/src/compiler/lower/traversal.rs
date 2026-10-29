@@ -147,7 +147,10 @@ pub(crate) fn runtime_statements(function: &Function) -> HashSet<StmtId> {
                 Stmt::Protect { body, cleanup, .. } => {
                     visit(f, *body, visited, result, suspends);
                     let body = &f.seqs[*body];
-                    if suspends || !body.stmts.is_empty() || !matches!(body.term, Term::Defect(_)) {
+                    if suspends
+                        || !body.stmts.is_empty()
+                        || !matches!(body.term, Term::Defect(_, _))
+                    {
                         visit(f, *cleanup, visited, result, suspends);
                     }
                 }

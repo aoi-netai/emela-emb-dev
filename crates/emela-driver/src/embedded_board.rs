@@ -106,9 +106,17 @@ impl EmbeddedProject {
         }
     }
 
+    /// A replacement whose path names `{board}` applies only while a board is selected; without
+    /// one, the module in the source root is read as it is.
     pub fn overlay(&self, input: &Input) -> Result<EmbeddedSources, Diagnostic> {
         let mut replacements = BTreeMap::new();
         for (name, source) in &self.modules {
+            let source = source.to_string_lossy();
+            let source = match self.board_id() {
+                Some(board) => source.replace("{board}", board),
+                None if source.contains("{board}") => continue,
+                None => source.into_owned(),
+            };
             let mut relative = PathBuf::new();
             for part in name.split('.') {
                 if part.is_empty() || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -127,9 +135,6 @@ impl EmbeddedProject {
                 relative.push(file);
             }
             relative.set_extension("emel");
-            let source = source
-                .to_string_lossy()
-                .replace("{board}", self.board_id().unwrap_or(""));
             let physical = input.base.join(source);
             if !physical.is_file() {
                 return Err(Diagnostic::error(format!(

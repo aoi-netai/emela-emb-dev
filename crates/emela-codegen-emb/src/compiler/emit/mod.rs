@@ -70,6 +70,8 @@ pub(super) fn render(plan: &PlannedModule<'_>) -> Result<Output, Vec<Error>> {
         source.line(&format!("#include \"{}\"", file.path));
     }
     source.blank();
+    c::emit_unused_attribute(&mut source);
+    source.blank();
     if !runtime_consts.is_empty() {
         crate::compiler::emit::const_runtime::emit_runtime(
             plan.const_emergency_bytes,
@@ -140,8 +142,12 @@ pub(super) fn render(plan: &PlannedModule<'_>) -> Result<Output, Vec<Error>> {
         emit_public_string_ownership(&mut source);
         external::emit_ownership_helpers(flow, external_bindings, layouts, &mut source);
     } else {
-        source.line("static inline void emela_heap_retain(void *value) { (void)value; }");
-        source.line("static inline void emela_heap_release(void *value) { (void)value; }");
+        source.line(
+            "static inline EMELA_UNUSED void emela_heap_retain(void *value) { (void)value; }",
+        );
+        source.line(
+            "static inline EMELA_UNUSED void emela_heap_release(void *value) { (void)value; }",
+        );
         error_runtime::emit_ownership(layouts, false, &mut source);
         emit_any_ownership(layouts, false, &mut source);
         layouts.emit_noheap_ownership_stubs(&mut source);

@@ -21,13 +21,13 @@ typedef struct {
   uint16_t length;
 } EmelaEmbFloatFormatBig;
 
-static inline void emela_emb_float_format_big_set(EmelaEmbFloatFormatBig *value, uint64_t integer) {
+static inline EMELA_UNUSED void emela_emb_float_format_big_set(EmelaEmbFloatFormatBig *value, uint64_t integer) {
   value->words[0] = (uint32_t)integer;
   value->words[1] = (uint32_t)(integer >> 32);
   value->length = value->words[1] == UINT32_C(0) ? UINT16_C(1) : UINT16_C(2);
 }
 
-static inline uint32_t emela_emb_float_format_big_bit_length(const EmelaEmbFloatFormatBig *value) {
+static inline EMELA_UNUSED uint32_t emela_emb_float_format_big_bit_length(const EmelaEmbFloatFormatBig *value) {
   if (value->length == UINT16_C(0)) {
     return UINT32_C(0);
   }
@@ -40,7 +40,7 @@ static inline uint32_t emela_emb_float_format_big_bit_length(const EmelaEmbFloat
   return bits;
 }
 
-static inline int emela_emb_float_format_big_multiply_small(EmelaEmbFloatFormatBig *value, uint32_t multiplier) {
+static inline EMELA_UNUSED int emela_emb_float_format_big_multiply_small(EmelaEmbFloatFormatBig *value, uint32_t multiplier) {
   uint64_t carry = UINT64_C(0);
   for (uint32_t index = UINT32_C(0); index < (uint32_t)value->length; ++index) {
     const uint64_t product = (uint64_t)value->words[index] * (uint64_t)multiplier + carry;
@@ -57,7 +57,7 @@ static inline int emela_emb_float_format_big_multiply_small(EmelaEmbFloatFormatB
   return 1;
 }
 
-static inline int emela_emb_float_format_big_shift_left(EmelaEmbFloatFormatBig *value, uint32_t shift) {
+static inline EMELA_UNUSED int emela_emb_float_format_big_shift_left(EmelaEmbFloatFormatBig *value, uint32_t shift) {
   if (shift == UINT32_C(0)) {
     return 1;
   }
@@ -93,7 +93,7 @@ static inline int emela_emb_float_format_big_shift_left(EmelaEmbFloatFormatBig *
   return 1;
 }
 
-static inline uint32_t emela_emb_float_format_big_shifted_word(const EmelaEmbFloatFormatBig *value, uint32_t shift, uint32_t index) {
+static inline EMELA_UNUSED uint32_t emela_emb_float_format_big_shifted_word(const EmelaEmbFloatFormatBig *value, uint32_t shift, uint32_t index) {
   const uint32_t whole_words = shift / UINT32_C(32);
   const uint32_t remaining_bits = shift % UINT32_C(32);
   if (index < whole_words) {
@@ -113,7 +113,7 @@ static inline uint32_t emela_emb_float_format_big_shifted_word(const EmelaEmbFlo
   return (lower << remaining_bits) | (upper >> (UINT32_C(32) - remaining_bits));
 }
 
-static inline int emela_emb_float_format_big_compare_shifted(
+static inline EMELA_UNUSED int emela_emb_float_format_big_compare_shifted(
     const EmelaEmbFloatFormatBig *left,
     uint32_t left_shift,
     const EmelaEmbFloatFormatBig *right,
@@ -140,7 +140,7 @@ static inline int emela_emb_float_format_big_compare_shifted(
   return 0;
 }
 
-static inline void emela_emb_float_format_big_subtract_shifted(
+static inline EMELA_UNUSED void emela_emb_float_format_big_subtract_shifted(
     EmelaEmbFloatFormatBig *left,
     const EmelaEmbFloatFormatBig *right,
     uint32_t right_shift) {
@@ -157,7 +157,7 @@ static inline void emela_emb_float_format_big_subtract_shifted(
   }
 }
 
-static inline int emela_emb_float_format_big_power5(EmelaEmbFloatFormatBig *value, uint32_t exponent) {
+static inline EMELA_UNUSED int emela_emb_float_format_big_power5(EmelaEmbFloatFormatBig *value, uint32_t exponent) {
   for (uint32_t index = UINT32_C(0); index < exponent; ++index) {
     if (!emela_emb_float_format_big_multiply_small(value, UINT32_C(5))) {
       return 0;
@@ -166,7 +166,7 @@ static inline int emela_emb_float_format_big_power5(EmelaEmbFloatFormatBig *valu
   return 1;
 }
 
-static inline int emela_emb_float_format_big_compare_binary(
+static inline EMELA_UNUSED int emela_emb_float_format_big_compare_binary(
     const EmelaEmbFloatFormatBig *left,
     int32_t left_exponent,
     const EmelaEmbFloatFormatBig *right,
@@ -185,7 +185,7 @@ static inline int emela_emb_float_format_big_compare_binary(
       (uint32_t)(right_exponent - left_exponent));
 }
 
-static inline int emela_emb_float_format_compare_decimal_binary(
+static inline EMELA_UNUSED int emela_emb_float_format_compare_decimal_binary(
     uint64_t decimal,
     int32_t decimal_exponent,
     uint64_t binary,
@@ -211,7 +211,7 @@ static inline int emela_emb_float_format_compare_decimal_binary(
   return emela_emb_float_format_big_compare_binary(&left, left_exponent, &right, right_exponent);
 }
 
-static inline int emela_emb_float_format_round_scaled(
+static inline EMELA_UNUSED int emela_emb_float_format_round_scaled(
     uint64_t mantissa,
     int32_t binary_exponent,
     int32_t decimal_exponent,
@@ -270,7 +270,7 @@ static inline int emela_emb_float_format_round_scaled(
   return 1;
 }
 
-static inline void emela_emb_float_format_put(
+static inline EMELA_UNUSED void emela_emb_float_format_put(
     char *buffer,
     uint16_t capacity,
     uint16_t *length,
@@ -283,7 +283,7 @@ static inline void emela_emb_float_format_put(
   ++*length;
 }
 
-static inline void emela_emb_float_format_put_text(
+static inline EMELA_UNUSED void emela_emb_float_format_put_text(
     char *buffer,
     uint16_t capacity,
     uint16_t *length,
@@ -293,17 +293,17 @@ static inline void emela_emb_float_format_put_text(
   }
 }
 
-static inline void emela_emb_float_format_internal_error(void) {
+static inline EMELA_UNUSED void emela_emb_float_format_internal_error(void) {
   static const char message[] = "Float.to_string conversion workspace overflow";
   emela_board_defect(EMELA_DEFECT_PANIC, message, (uint16_t)(sizeof(message) - 1U));
 }
 
-static inline void emela_emb_float_format_no_candidate(void) {
+static inline EMELA_UNUSED void emela_emb_float_format_no_candidate(void) {
   static const char message[] = "Float.to_string found no shortest decimal";
   emela_board_defect(EMELA_DEFECT_PANIC, message, (uint16_t)(sizeof(message) - 1U));
 }
 
-static inline EmelaString emela_emb_float_to_string(double value, char *buffer, uint16_t capacity) {
+static inline EMELA_UNUSED EmelaString emela_emb_float_to_string(double value, char *buffer, uint16_t capacity) {
   uint16_t length = UINT16_C(0);
   union {
     double value;

@@ -28,7 +28,7 @@ pub(in crate::compiler::emit) fn string_ends_with(
 
 pub(in crate::compiler::emit) fn emit_string_ends_with_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
+        "static inline EMELA_UNUSED int32_t emela_emb_string_ends_with(EmelaString value, EmelaString suffix)",
     );
     writer.begin_block("if (suffix.length > value.length)");
     writer.line("return INT32_C(0);");

@@ -23,10 +23,12 @@ impl Emission for Plan {
         }
         if self.show {
             writer . line ("typedef struct { char *buffer; uint16_t capacity; uint16_t length; } emela_derived_writer;") ;
-            writer.begin_block("static inline char *emela_derived_output(emela_derived_writer *w)");
+            writer.begin_block(
+                "static inline EMELA_UNUSED char *emela_derived_output(emela_derived_writer *w)",
+            );
             writer.ret(Some("w->buffer == NULL ? NULL : w->buffer + w->length"));
             writer.end_block();
-            writer . begin_block ("static inline void emela_derived_text(emela_derived_writer *w, const char *text, uint16_t count)") ;
+            writer . begin_block ("static inline EMELA_UNUSED void emela_derived_text(emela_derived_writer *w, const char *text, uint16_t count)") ;
             writer . line ("if (count > (uint16_t)(w->capacity - w->length) || (count != 0 && w->buffer == NULL)) emela_board_defect(EMELA_DEFECT_STRING_CAPACITY, \"string capacity exceeded\", UINT16_C(24));") ;
             writer . line ("for (uint32_t i = 0; i < count; ++i) w->buffer[(uint32_t)w->length + i] = text[i];") ;
             writer.line("w->length = (uint16_t)(w->length + count);");
@@ -35,7 +37,7 @@ impl Emission for Plan {
         for &ty in &self.types {
             if self.eq_types.contains(&ty) {
                 writer.line(&format!(
-                    "static inline int32_t emela_derived_eq_{}({} a, {} b);",
+                    "static inline EMELA_UNUSED int32_t emela_derived_eq_{}({} a, {} b);",
                     ty.index(),
                     layouts.c_type(ty),
                     layouts.c_type(ty)
@@ -43,7 +45,7 @@ impl Emission for Plan {
             }
             if self.show_types.contains(&ty) {
                 writer.line(&format!(
-                    "static inline void emela_derived_show_{}({} value, emela_derived_writer *w);",
+                    "static inline EMELA_UNUSED void emela_derived_show_{}({} value, emela_derived_writer *w);",
                     ty.index(),
                     layouts.c_type(ty)
                 ));
@@ -71,9 +73,9 @@ impl Emission for Plan {
     fn emit_box(&self, layouts: &TypeLayouts<'_>, kind: DeriveKind, w: &mut Writer) {
         let eq = kind == DeriveKind::Eq;
         w.begin_block(if eq {
-            "static inline int32_t emela_derived_eq_box(void *a, void *b)"
+            "static inline EMELA_UNUSED int32_t emela_derived_eq_box(void *a, void *b)"
         } else {
-            "static inline void emela_derived_show_box(void *value, emela_derived_writer *w)"
+            "static inline EMELA_UNUSED void emela_derived_show_box(void *value, emela_derived_writer *w)"
         });
         if eq {
             w.line("if (a == NULL || b == NULL) return a == b;");
@@ -116,12 +118,12 @@ impl Emission for Plan {
         let c = l.c_type(ty);
         w.begin_block(&if eq {
             format!(
-                "static inline int32_t emela_derived_eq_{}({c} a, {c} b)",
+                "static inline EMELA_UNUSED int32_t emela_derived_eq_{}({c} a, {c} b)",
                 ty.index()
             )
         } else {
             format!(
-                "static inline void emela_derived_show_{}({c} value, emela_derived_writer *w)",
+                "static inline EMELA_UNUSED void emela_derived_show_{}({c} value, emela_derived_writer *w)",
                 ty.index()
             )
         });

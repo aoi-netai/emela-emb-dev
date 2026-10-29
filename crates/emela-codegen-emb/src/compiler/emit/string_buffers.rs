@@ -2,8 +2,15 @@ use super::*;
 use crate::contract::strings::StringBuffers;
 pub(in crate::compiler::emit) trait StringBufferEmission {
     fn buffer(&self, variable: VarId) -> Option<(String, String)>;
+    fn array_capacity(&self, variable: VarId) -> Option<u16>;
 }
 impl StringBufferEmission for StringBuffers {
+    fn array_capacity(&self, variable: VarId) -> Option<u16> {
+        self.buffers
+            .get(&variable)
+            .and_then(|(slot, capacity)| slot.map(|_| *capacity))
+    }
+
     fn buffer(&self, variable: VarId) -> Option<(String, String)> {
         self.buffers
             .get(&variable)
@@ -21,7 +28,7 @@ fn string_buffer_name(slot: usize) -> String {
 }
 pub(in crate::compiler::emit) fn emit_string_output_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline EmelaString emela_emb_string_copy_to_output(EmelaString value, char *output, uint16_t capacity, uint16_t maximum_length)",
+        "static inline EMELA_UNUSED EmelaString emela_emb_string_copy_to_output(EmelaString value, char *output, uint16_t capacity, uint16_t maximum_length)",
     );
     writer.begin_block(
         "if (value.length > capacity || value.length > maximum_length || (value.length != UINT16_C(0) && (output == NULL || value.data == NULL)))",

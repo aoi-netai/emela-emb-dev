@@ -1110,5 +1110,17 @@
       "target": "emit",
       "name": "binding_metadata::named_enum_fields_preserve_payload_order_in_generated_c"
     }
+  ],
+  "emela_core::Builtin::AssertFail": [
+    {
+      "target": "flow",
+      "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime"
+    }
+  ],
+  "emela_lir::RuntimeOp::DefectAt": [
+    {
+      "target": "flow",
+      "name": "rejects_heap_only_runtime_operations_at_flow_stage"
+    }
   ]
 }

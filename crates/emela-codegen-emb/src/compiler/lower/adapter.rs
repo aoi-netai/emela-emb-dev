@@ -107,6 +107,7 @@ fn adapt_builtin(source: &emela_core::Builtin) -> d::Builtin {
         emela_core::Builtin::CellSet => d::Builtin::CellSet,
         emela_core::Builtin::ShowString => d::Builtin::ShowString,
         emela_core::Builtin::DebugPrint => d::Builtin::DebugPrint,
+        emela_core::Builtin::AssertFail => d::Builtin::AssertFail,
     }
 }
 
@@ -187,7 +188,7 @@ fn adapt_fiber_op(source: &emela_core::FiberOp) -> d::FiberOp {
         emela_core::FiberOp::Poll => d::FiberOp::Poll,
         emela_core::FiberOp::CauseKind { kind } => d::FiberOp::CauseKind { kind: id(*kind) },
         emela_core::FiberOp::CauseToString => d::FiberOp::CauseToString,
-        emela_core::FiberOp::CauseRaise => d::FiberOp::CauseRaise,
+        emela_core::FiberOp::CauseRaise { .. } => d::FiberOp::CauseRaise,
     }
 }
 
@@ -503,6 +504,7 @@ fn adapt_runtime_op(source: &emela_lir::RuntimeOp) -> d::RuntimeOp {
         emela_lir::RuntimeOp::DebugPrint => d::RuntimeOp::DebugPrint,
         emela_lir::RuntimeOp::Retire => d::RuntimeOp::Retire,
         emela_lir::RuntimeOp::Defect => d::RuntimeOp::Defect,
+        emela_lir::RuntimeOp::DefectAt => d::RuntimeOp::DefectAt,
         emela_lir::RuntimeOp::DefectTake => d::RuntimeOp::DefectTake,
         emela_lir::RuntimeOp::DefectResume => d::RuntimeOp::DefectResume,
         emela_lir::RuntimeOp::Hold => d::RuntimeOp::Hold,
@@ -608,7 +610,7 @@ fn adapt_term(source: &emela_lir::Term) -> d::Term {
         emela_lir::Term::Recur(value0) => {
             d::Term::Recur(value0.iter().map(adapt_operand).collect())
         }
-        emela_lir::Term::Defect(value0) => d::Term::Defect(adapt_operand(value0)),
+        emela_lir::Term::Defect(value0, _) => d::Term::Defect(adapt_operand(value0)),
         emela_lir::Term::Unwind => d::Term::Unwind,
         emela_lir::Term::Unreachable => d::Term::Unreachable,
     }

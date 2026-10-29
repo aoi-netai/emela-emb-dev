@@ -49,7 +49,7 @@ static void emela_deferred_scope_end(emela_scope *scope) {
     emela_heap_release(deferred);
   }
 }
-static inline EmelaAny emela_deferred_allocate(emela_scope *scope) {
+static inline EMELA_UNUSED EmelaAny emela_deferred_allocate(emela_scope *scope) {
   if (!emela_deferred_initialized) {
     for (uint32_t i = 0; i < EMELA_DEFERRED_CAPACITY; i++)
       emela_deferred_slots[i].next = i + 1 < EMELA_DEFERRED_CAPACITY ? i + 1 : EMELA_SLOT_NONE;
@@ -74,23 +74,23 @@ static inline EmelaAny emela_deferred_allocate(emela_scope *scope) {
   return (EmelaAny){.payload.any_box = deferred};
 }
 
-static inline emela_deferred_slot *emela_deferred_prepare_complete(emela_deferred *deferred) {
+static inline EMELA_UNUSED emela_deferred_slot *emela_deferred_prepare_complete(emela_deferred *deferred) {
   if (deferred == NULL) emela_scheduler_invalid();
   if (deferred->scope->ended)
     emela_board_defect(EMELA_DEFECT_PANIC, "deferred was completed after its scope ended", UINT16_C(44));
   emela_deferred_slot *slot = emela_deferred_slot_get(deferred);
   return slot->full ? NULL : slot;
 }
-static inline void emela_deferred_publish(emela_deferred_slot *slot) {
+static inline EMELA_UNUSED void emela_deferred_publish(emela_deferred_slot *slot) {
   emela_deferred_wake_waiters(slot);
 }
-static inline emela_deferred_slot *emela_deferred_get_await(emela_deferred *deferred) {
+static inline EMELA_UNUSED emela_deferred_slot *emela_deferred_get_await(emela_deferred *deferred) {
   if (deferred == NULL) emela_scheduler_invalid();
   if (deferred->scope->ended)
     emela_board_defect(EMELA_DEFECT_PANIC, "deferred was awaited after its scope ended", UINT16_C(42));
   return emela_deferred_slot_get(deferred);
 }
-static inline emela_deferred_slot *emela_deferred_get_poll(emela_deferred *deferred) {
+static inline EMELA_UNUSED emela_deferred_slot *emela_deferred_get_poll(emela_deferred *deferred) {
   if (deferred == NULL) emela_scheduler_invalid();
   if (deferred->scope->ended)
     emela_board_defect(EMELA_DEFECT_PANIC, "deferred was polled after its scope ended", UINT16_C(41));

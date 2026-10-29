@@ -3,6 +3,9 @@
 //! The builtin table (`emela_core::intrinsics`) only knows names and types; the implementations
 //! live in `runtime.mjs`. The match is exhaustive, so adding a builtin fails to compile until the
 //! JS backend implements it.
+//!
+//! Identity conversions such as `Int.to_float` are also runtime calls, so every builtin is
+//! emitted the same way.
 
 use emela_core::Builtin;
 
@@ -48,6 +51,14 @@ pub(crate) fn runtime_name(op: Builtin) -> &'static str {
         Builtin::FloatCeil => "$fceil",
         Builtin::FloatRound => "$fround",
         Builtin::FloatTruncate => "$ftrunc",
+        Builtin::BytesFromList => "$bytesFromList",
+        Builtin::BytesToList => "$bytesToList",
+        Builtin::BytesSize => "$bytesSize",
+        Builtin::BytesGet => "$bytesGet",
+        Builtin::BytesSlice => "$bytesSlice",
+        Builtin::BytesConcat => "$bytesConcat",
+        Builtin::BytesEncodeUtf8 => "$bytesEncodeUtf8",
+        Builtin::BytesDecodeValidUtf8 => "$bytesDecodeValidUtf8",
         Builtin::Panic => "$panic",
         Builtin::Todo => "$todo",
         Builtin::Dbg => "$dbg",
@@ -57,6 +68,7 @@ pub(crate) fn runtime_name(op: Builtin) -> &'static str {
         Builtin::CellSet => "$cellSet",
         Builtin::ShowString => "$showString",
         Builtin::DebugPrint => "$debugPrint",
+        Builtin::AssertFail => "$assertDefect",
         Builtin::ShowNested => unreachable!("monomorphization replaces String.show_nested"),
     }
 }
@@ -74,6 +86,7 @@ mod tests {
             Builtin::CellSet,
             Builtin::ShowString,
             Builtin::DebugPrint,
+            Builtin::AssertFail,
         ];
         let replaced = [Builtin::ShowNested];
         for &op in Builtin::ALL

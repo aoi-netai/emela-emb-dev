@@ -243,7 +243,9 @@ pub(in crate::compiler::emit) fn int64_shift_right_unsigned(
 }
 
 pub(in crate::compiler::emit) fn emit_i64_shift_helpers(writer: &mut Writer) {
-    writer.begin_block("static inline int64_t emela_i64_shift_left(int64_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_left(int64_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return INT64_C(0);");
     writer.end_block();
@@ -251,7 +253,9 @@ pub(in crate::compiler::emit) fn emit_i64_shift_helpers(writer: &mut Writer) {
     writer.end_block();
     writer.blank();
 
-    writer.begin_block("static inline int64_t emela_i64_shift_right(int64_t value, int32_t by)");
+    writer.begin_block(
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_right(int64_t value, int32_t by)",
+    );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return value < INT64_C(0) ? -INT64_C(1) : INT64_C(0);");
     writer.end_block();
@@ -264,7 +268,7 @@ pub(in crate::compiler::emit) fn emit_i64_shift_helpers(writer: &mut Writer) {
     writer.blank();
 
     writer.begin_block(
-        "static inline int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
+        "static inline EMELA_UNUSED int64_t emela_i64_shift_right_unsigned(int64_t value, int32_t by)",
     );
     writer.begin_block("if (by >= INT32_C(64))");
     writer.line("return INT64_C(0);");

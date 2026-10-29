@@ -47,7 +47,11 @@ fn c_only_build_emits_headers_and_aliases_without_a_main_or_native_compiler() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         write(root, "Pome.toml", "[build]\ntarget = \"c-embedded\"\n");
-        write(root, "src/main.emel", "pub fn answer() -> Int { 42 }\n");
+        write(
+            root,
+            "src/main.emel",
+            "@export(c, \"answer\")\npub fn answer() -> Int { 42 }\n",
+        );
         write(
             root,
             "embedded.toml",
@@ -84,7 +88,11 @@ fn generated_artifact_builds_without_the_original_emela_sources() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     write(root, "Pome.toml", "");
-    write(root, "src/main.emel", "pub fn answer() -> Int { 42 }\n");
+    write(
+        root,
+        "src/main.emel",
+        "@export(c, \"answer\")\npub fn answer() -> Int { 42 }\n",
+    );
     write(
         root,
         "embedded.toml",
@@ -172,7 +180,11 @@ fn embedded_configuration_reports_invalid_fields_ranges_and_export_names() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         write(root, "Pome.toml", "");
-        write(root, "src/main.emel", "pub fn answer() -> Int { 42 }\n");
+        write(
+            root,
+            "src/main.emel",
+            "@export(c, \"answer\")\npub fn answer() -> Int { 42 }\n",
+        );
         write(root, "embedded.toml", config);
         fails(
             root,
@@ -456,7 +468,7 @@ fn generated_bytes_match_across_processes_and_working_directories() {
         write(
             root,
             "src/main.emel",
-            "pub fn compute(x: Int) -> String { add = fn(n: Int) { x + n }\n Int.to_string(add(2)) }\n",
+            "@export(c, \"compute\")\npub fn compute(x: Int) -> String { add = fn(n: Int) { x + n }\n Int.to_string(add(2)) }\n",
         );
         write(
             root,
@@ -481,4 +493,48 @@ fn generated_bytes_match_across_processes_and_working_directories() {
             expected = Some(actual);
         }
     }
+}
+
+#[test]
+fn a_host_target_skips_the_configured_board_and_keeps_its_firmware() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "Pome.toml", "[embedded]\nboard = \"stm32f446re\"\n");
+    write(root, "src/main.emel", "pub fn main() -> Int { 42 }\n");
+    let state = "target/emela/c-embedded/stm32f446re/board-build.json";
+    write(root, state, "old successful record\n");
+    succeeds(root, &["build", "--target", "js"]);
+    assert!(root.join("target/emela/js/main.mjs").is_file());
+    assert!(root.join(state).exists());
+    fails(
+        root,
+        &["build", "--board", "stm32f446re", "--target", "js"],
+        "requires target `c-embedded`",
+    );
+    assert!(root.join(state).exists());
+}
+
+#[test]
+fn board_overlays_are_skipped_without_a_board() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "Pome.toml",
+        "[embedded.modules]\nDevice = \"ports/{board}/device.emel\"\n",
+    );
+    write(
+        root,
+        "src/main.emel",
+        "import Device\npub fn answer() -> Int { Device.read() }\n",
+    );
+    write(root, "src/device.emel", "pub fn read() -> Int { 0 }\n");
+    write(
+        root,
+        "ports/esp32c3/device.emel",
+        "pub fn read() -> Missing { missing }\n",
+    );
+    succeeds(root, &["check"]);
+    succeeds(root, &["build", "--target", "c-embedded"]);
+    fails(root, &["check", "--board", "esp32c3"], "Missing");
 }

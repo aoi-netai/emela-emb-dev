@@ -109,7 +109,7 @@ pub(in crate::compiler::emit) fn float_truncate(
 
 pub(in crate::compiler::emit) fn emit_float_to_int_helper(writer: &mut Writer) {
     writer.begin_block(
-        "static inline int32_t emela_emb_float_to_int(double value, uint8_t operation)",
+        "static inline EMELA_UNUSED int32_t emela_emb_float_to_int(double value, uint8_t operation)",
     );
     writer.begin_block("if (!(value > -2147483649.0 && value < 2147483648.0))");
     writer.line(

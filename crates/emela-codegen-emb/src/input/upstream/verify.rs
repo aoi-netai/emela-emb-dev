@@ -33,6 +33,14 @@ pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
             };
             let reason = match value {
                 emela_lir::Value::Runtime {
+                    op: emela_lir::RuntimeOp::DefectAt,
+                    ..
+                } => Some(reject_defect_at()),
+                emela_lir::Value::Builtin {
+                    op: emela_core::Builtin::AssertFail,
+                    ..
+                } => Some(reject_assert_fail()),
+                emela_lir::Value::Runtime {
                     op:
                         op @ (emela_lir::RuntimeOp::Defect
                         | emela_lir::RuntimeOp::DefectTake
@@ -70,4 +78,18 @@ pub fn verify_flow(flow: &emela_lir::Module) -> Result<(), Vec<Error>> {
     } else {
         Err(errors)
     }
+}
+
+fn reject_defect_at() -> String {
+    format!(
+        "Heap IR runtime `{}` at stage Flow",
+        emela_lir::RuntimeOp::DefectAt.name()
+    )
+}
+
+fn reject_assert_fail() -> String {
+    format!(
+        "unlowered builtin `{}` at stage Flow",
+        emela_core::Builtin::AssertFail.info().path()
+    )
 }
