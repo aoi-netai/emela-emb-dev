@@ -4,12 +4,12 @@
   "backend": "emela-codegen-emb",
   "config": {
     "path": "crates/emela-codegen-emb/tools/flow-implementation-routes.json",
-    "sha256": "562bb1f3f656ee0864044525df5a315d68682fd57cddab6333257d001015ea88"
+    "sha256": "2b6b2309670a9a7daaba3f87db53881ce8dfb301f764e219a0b8fd49463a5569"
   },
   "sources": [
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-      "sha256": "382bf3e8a7a4ff20a5c75b1dc40c61bff40368c08d3f0f49ff4b19b913a8a368"
+      "sha256": "c437325efdd95cf09512e880925de55ea44e44eeaeb7e0c17cea97b5a3c6d79f"
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/case_keys.rs",
@@ -33,7 +33,7 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_operations.rs",
-      "sha256": "278df9c77b64dff57e9d63af54cf2d7641cff2f63ecadd15c68ea32517256710"
+      "sha256": "4d49a28a732bd14b84af540113575cba52c5d2af224bea3d6b4f703303907f93"
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/primitive_types.rs",
@@ -41,7 +41,7 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-      "sha256": "7a82fdcdf3206fdf5e93437ccb9795534d4e52ea43337ecfd085a7522ae5df5a"
+      "sha256": "dbf87cc732e81e7c58c0262023506c6d86360000f1c3ad68bcd94985e6f177ee"
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/emit/features/statements/mod.rs",
@@ -65,11 +65,11 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-      "sha256": "9bdc64aa56b2bef9d21578c84f443441403b1b7392fd0c905fc6e6ed4a9c7ad7"
+      "sha256": "bb84bc57e17523b71a5a080e2a136939f41e76a51718eddef07bc4d7bf5c81f3"
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/lower/closure.rs",
-      "sha256": "13b2f4990a475c3704073f16710a1afee479a64522d24c6e28f0c2e80f660f24"
+      "sha256": "2a21204cc6929cffecc3800fd3663d1d6d25e42c6891a35463dcebb7110c3dda"
     },
     {
       "path": "crates/emela-codegen-emb/src/compiler/lower/stages.rs",
@@ -89,11 +89,11 @@
     },
     {
       "path": "crates/emela-codegen-emb/src/contract/ir.rs",
-      "sha256": "3acb2071a3d839883ac5124afb6376ff8d921ed9affc80d078e5af0187efad61"
+      "sha256": "0db10f8710f44924b3683d4bb1c3d69024492447a21651a47607d77ac8bceb9f"
     },
     {
       "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-      "sha256": "4dc8e833e1394e881c6f3b11c8a7d4c19d449bedf243c253bf894fed3bb3ac01"
+      "sha256": "16c9ebe96b8ec55345e31d6a81d7e706de3377f9e0ed242494a44f49adeca799"
     },
     {
       "path": "crates/emela-codegen-emb/src/semantics/representations.rs",
@@ -101,7 +101,7 @@
     },
     {
       "path": "crates/emela-lir/src/verify.rs",
-      "sha256": "99688bb0f7635ac3ad2270f1af1b348ae3ce29d1864991ce7c6a2088218d97e7"
+      "sha256": "e60ba66874ef73fbc9095270d3756fbd611e01cb70722fd8b9557ea8996b2bf0"
     }
   ],
   "routes": [
@@ -125,7 +125,8 @@
         "DefectTake",
         "DefectResume",
         "Yield",
-        "YieldPerform"
+        "YieldPerform",
+        "DefectAt"
       ],
       "required_calls": []
     },
@@ -151,7 +152,8 @@
         "Inspect",
         "ShowNested",
         "ShowString",
-        "DebugPrint"
+        "DebugPrint",
+        "AssertFail"
       ],
       "required_calls": []
     },
@@ -947,6 +949,74 @@
   ],
   "items": [
     {
+      "id": "emela_core::Builtin::AssertFail",
+      "kind": "variant",
+      "parent": "emela_core::Builtin",
+      "observed_definition_sha256": "912be595508f4a3f461d5a4c53cfe78534120e0d88b00961adcfbed6ab2012f9",
+      "review_status": "unreviewed",
+      "evidence": [
+        {
+          "route": "reject-builtin",
+          "role": "reject_candidate",
+          "contexts": [
+            "input"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
+            "line": 39,
+            "end_line": 42
+          },
+          "symbol": "verify_flow",
+          "pattern": "emela_lir :: Value :: Builtin { op : emela_core :: Builtin :: AssertFail , .. }",
+          "condition": null,
+          "calls": [
+            "Some",
+            "reject_assert_fail"
+          ],
+          "body_sha256": "285f5dbb64bd399a52d451973cbe20df38db211043359226c2d8cd951f640588",
+          "error_only": false
+        },
+        {
+          "route": "builtin",
+          "role": "emit_candidate",
+          "contexts": [
+            "common"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
+            "line": 77,
+            "end_line": 77
+          },
+          "symbol": "emit",
+          "pattern": "Builtin :: AssertFail",
+          "condition": null,
+          "calls": [
+            "rejected :: assert_fail"
+          ],
+          "body_sha256": "042e2860e292bae1c0f0c68f1e53e2dea0fa9e913a3763e99919a4e1cc5a62ec",
+          "error_only": false
+        },
+        {
+          "route": "upstream-adapter-builtin",
+          "role": "lower_candidate",
+          "contexts": [
+            "common"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
+            "line": 110,
+            "end_line": 110
+          },
+          "symbol": "adapt_builtin",
+          "pattern": "emela_core :: Builtin :: AssertFail",
+          "condition": null,
+          "calls": [],
+          "body_sha256": "5b4e08c466c20e3e773791168b332868f074c923f93790baff99754f9aa9810a",
+          "error_only": false
+        }
+      ]
+    },
+    {
       "id": "emela_core::Builtin::CellGet",
       "kind": "variant",
       "parent": "emela_core::Builtin",
@@ -961,8 +1031,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 82,
-            "end_line": 82
+            "line": 83,
+            "end_line": 83
           },
           "symbol": "emit",
           "pattern": "Builtin :: CellGet",
@@ -1008,8 +1078,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 81,
-            "end_line": 81
+            "line": 82,
+            "end_line": 82
           },
           "symbol": "emit",
           "pattern": "Builtin :: CellNew",
@@ -1055,8 +1125,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 83,
-            "end_line": 83
+            "line": 84,
+            "end_line": 84
           },
           "symbol": "emit",
           "pattern": "Builtin :: CellSet",
@@ -1102,8 +1172,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1122,8 +1192,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 79,
-            "end_line": 79
+            "line": 80,
+            "end_line": 80
           },
           "symbol": "emit",
           "pattern": "Builtin :: Dbg",
@@ -1169,8 +1239,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1189,8 +1259,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 85,
-            "end_line": 85
+            "line": 86,
+            "end_line": 86
           },
           "symbol": "emit",
           "pattern": "Builtin :: DebugPrint",
@@ -1565,8 +1635,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -1585,8 +1655,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 80,
-            "end_line": 80
+            "line": 81,
+            "end_line": 81
           },
           "symbol": "emit",
           "pattern": "Builtin :: Inspect",
@@ -2572,8 +2642,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -2592,8 +2662,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 77,
-            "end_line": 77
+            "line": 78,
+            "end_line": 78
           },
           "symbol": "emit",
           "pattern": "Builtin :: Panic",
@@ -2639,8 +2709,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -2706,8 +2776,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -2726,8 +2796,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 84,
-            "end_line": 84
+            "line": 85,
+            "end_line": 85
           },
           "symbol": "emit",
           "pattern": "Builtin :: ShowString",
@@ -3337,8 +3407,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 44,
-            "end_line": 57
+            "line": 52,
+            "end_line": 65
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Builtin { op : op @ (emela_core :: Builtin :: Panic | emela_core :: Builtin :: Todo | emela_core :: Builtin :: Dbg | emela_core :: Builtin :: Inspect | emela_core :: Builtin :: ShowNested | emela_core :: Builtin :: ShowString | emela_core :: Builtin :: DebugPrint) , .. }",
@@ -3357,8 +3427,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/builtins/mod.rs",
-            "line": 78,
-            "end_line": 78
+            "line": 79,
+            "end_line": 79
           },
           "symbol": "emit",
           "pattern": "Builtin :: Todo",
@@ -3426,8 +3496,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 181,
-            "end_line": 184
+            "line": 182,
+            "end_line": 185
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Attempt { exit , suspends }",
@@ -3477,8 +3547,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 179,
-            "end_line": 179
+            "line": 180,
+            "end_line": 180
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Await { exit }",
@@ -3528,8 +3598,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 188,
-            "end_line": 188
+            "line": 189,
+            "end_line": 189
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: CauseKind { kind }",
@@ -3546,7 +3616,7 @@
       "id": "emela_core::FiberOp::CauseRaise",
       "kind": "variant",
       "parent": "emela_core::FiberOp",
-      "observed_definition_sha256": "4d8020e4707c3df826a527b53f4b3a6604edf7c028c6c889c6e50ad1f0565476",
+      "observed_definition_sha256": "b686ace922a0cd4a23be71458706ed4e5fb1da079af24ab30686afbeefb1d6f6",
       "review_status": "unreviewed",
       "evidence": [
         {
@@ -3579,11 +3649,11 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 190,
-            "end_line": 190
+            "line": 191,
+            "end_line": 191
           },
           "symbol": "adapt_fiber_op",
-          "pattern": "emela_core :: FiberOp :: CauseRaise",
+          "pattern": "emela_core :: FiberOp :: CauseRaise { .. }",
           "condition": null,
           "calls": [],
           "body_sha256": "57507f544b7a3d1a3082886b14664282392ce5bd4004d06f1e88cbe66fd2c7dc",
@@ -3628,8 +3698,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 189,
-            "end_line": 189
+            "line": 190,
+            "end_line": 190
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: CauseToString",
@@ -3677,8 +3747,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 185,
-            "end_line": 185
+            "line": 186,
+            "end_line": 186
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Complete",
@@ -3726,8 +3796,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 177,
-            "end_line": 177
+            "line": 178,
+            "end_line": 178
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Deferred",
@@ -3775,8 +3845,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 186,
-            "end_line": 186
+            "line": 187,
+            "end_line": 187
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: DeferredAwait",
@@ -3824,8 +3894,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 176,
-            "end_line": 176
+            "line": 177,
+            "end_line": 177
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Fork",
@@ -3873,8 +3943,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 180,
-            "end_line": 180
+            "line": 181,
+            "end_line": 181
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Interrupt",
@@ -3922,8 +3992,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 178,
-            "end_line": 178
+            "line": 179,
+            "end_line": 179
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Join",
@@ -3971,8 +4041,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 187,
-            "end_line": 187
+            "line": 188,
+            "end_line": 188
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Poll",
@@ -4020,8 +4090,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 175,
-            "end_line": 175
+            "line": 176,
+            "end_line": 176
           },
           "symbol": "adapt_fiber_op",
           "pattern": "emela_core :: FiberOp :: Scope { fails }",
@@ -4107,8 +4177,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 338,
-            "end_line": 338
+            "line": 339,
+            "end_line": 339
           },
           "symbol": "adapt_callee",
           "pattern": "emela_lir :: Callee :: Direct (value0)",
@@ -4192,8 +4262,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 339,
-            "end_line": 339
+            "line": 340,
+            "end_line": 340
           },
           "symbol": "adapt_callee",
           "pattern": "emela_lir :: Callee :: Indirect (value0)",
@@ -4271,8 +4341,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 340,
-            "end_line": 348
+            "line": 341,
+            "end_line": 349
           },
           "symbol": "adapt_callee",
           "pattern": "emela_lir :: Callee :: Op { handler , effect , op , }",
@@ -4322,8 +4392,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 363,
-            "end_line": 363
+            "line": 364,
+            "end_line": 364
           },
           "symbol": "adapt_case_key",
           "pattern": "emela_lir :: CaseKey :: Lit (value0)",
@@ -4374,8 +4444,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 362,
-            "end_line": 362
+            "line": 363,
+            "end_line": 363
           },
           "symbol": "adapt_case_key",
           "pattern": "emela_lir :: CaseKey :: Variant (value0)",
@@ -4423,8 +4493,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 387,
-            "end_line": 387
+            "line": 388,
+            "end_line": 388
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: Bool (value0)",
@@ -4472,8 +4542,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 386,
-            "end_line": 386
+            "line": 387,
+            "end_line": 387
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: Float (value0)",
@@ -4521,8 +4591,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 384,
-            "end_line": 384
+            "line": 385,
+            "end_line": 385
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: Int (value0)",
@@ -4570,8 +4640,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 385,
-            "end_line": 385
+            "line": 386,
+            "end_line": 386
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: Int64 (value0)",
@@ -4619,8 +4689,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 388,
-            "end_line": 388
+            "line": 389,
+            "end_line": 389
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: String (value0)",
@@ -4669,8 +4739,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 389,
-            "end_line": 389
+            "line": 390,
+            "end_line": 390
           },
           "symbol": "adapt_const",
           "pattern": "emela_lir :: Const :: Unit",
@@ -4737,8 +4807,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 457,
-            "end_line": 457
+            "line": 458,
+            "end_line": 458
           },
           "symbol": "adapt_on_fail",
           "pattern": "emela_lir :: OnFail :: Break (value0)",
@@ -4832,8 +4902,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 459,
-            "end_line": 462
+            "line": 460,
+            "end_line": 463
           },
           "symbol": "adapt_on_fail",
           "pattern": "emela_lir :: OnFail :: Handle { error , body }",
@@ -4902,8 +4972,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 458,
-            "end_line": 458
+            "line": 459,
+            "end_line": 459
           },
           "symbol": "adapt_on_fail",
           "pattern": "emela_lir :: OnFail :: Propagate",
@@ -4949,8 +5019,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 469,
-            "end_line": 469
+            "line": 470,
+            "end_line": 470
           },
           "symbol": "adapt_operand",
           "pattern": "emela_lir :: Operand :: Const (value0)",
@@ -4999,8 +5069,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 468,
-            "end_line": 468
+            "line": 469,
+            "end_line": 469
           },
           "symbol": "adapt_operand",
           "pattern": "emela_lir :: Operand :: Var (value0)",
@@ -5049,8 +5119,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 475,
-            "end_line": 475
+            "line": 476,
+            "end_line": 476
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Add",
@@ -5096,8 +5166,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 478,
-            "end_line": 478
+            "line": 479,
+            "end_line": 479
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Div",
@@ -5143,8 +5213,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 482,
-            "end_line": 482
+            "line": 483,
+            "end_line": 483
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Eq",
@@ -5190,8 +5260,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 487,
-            "end_line": 487
+            "line": 488,
+            "end_line": 488
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Ge",
@@ -5237,8 +5307,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 486,
-            "end_line": 486
+            "line": 487,
+            "end_line": 487
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Gt",
@@ -5284,8 +5354,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 485,
-            "end_line": 485
+            "line": 486,
+            "end_line": 486
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Le",
@@ -5331,8 +5401,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 484,
-            "end_line": 484
+            "line": 485,
+            "end_line": 485
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Lt",
@@ -5378,8 +5448,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 477,
-            "end_line": 477
+            "line": 478,
+            "end_line": 478
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Mul",
@@ -5425,8 +5495,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 483,
-            "end_line": 483
+            "line": 484,
+            "end_line": 484
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Ne",
@@ -5472,8 +5542,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 480,
-            "end_line": 480
+            "line": 481,
+            "end_line": 481
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Neg",
@@ -5519,8 +5589,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 481,
-            "end_line": 481
+            "line": 482,
+            "end_line": 482
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Not",
@@ -5566,8 +5636,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 479,
-            "end_line": 479
+            "line": 480,
+            "end_line": 480
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Rem",
@@ -5613,8 +5683,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 476,
-            "end_line": 476
+            "line": 477,
+            "end_line": 477
           },
           "symbol": "adapt_prim_op",
           "pattern": "emela_lir :: PrimOp :: Sub",
@@ -5660,8 +5730,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 495,
-            "end_line": 495
+            "line": 496,
+            "end_line": 496
           },
           "symbol": "adapt_prim_ty",
           "pattern": "emela_lir :: PrimTy :: F64",
@@ -5707,8 +5777,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 493,
-            "end_line": 493
+            "line": 494,
+            "end_line": 494
           },
           "symbol": "adapt_prim_ty",
           "pattern": "emela_lir :: PrimTy :: I32",
@@ -5754,8 +5824,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 494,
-            "end_line": 494
+            "line": 495,
+            "end_line": 495
           },
           "symbol": "adapt_prim_ty",
           "pattern": "emela_lir :: PrimTy :: I64",
@@ -5801,8 +5871,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 496,
-            "end_line": 496
+            "line": 497,
+            "end_line": 497
           },
           "symbol": "adapt_prim_ty",
           "pattern": "emela_lir :: PrimTy :: String",
@@ -5848,8 +5918,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 724,
-            "end_line": 724
+            "line": 726,
+            "end_line": 726
           },
           "symbol": "adapt_repr",
           "pattern": "emela_lir :: Repr :: F64",
@@ -5895,8 +5965,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 722,
-            "end_line": 722
+            "line": 724,
+            "end_line": 724
           },
           "symbol": "adapt_repr",
           "pattern": "emela_lir :: Repr :: I32",
@@ -5942,8 +6012,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 723,
-            "end_line": 723
+            "line": 725,
+            "end_line": 725
           },
           "symbol": "adapt_repr",
           "pattern": "emela_lir :: Repr :: I64",
@@ -5989,8 +6059,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 725,
-            "end_line": 725
+            "line": 727,
+            "end_line": 727
           },
           "symbol": "adapt_repr",
           "pattern": "emela_lir :: Repr :: Ref",
@@ -6036,8 +6106,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 726,
-            "end_line": 726
+            "line": 728,
+            "end_line": 728
           },
           "symbol": "adapt_repr",
           "pattern": "emela_lir :: Repr :: Void",
@@ -6083,8 +6153,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 503,
-            "end_line": 503
+            "line": 504,
+            "end_line": 504
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: DebugPrint",
@@ -6110,8 +6180,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 35,
-            "end_line": 43
+            "line": 43,
+            "end_line": 51
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6130,8 +6200,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 245,
-            "end_line": 245
+            "line": 246,
+            "end_line": 246
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: Defect",
@@ -6150,14 +6220,82 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 505,
-            "end_line": 505
+            "line": 506,
+            "end_line": 506
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: Defect",
           "condition": null,
           "calls": [],
           "body_sha256": "a556c60011ba811e1d64e5fea39a86376f0582057b3281a17ccc21be9f92a340",
+          "error_only": false
+        }
+      ]
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectAt",
+      "kind": "variant",
+      "parent": "emela_lir::RuntimeOp",
+      "observed_definition_sha256": "7fb26290e755406510edd206621365b037b92db7dfe45c49949ff4958ba06787",
+      "review_status": "unreviewed",
+      "evidence": [
+        {
+          "route": "reject-runtime",
+          "role": "reject_candidate",
+          "contexts": [
+            "input"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
+            "line": 35,
+            "end_line": 38
+          },
+          "symbol": "verify_flow",
+          "pattern": "emela_lir :: Value :: Runtime { op : emela_lir :: RuntimeOp :: DefectAt , .. }",
+          "condition": null,
+          "calls": [
+            "Some",
+            "reject_defect_at"
+          ],
+          "body_sha256": "2fa4758c3b5ac039db4734bb9ae2d9307f9bc8bbb85337b3f21bbcb1c2d0e6c4",
+          "error_only": false
+        },
+        {
+          "route": "runtime",
+          "role": "emit_candidate",
+          "contexts": [
+            "common"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
+            "line": 245,
+            "end_line": 245
+          },
+          "symbol": "emit",
+          "pattern": "RuntimeOp :: DefectAt",
+          "condition": null,
+          "calls": [
+            "defect_at"
+          ],
+          "body_sha256": "8e975eb181873452869fe751314810d69e2e61e0ec424b7896ea45cd220519ea",
+          "error_only": false
+        },
+        {
+          "route": "upstream-adapter-runtimeop",
+          "role": "lower_candidate",
+          "contexts": [
+            "common"
+          ],
+          "source": {
+            "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
+            "line": 507,
+            "end_line": 507
+          },
+          "symbol": "adapt_runtime_op",
+          "pattern": "emela_lir :: RuntimeOp :: DefectAt",
+          "condition": null,
+          "calls": [],
+          "body_sha256": "8787336cf0861b8d07d4e98f98d4756beba504513b26e5eb2a9f0840540dfbef",
           "error_only": false
         }
       ]
@@ -6177,8 +6315,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 35,
-            "end_line": 43
+            "line": 43,
+            "end_line": 51
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6197,8 +6335,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 247,
-            "end_line": 247
+            "line": 248,
+            "end_line": 248
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: DefectResume",
@@ -6217,8 +6355,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 507,
-            "end_line": 507
+            "line": 509,
+            "end_line": 509
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: DefectResume",
@@ -6244,8 +6382,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 35,
-            "end_line": 43
+            "line": 43,
+            "end_line": 51
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6264,8 +6402,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 246,
-            "end_line": 246
+            "line": 247,
+            "end_line": 247
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: DefectTake",
@@ -6284,8 +6422,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 506,
-            "end_line": 506
+            "line": 508,
+            "end_line": 508
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: DefectTake",
@@ -6311,8 +6449,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 248,
-            "end_line": 248
+            "line": 249,
+            "end_line": 249
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: Hold",
@@ -6331,8 +6469,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 508,
-            "end_line": 508
+            "line": 510,
+            "end_line": 510
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: Hold",
@@ -6378,8 +6516,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 504,
-            "end_line": 504
+            "line": 505,
+            "end_line": 505
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: Retire",
@@ -6425,8 +6563,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 502,
-            "end_line": 502
+            "line": 503,
+            "end_line": 503
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: ShowString",
@@ -6452,8 +6590,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 249,
-            "end_line": 249
+            "line": 250,
+            "end_line": 250
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: Unhold",
@@ -6472,8 +6610,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 509,
-            "end_line": 509
+            "line": 511,
+            "end_line": 511
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: Unhold",
@@ -6499,8 +6637,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 35,
-            "end_line": 43
+            "line": 43,
+            "end_line": 51
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6519,8 +6657,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 250,
-            "end_line": 250
+            "line": 251,
+            "end_line": 251
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: Yield",
@@ -6539,8 +6677,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 510,
-            "end_line": 510
+            "line": 512,
+            "end_line": 512
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: Yield",
@@ -6566,8 +6704,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-            "line": 35,
-            "end_line": 43
+            "line": 43,
+            "end_line": 51
           },
           "symbol": "verify_flow",
           "pattern": "emela_lir :: Value :: Runtime { op : op @ (emela_lir :: RuntimeOp :: Defect | emela_lir :: RuntimeOp :: DefectTake | emela_lir :: RuntimeOp :: DefectResume | emela_lir :: RuntimeOp :: Yield | emela_lir :: RuntimeOp :: YieldPerform) , .. }",
@@ -6586,8 +6724,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/emit/features/runtime.rs",
-            "line": 251,
-            "end_line": 251
+            "line": 252,
+            "end_line": 252
           },
           "symbol": "emit",
           "pattern": "RuntimeOp :: YieldPerform",
@@ -6606,8 +6744,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 511,
-            "end_line": 511
+            "line": 513,
+            "end_line": 513
           },
           "symbol": "adapt_runtime_op",
           "pattern": "emela_lir :: RuntimeOp :: YieldPerform",
@@ -6819,8 +6957,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 569,
-            "end_line": 573
+            "line": 571,
+            "end_line": 575
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Block { dst , label , body }",
@@ -6913,8 +7051,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 580,
-            "end_line": 580
+            "line": 582,
+            "end_line": 582
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Drop (value0)",
@@ -7006,8 +7144,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 579,
-            "end_line": 579
+            "line": 581,
+            "end_line": 581
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Dup (value0)",
@@ -7077,8 +7215,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 536,
-            "end_line": 546
+            "line": 538,
+            "end_line": 548
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: If { dst , cond , then , else_ , }",
@@ -7150,8 +7288,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 525,
-            "end_line": 535
+            "line": 527,
+            "end_line": 537
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Let { dst , value , on_defect , on_suspend , }",
@@ -7223,8 +7361,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 558,
-            "end_line": 568
+            "line": 560,
+            "end_line": 570
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Loop { dst , vars , inits , body , }",
@@ -7297,8 +7435,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 574,
-            "end_line": 578
+            "line": 576,
+            "end_line": 580
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Protect { dst , body , cleanup }",
@@ -7369,8 +7507,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 547,
-            "end_line": 557
+            "line": 549,
+            "end_line": 559
           },
           "symbol": "adapt_stmt",
           "pattern": "emela_lir :: Stmt :: Switch { dst , on , cases , default , }",
@@ -7425,8 +7563,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 595,
-            "end_line": 595
+            "line": 597,
+            "end_line": 597
           },
           "symbol": "adapt_switch_on",
           "pattern": "emela_lir :: SwitchOn :: Lit (value0)",
@@ -7477,8 +7615,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 594,
-            "end_line": 594
+            "line": 596,
+            "end_line": 596
           },
           "symbol": "adapt_switch_on",
           "pattern": "emela_lir :: SwitchOn :: Tag (value0)",
@@ -7548,8 +7686,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 604,
-            "end_line": 607
+            "line": 606,
+            "end_line": 609
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Break { label , value }",
@@ -7568,7 +7706,7 @@
       "id": "emela_lir::Term::Defect",
       "kind": "variant",
       "parent": "emela_lir::Term",
-      "observed_definition_sha256": "8af6802392ac735e6a6c33f828cdd23f01e60bb0eec1c32a58b59639264d603d",
+      "observed_definition_sha256": "2335c83d9b4fbe519684ccb99bfd8c218532931b2927aa77c988afd2f5a4161c",
       "review_status": "unreviewed",
       "evidence": [
         {
@@ -7620,11 +7758,11 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 611,
-            "end_line": 611
+            "line": 613,
+            "end_line": 613
           },
           "symbol": "adapt_term",
-          "pattern": "emela_lir :: Term :: Defect (value0)",
+          "pattern": "emela_lir :: Term :: Defect (value0 , _)",
           "condition": null,
           "calls": [
             "adapt_operand",
@@ -7691,8 +7829,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 603,
-            "end_line": 603
+            "line": 605,
+            "end_line": 605
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Fail (value0)",
@@ -7762,8 +7900,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 608,
-            "end_line": 610
+            "line": 610,
+            "end_line": 612
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Recur (value0)",
@@ -7835,8 +7973,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 602,
-            "end_line": 602
+            "line": 604,
+            "end_line": 604
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Return (value0)",
@@ -7907,8 +8045,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 613,
-            "end_line": 613
+            "line": 615,
+            "end_line": 615
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Unreachable",
@@ -7997,8 +8135,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 612,
-            "end_line": 612
+            "line": 614,
+            "end_line": 614
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Unwind",
@@ -8065,8 +8203,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 601,
-            "end_line": 601
+            "line": 603,
+            "end_line": 603
           },
           "symbol": "adapt_term",
           "pattern": "emela_lir :: Term :: Yield (value0)",
@@ -8118,8 +8256,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 699,
-            "end_line": 702
+            "line": 701,
+            "end_line": 704
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: AsError { error , enum_id }",
@@ -8169,8 +8307,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 636,
-            "end_line": 639
+            "line": 638,
+            "end_line": 641
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Builtin { op , args }",
@@ -8223,8 +8361,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 625,
-            "end_line": 635
+            "line": 627,
+            "end_line": 637
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Call { callee , args , suspends , on_fail , }",
@@ -8328,8 +8466,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 665,
-            "end_line": 665
+            "line": 667,
+            "end_line": 667
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Closure (value0)",
@@ -8381,8 +8519,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 707,
-            "end_line": 707
+            "line": 709,
+            "end_line": 709
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Coerce (value0)",
@@ -8433,8 +8571,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 619,
-            "end_line": 619
+            "line": 621,
+            "end_line": 621
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Const (value0)",
@@ -8516,8 +8654,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 670,
-            "end_line": 673
+            "line": 672,
+            "end_line": 675
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: EnvGet { env , index }",
@@ -8567,8 +8705,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 678,
-            "end_line": 684
+            "line": 680,
+            "end_line": 686
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: EvExtend { base , bindings }",
@@ -8622,8 +8760,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 674,
-            "end_line": 677
+            "line": 676,
+            "end_line": 679
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: EvLookup { ev , effect }",
@@ -8673,8 +8811,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 690,
-            "end_line": 694
+            "line": 692,
+            "end_line": 696
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Fiber { op , args , on_fail }",
@@ -8728,8 +8866,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 644,
-            "end_line": 648
+            "line": 646,
+            "end_line": 650
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Field { base , ctor , index }",
@@ -8780,8 +8918,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 664,
-            "end_line": 664
+            "line": 666,
+            "end_line": 666
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: FnRef (value0)",
@@ -8832,8 +8970,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 685,
-            "end_line": 689
+            "line": 687,
+            "end_line": 691
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Handler { name , effect , ops }",
@@ -8887,8 +9025,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 695,
-            "end_line": 698
+            "line": 697,
+            "end_line": 700
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: IsError { error , enum_id }",
@@ -8938,8 +9076,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 657,
-            "end_line": 660
+            "line": 659,
+            "end_line": 662
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: List { elems , tail }",
@@ -8992,8 +9130,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 662,
-            "end_line": 662
+            "line": 664,
+            "end_line": 664
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: ListHead (value0)",
@@ -9044,8 +9182,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 661,
-            "end_line": 661
+            "line": 663,
+            "end_line": 663
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: ListIsEmpty (value0)",
@@ -9096,8 +9234,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 663,
-            "end_line": 663
+            "line": 665,
+            "end_line": 665
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: ListTail (value0)",
@@ -9148,8 +9286,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 640,
-            "end_line": 643
+            "line": 642,
+            "end_line": 645
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Make { ctor , args }",
@@ -9223,8 +9361,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 666,
-            "end_line": 669
+            "line": 668,
+            "end_line": 671
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: MakeClosure { function , captures }",
@@ -9277,8 +9415,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 620,
-            "end_line": 624
+            "line": 622,
+            "end_line": 626
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Prim { op , ty , args }",
@@ -9332,8 +9470,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 703,
-            "end_line": 706
+            "line": 705,
+            "end_line": 708
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Runtime { op , args }",
@@ -9386,8 +9524,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 649,
-            "end_line": 649
+            "line": 651,
+            "end_line": 651
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Tag (value0)",
@@ -9438,8 +9576,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 650,
-            "end_line": 652
+            "line": 652,
+            "end_line": 654
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: Tuple (value0)",
@@ -9492,8 +9630,8 @@
           ],
           "source": {
             "path": "crates/emela-codegen-emb/src/compiler/lower/adapter.rs",
-            "line": 653,
-            "end_line": 656
+            "line": 655,
+            "end_line": 658
           },
           "symbol": "adapt_value",
           "pattern": "emela_lir :: Value :: TupleGet { base , index }",
@@ -9513,8 +9651,8 @@
       "pattern": "_",
       "source": {
         "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-        "line": 58,
-        "end_line": 58
+        "line": 66,
+        "end_line": 66
       },
       "body_sha256": "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91"
     },
@@ -9523,8 +9661,8 @@
       "pattern": "_",
       "source": {
         "path": "crates/emela-codegen-emb/src/input/upstream/verify.rs",
-        "line": 58,
-        "end_line": 58
+        "line": 66,
+        "end_line": 66
       },
       "body_sha256": "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91"
     },

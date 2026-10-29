@@ -2,5 +2,4 @@
 set -euo pipefail
 
 crate_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec cargo run --quiet --locked --manifest-path "$crate_dir/Cargo.toml" \
-  -p emela-codegen-emb --example flow_implementation_inventory -- "$@"
+exec bash "$crate_dir/tools/inventory.sh" implementation "$@"

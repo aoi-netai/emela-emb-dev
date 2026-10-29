@@ -188,11 +188,7 @@ fn check_detects_stale_and_missing_files_without_writing() {
 
 #[test]
 fn checked_in_inventory_matches_the_declared_source_scope() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = inventory::repository_root();
     let out_dir = root.join("crates/emela-codegen-emb/docs/generated");
     let inventory = collect(root, inventory::default_scope()).unwrap();
     // The JSON distinguishes declaration presence from stage legality or implementation claims.

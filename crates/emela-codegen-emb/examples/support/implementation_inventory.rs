@@ -157,6 +157,22 @@ pub struct CoverageEntry {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RepresentationGap {
+    pub owner: String,
+    pub representation_owner: String,
+    pub missing_variants: Vec<String>,
+    pub extra_variants: Vec<String>,
+    pub missing_adapter: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RouteError {
+    pub route: String,
+    pub path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct Coverage {
     pub schema_version: u32,
     pub inventory_kind: &'static str,
@@ -167,6 +183,8 @@ pub struct Coverage {
     pub orphan_evidence: Vec<String>,
     pub unconfigured_enums: Vec<String>,
     pub out_of_scope: Vec<String>,
+    pub representation_gaps: Vec<RepresentationGap>,
+    pub route_errors: Vec<RouteError>,
 }
 
 fn tokens(value: impl ToTokens) -> String {
@@ -576,6 +594,8 @@ pub fn collect(
     let mut items = BTreeMap::<String, Vec<Evidence>>::new();
     let mut fallbacks = Vec::new();
     let mut sources = BTreeMap::<String, String>::new();
+    let mut representation_gaps = Vec::new();
+    let mut route_errors = Vec::new();
     if config
         .targets
         .iter()
@@ -601,7 +621,7 @@ pub fn collect(
                         ),
                         _ => None,
                     })
-                    .ok_or_else(|| format!("missing normalized enum {owner}"))?;
+                    .unwrap_or_default();
                 let upstream: BTreeSet<_> = definitions
                     .items
                     .iter()
@@ -611,18 +631,19 @@ pub fn collect(
                     })
                     .map(|item| item.id.rsplit("::").next().unwrap().to_owned())
                     .collect();
-                if variants != upstream {
-                    return Err(format!(
-                        "normalized variants differ from {}: {owner}",
-                        target.owner
-                    ));
-                }
-                if !config.routes.iter().any(|route| {
+                let missing_adapter = !config.routes.iter().any(|route| {
                     route.owner == target.owner
                         && route.path.ends_with("lower/adapter.rs")
                         && route.representation_owner.is_none()
-                }) {
-                    return Err(format!("missing upstream adapter for {}", target.owner));
+                });
+                if variants != upstream || missing_adapter {
+                    representation_gaps.push(RepresentationGap {
+                        owner: target.owner.clone(),
+                        representation_owner: owner.clone(),
+                        missing_variants: upstream.difference(&variants).cloned().collect(),
+                        extra_variants: variants.difference(&upstream).cloned().collect(),
+                        missing_adapter,
+                    });
                 }
             }
         }
@@ -643,10 +664,23 @@ pub fn collect(
         {
             return Err(format!("undeclared representation mapping {}", route.id));
         }
-        let source = fs::read_to_string(root.join(&route.path))
-            .map_err(|e| format!("{}: {e}", route.path))?;
-        sources.insert(route.path.clone(), sha256(source.as_bytes()));
-        let extracted = extract(route, &source)?;
+        let extracted = (|| {
+            let source = fs::read_to_string(root.join(&route.path))
+                .map_err(|e| format!("{}: {e}", route.path))?;
+            sources.insert(route.path.clone(), sha256(source.as_bytes()));
+            extract(route, &source)
+        })();
+        let extracted = match extracted {
+            Ok(extracted) => extracted,
+            Err(message) => {
+                route_errors.push(RouteError {
+                    route: route.id.clone(),
+                    path: route.path.clone(),
+                    message,
+                });
+                continue;
+            }
+        };
         for (id, evidence) in extracted.items {
             items.entry(id).or_default().extend(evidence);
         }
@@ -696,7 +730,7 @@ pub fn collect(
         fallbacks,
     };
     let mut coverage = Coverage {
-        schema_version: 1,
+        schema_version: 2,
         inventory_kind: "coverage_comparison",
         audit_level: "explicit_variant_syntax_only",
         targets: config.targets,
@@ -710,6 +744,8 @@ pub fn collect(
             .collect(),
         unconfigured_enums,
         out_of_scope: Vec::new(),
+        representation_gaps,
+        route_errors,
     };
     for definition in &definitions.items {
         let target = coverage.targets.iter().find(|t| {
@@ -732,6 +768,14 @@ pub fn collect(
                 .into_iter()
                 .flat_map(|i| &i.evidence)
                 .filter(|e| {
+                    if coverage.representation_gaps.iter().any(|gap| {
+                        gap.owner == target.owner
+                            && gap.missing_variants.iter().any(|name| {
+                                definition.id.rsplit("::").next() == Some(name.as_str())
+                            })
+                    }) {
+                        return false;
+                    }
                     if let Some(exclusion) = exclusion {
                         e.route == exclusion.route && e.role == "reject_candidate"
                     } else {
@@ -797,6 +841,18 @@ pub fn require_evidence(coverage: &Coverage) -> Result<(), String> {
                 .unconfigured_enums
                 .iter()
                 .map(|id| format!("unconfigured enum: {id}")),
+        )
+        .chain(coverage.representation_gaps.iter().map(|gap| {
+            format!(
+                "representation {}: missing={:?}, extra={:?}, missing_adapter={}",
+                gap.owner, gap.missing_variants, gap.extra_variants, gap.missing_adapter
+            )
+        }))
+        .chain(
+            coverage
+                .route_errors
+                .iter()
+                .map(|error| format!("route {} ({}): {}", error.route, error.path, error.message)),
         )
         .collect();
     if missing.is_empty() {
@@ -866,6 +922,27 @@ pub fn reports(
     for (status, count) in &coverage.summary {
         compared.push_str(&format!("| {status} | {count} |\n"));
     }
+    compared.push_str("\n## 上流IRへの未追従\n\n");
+    if coverage.representation_gaps.is_empty() && coverage.route_errors.is_empty() {
+        compared.push_str("なし。\n");
+    }
+    for gap in &coverage.representation_gaps {
+        compared.push_str(&format!(
+            "- {} → {}: 不足 {}、定義外 {}、adapter登録欠落 {}\n",
+            code(&gap.owner),
+            code(&gap.representation_owner),
+            code(&gap.missing_variants.join(", ")),
+            code(&gap.extra_variants.join(", ")),
+            gap.missing_adapter
+        ));
+    }
+    for error in &coverage.route_errors {
+        compared.push_str(&format!(
+            "- route {}: {}\n",
+            code(&error.route),
+            cell(&error.message)
+        ));
+    }
     compared.push_str("\n## 根拠が見つからない項目\n\n");
     for id in &coverage.unconfigured_enums {
         compared.push_str(&format!("- 監査設定のないenum: {}\n", code(id)));
@@ -879,6 +956,18 @@ pub fn reports(
                 .filter(|c| c.status == "missing_evidence")
                 .map(|c| format!("- {} / {}\n", code(&i.id), c.context))
         })
+        .chain(coverage.representation_gaps.iter().map(|gap| {
+            format!(
+                "representation {}: missing={:?}, extra={:?}, missing_adapter={}",
+                gap.owner, gap.missing_variants, gap.extra_variants, gap.missing_adapter
+            )
+        }))
+        .chain(
+            coverage
+                .route_errors
+                .iter()
+                .map(|error| format!("route {} ({}): {}", error.route, error.path, error.message)),
+        )
         .collect();
     if missing.is_empty() {
         compared.push_str(
@@ -931,11 +1020,7 @@ pub fn reports(
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = definitions::repository_root();
     let mut out_dir = root.join("crates/emela-codegen-emb/docs/generated");
     let mut config_path =
         root.join("crates/emela-codegen-emb/tools/flow-implementation-routes.json");

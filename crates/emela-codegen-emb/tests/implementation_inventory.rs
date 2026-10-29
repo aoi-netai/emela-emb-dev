@@ -224,11 +224,7 @@ fn old_implementation_ids_are_orphans_and_candidates_never_become_reviewed() {
 
 #[test]
 fn checked_in_implementation_and_comparison_match_all_backend_contexts() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = definitions::repository_root();
     let definitions = definitions::collect(root, definitions::default_scope()).unwrap();
     let (implementation, coverage) = implementation::collect(
         root,
@@ -259,4 +255,51 @@ fn checked_in_implementation_and_comparison_match_all_backend_contexts() {
             .any(|id| id.ends_with(".suspends"))
     );
     implementation::require_evidence(&coverage).unwrap();
+}
+
+#[test]
+fn representation_gaps_are_reported_without_preventing_coverage_generation() {
+    let mut selected = route();
+    selected["contexts"] = json!(["sync", "suspend"]);
+    selected["representation_owner"] = json!("crate::contract::ir::Op");
+    let dir = fixture(
+        "pub enum Op { A, Added }",
+        "fn dispatch(op: Op) { match op { Op::A => emit() } }",
+        selected.clone(),
+        json!([]),
+    );
+    fs::create_dir_all(dir.path().join("crates/emela-codegen-emb/src/contract")).unwrap();
+    fs::write(
+        dir.path()
+            .join("crates/emela-codegen-emb/src/contract/ir.rs"),
+        "pub(crate) enum Op { A }",
+    )
+    .unwrap();
+    let config = json!({"schema_version":1,"targets":[{"owner":"fixture::Op","representation_owner":"crate::contract::ir::Op","contexts":["sync","suspend"]}],"routes":[selected],"exclusions":[]});
+    fs::write(dir.path().join("routes.json"), config.to_string()).unwrap();
+    let (implementation, coverage) = collect(dir.path());
+    assert_eq!(coverage.summary["missing_evidence"], 2);
+    let serialized = serde_json::to_value(&coverage).unwrap();
+    assert_eq!(
+        serialized["representation_gaps"][0]["missing_variants"],
+        json!(["Added"])
+    );
+    let reports =
+        implementation::reports(&implementation, &coverage, dir.path(), dir.path()).unwrap();
+    assert!(
+        reports
+            .iter()
+            .any(|(name, text)| *name == "flow-coverage.md" && text.contains("Added"))
+    );
+    assert!(implementation::require_evidence(&coverage).is_err());
+}
+
+#[test]
+fn missing_dispatch_functions_are_reported_without_preventing_coverage_generation() {
+    let dir = fixture("pub enum Op { A }", "fn renamed() {}", route(), json!([]));
+    let (_, coverage) = collect(dir.path());
+    assert_eq!(coverage.summary["missing_evidence"], 2);
+    let serialized = serde_json::to_value(&coverage).unwrap();
+    assert_eq!(serialized["route_errors"][0]["route"], "dispatch");
+    assert!(implementation::require_evidence(&coverage).is_err());
 }

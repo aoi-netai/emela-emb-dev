@@ -1,20 +1,20 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "inventory_kind": "backend_implementation_ownership",
   "production_enabled": true,
-  "definition_inventory_sha256": "dc047d67535256618c785bb0524d1c0a72c68adb3a27bd2ac75f9b9ffcd6b4a3",
+  "definition_inventory_sha256": "d13acd9b783122bd8622186c4c1f55b1c115810712c0308e9345a631d15a041f",
   "summary": {
-    "additional_metadata_variants": 26,
-    "definition_records": 415,
+    "additional_metadata_variants": 27,
+    "definition_records": 428,
     "distinct_registered_tests": 102,
-    "fields": 188,
-    "input_rejected_variants": 22,
-    "missing_entries": 0,
+    "fields": 190,
+    "input_rejected_variants": 24,
+    "missing_entries": 9,
     "orphan_entries": 0,
-    "primary_audit_variants": 158,
+    "primary_audit_variants": 168,
     "shared_declarations": 43,
-    "variant_entries": 184,
-    "variants_with_registered_tests": 184
+    "variant_entries": 186,
+    "variants_with_registered_tests": 186
   },
   "records": [
     {
@@ -24,49 +24,49 @@
       "owner_id": "emela_core::Builtin",
       "role": "schema",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "4fc5a83ebc50ecf5a213b06619c2761118b1d9ef8dab6db6e2a74f5d54ea8feb",
+      "observed_definition_sha256": "e9d737ec4f9298bcb5898e0b59c032f7c1a803ded459a2465d9ac10c54582aad",
       "entry": {
         "path": "src/compiler/emit/features/builtins/mod.rs",
         "symbol": "emit",
         "line": 26,
-        "end_line": 87,
-        "body_sha256": "92e4ba72e32a11cb7341cca22138b738986915a7282c0263c4b0e85b0cba0cf8"
+        "end_line": 88,
+        "body_sha256": "81775230625ba245b4ca06c7472fbd7eae81dca33442d1beff7ef6d333a14d27"
       },
       "phase_entries": [
         {
           "path": "src/compiler/plan/operations/builtins/mod.rs",
           "symbol": "string_behavior",
           "line": 3,
-          "end_line": 55,
-          "body_sha256": "ff584e7f5cf834644aec7bdad65173062d30f46ab5720c3fa85d0b6635949763"
+          "end_line": 56,
+          "body_sha256": "57584860f8d002492070092e0c0c5dcdbb49dea22250ac1192f1013cde5df1e4"
         },
         {
           "path": "src/compiler/plan/operations/builtins/mod.rs",
           "symbol": "string_bound",
-          "line": 57,
-          "end_line": 113,
-          "body_sha256": "f80701b3cf9dc11c861ca0752ee477473357245ff9da85bb9561a63b3f18709a"
+          "line": 58,
+          "end_line": 115,
+          "body_sha256": "c16efca009fb5bfafca0ce70466ec4d45b1473ba45e63061b8e5b1ecb7c107f8"
         },
         {
           "path": "src/compiler/plan/operations/builtins/mod.rs",
           "symbol": "result_ownership",
-          "line": 115,
-          "end_line": 170,
-          "body_sha256": "f8a8224450b72091fad84861d97951db6f0c979ae2985028397f8acf032d84ac"
+          "line": 117,
+          "end_line": 173,
+          "body_sha256": "08d333e13ddf466777fd3dcb22135664a3e90988f1a86a9df7a88bb93824b24e"
         },
         {
           "path": "src/compiler/plan/operations/builtins/mod.rs",
           "symbol": "needs_heap",
-          "line": 229,
-          "end_line": 281,
-          "body_sha256": "431c4fcaab41f1db8347313a378a128045de6a72ed615d98459e301ee444f837"
+          "line": 233,
+          "end_line": 286,
+          "body_sha256": "3c51ec7b3cd53061be1d5d9638884614afe817a441cc47726117cb0292590c29"
         },
         {
           "path": "src/compiler/plan/operations/builtins/mod.rs",
           "symbol": "require_runtime",
-          "line": 172,
-          "end_line": 227,
-          "body_sha256": "3c497ad7551f1388b983e034c3e6452525ee59882a02d867429974e6e54da744"
+          "line": 175,
+          "end_line": 231,
+          "body_sha256": "8d7422cdc47c6a542f442f86a2bf1d10ebd55440b276aa8c4e1e2626316ef499"
         }
       ],
       "tests": [
@@ -275,7 +275,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         },
         {
@@ -296,6 +296,138 @@
         }
       ],
       "test_relation": "related_variants"
+    },
+    {
+      "id": "emela_core::Builtin::AssertFail",
+      "kind": "variant",
+      "relation": "variant_entry",
+      "owner_id": "emela_core::Builtin::AssertFail",
+      "role": "reject",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "912be595508f4a3f461d5a4c53cfe78534120e0d88b00961adcfbed6ab2012f9",
+      "entry": {
+        "path": "src/input/upstream/verify.rs",
+        "symbol": "reject_assert_fail",
+        "line": 90,
+        "end_line": 95,
+        "body_sha256": "76a2d85743b6fd41e0cb2d61e3143811b679d35a4d3666facc146c80728918b2"
+      },
+      "phase_entries": [],
+      "tests": [
+        {
+          "target": "flow",
+          "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
+          "path": "tests/flow.rs",
+          "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
+          "line": 231,
+          "ignored": false
+        }
+      ],
+      "test_relation": "direct_variant"
+    },
+    {
+      "id": "emela_core::Builtin::BytesConcat",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesConcat",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "f94c72ae28f14a459b184dc957ec60ec515bb4a1dd2fdd110830169d6a6c9bdd",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesDecodeValidUtf8",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesDecodeValidUtf8",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "41fa02a9421bdf780984da0beb91509d066ce89c4d799ee6e2cb337fc9ab46ea",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesEncodeUtf8",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesEncodeUtf8",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "bd4f809da786105b4fd00b340a6c05fcfe67583326cd904cb092f65c023e35c7",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesFromList",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesFromList",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "b469b84750fdd9d9e567466cf9756cb81de9bb685ed13478deebf894d2e729be",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesGet",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesGet",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "b0559f6b830f55538fc951c9bc588996e52695ab01a34ef94b5ad5bc8673e42e",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSize",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesSize",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "e79af588953e56c56d885e29c891a74b01067e415c76cbecb4421bfd9b259c31",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSlice",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesSlice",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "15227d0f30d01f13af195d570c1c4a2ff86e691ca191d305c0065e127c306bea",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
+    },
+    {
+      "id": "emela_core::Builtin::BytesToList",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Builtin::BytesToList",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "3ddc9a3768ecd52a9de8bf79f27133df4336285d92ee33e5ac451285cd28b6d9",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
     },
     {
       "id": "emela_core::Builtin::CellGet",
@@ -427,7 +559,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -455,7 +587,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -757,7 +889,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -1525,7 +1657,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -1553,7 +1685,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -1581,7 +1713,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -1858,8 +1990,8 @@
         "path": "src/compiler/emit/features/builtins/string_from_code_point.rs",
         "symbol": "string_from_code_point",
         "line": 2,
-        "end_line": 138,
-        "body_sha256": "08ce244221de3d9cba9b4cce8a788c3d0b7d1ba3ee77abee50ee685efb55e130"
+        "end_line": 151,
+        "body_sha256": "3532b0fcabe37cb53726bb9f1ad03719f8a2afa0d3df9294c88083f6958d8dcf"
       },
       "phase_entries": [
         {
@@ -2133,7 +2265,7 @@
           "name": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
           "path": "tests/flow.rs",
           "symbol": "rejects_source_builtins_that_must_lower_to_flow_control_or_runtime",
-          "line": 226,
+          "line": 231,
           "ignored": false
         }
       ],
@@ -2526,7 +2658,7 @@
       "owner_id": "emela_core::FiberOp",
       "role": "schema",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "4537d01be5c0566a7c4db9251380a74c04ba4e2d717ef23db2be01f655777d4b",
+      "observed_definition_sha256": "925dd90d1dd366699dc5bf7b38814a7e520d99bf8b28878be45368e17a8033a2",
       "entry": {
         "path": "src/compiler/emit/features/fibers/mod.rs",
         "symbol": "emit",
@@ -2870,7 +3002,7 @@
       "owner_id": "emela_core::FiberOp::CauseRaise",
       "role": "emit",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "4d8020e4707c3df826a527b53f4b3a6604edf7c028c6c889c6e50ad1f0565476",
+      "observed_definition_sha256": "b686ace922a0cd4a23be71458706ed4e5fb1da079af24ab30686afbeefb1d6f6",
       "entry": {
         "path": "src/compiler/emit/features/fibers/cause_raise.rs",
         "symbol": "emit",
@@ -2890,6 +3022,34 @@
         }
       ],
       "test_relation": "direct_variant"
+    },
+    {
+      "id": "emela_core::FiberOp::CauseRaise.fails",
+      "kind": "field",
+      "relation": "member_of_variant",
+      "owner_id": "emela_core::FiberOp::CauseRaise",
+      "role": "emit",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "9d6fbc8d893ec460d4d84728a474d1f50016a2258bddb68da3c6e754acf9c6f0",
+      "entry": {
+        "path": "src/compiler/emit/features/fibers/cause_raise.rs",
+        "symbol": "emit",
+        "line": 3,
+        "end_line": 82,
+        "body_sha256": "20b69c84b5e0f3b9104138c4a9718761dc54797529d8727f4ab64a0e7430f876"
+      },
+      "phase_entries": [],
+      "tests": [
+        {
+          "target": "emit",
+          "name": "fiber::cause::cause_raise_preserves_the_error_and_runs_native_cleanup_before_escape",
+          "path": "tests/fiber/cause.rs",
+          "symbol": "cause_raise_preserves_the_error_and_runs_native_cleanup_before_escape",
+          "line": 75,
+          "ignored": false
+        }
+      ],
+      "test_relation": "inherited_from_variant"
     },
     {
       "id": "emela_core::FiberOp::CauseToString",
@@ -4000,7 +4160,7 @@
       "owner_id": "emela_core::Type",
       "role": "schema",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "41a011f4b2190172611e2d480aef5ae9b988ebd3c79dd4e03ad645f93cebeb01",
+      "observed_definition_sha256": "8e5afa2384c9d9ceb183a25f1ced2b9299f20c453064a1da8fa38a259737f173",
       "entry": {
         "path": "src/semantics/type_representations.rs",
         "symbol": "repr",
@@ -4039,7 +4199,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         },
         {
@@ -4055,7 +4215,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         },
         {
@@ -4063,7 +4223,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         },
         {
@@ -4079,7 +4239,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         },
         {
@@ -4087,7 +4247,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         },
         {
@@ -4151,7 +4311,7 @@
           "name": "synchronous_exhaustive_matches_and_list_loops_accept_unreachable_terminators",
           "path": "tests/emit.rs",
           "symbol": "synchronous_exhaustive_matches_and_list_loops_accept_unreachable_terminators",
-          "line": 5962,
+          "line": 5984,
           "ignored": false
         }
       ],
@@ -4207,11 +4367,24 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
       "test_relation": "direct_variant"
+    },
+    {
+      "id": "emela_core::Type::Bytes",
+      "kind": "variant",
+      "relation": "missing_owner",
+      "owner_id": "emela_core::Type::Bytes",
+      "role": "missing",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "24f233c1ff5bf3d814db3cb66ff134df3fcd083db0f7470fa4c278c7a690a0c5",
+      "entry": null,
+      "phase_entries": [],
+      "tests": [],
+      "test_relation": "missing_tests"
     },
     {
       "id": "emela_core::Type::Cell",
@@ -4291,7 +4464,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -4319,7 +4492,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -4347,7 +4520,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -4431,7 +4604,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         }
       ],
@@ -4599,7 +4772,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         }
       ],
@@ -4683,7 +4856,7 @@
           "name": "synchronous_exhaustive_matches_and_list_loops_accept_unreachable_terminators",
           "path": "tests/emit.rs",
           "symbol": "synchronous_exhaustive_matches_and_list_loops_accept_unreachable_terminators",
-          "line": 5962,
+          "line": 5984,
           "ignored": false
         }
       ],
@@ -4907,7 +5080,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -5019,7 +5192,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -5103,7 +5276,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -5131,7 +5304,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -5159,7 +5332,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -5216,7 +5389,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         },
         {
@@ -5296,7 +5469,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -5353,7 +5526,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -5818,7 +5991,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         },
         {
@@ -5826,7 +5999,7 @@
           "name": "emits_and_runs_switches_on_nullary_enum_representations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_switches_on_nullary_enum_representations",
-          "line": 4799,
+          "line": 4801,
           "ignored": false
         }
       ],
@@ -5854,7 +6027,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         }
       ],
@@ -5882,7 +6055,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         }
       ],
@@ -5910,7 +6083,7 @@
           "name": "emits_and_runs_switches_on_nullary_enum_representations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_switches_on_nullary_enum_representations",
-          "line": 4799,
+          "line": 4801,
           "ignored": false
         }
       ],
@@ -5938,7 +6111,7 @@
           "name": "emits_and_runs_switches_on_nullary_enum_representations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_switches_on_nullary_enum_representations",
-          "line": 4799,
+          "line": 4801,
           "ignored": false
         }
       ],
@@ -6061,7 +6234,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         },
         {
@@ -6077,7 +6250,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         },
         {
@@ -6085,7 +6258,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         },
         {
@@ -6121,7 +6294,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -6149,7 +6322,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -6177,7 +6350,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         }
       ],
@@ -6205,7 +6378,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         }
       ],
@@ -6289,7 +6462,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         }
       ],
@@ -6317,7 +6490,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         }
       ],
@@ -6401,7 +6574,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -6438,8 +6611,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6457,8 +6630,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6476,8 +6649,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6495,8 +6668,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6514,8 +6687,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6533,8 +6706,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6552,8 +6725,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6571,8 +6744,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6590,8 +6763,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6609,8 +6782,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6628,8 +6801,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6647,8 +6820,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6666,8 +6839,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6685,8 +6858,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6704,8 +6877,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -6723,8 +6896,8 @@
         "path": "src/compiler/emit/mod.rs",
         "symbol": "render",
         "line": 16,
-        "end_line": 533,
-        "body_sha256": "5a694a99bc346132ef5b73be3ce35805a2f5858c7a1bb83e808df8bf5ce3e0d9"
+        "end_line": 539,
+        "body_sha256": "8156f12df7da0148515fbcc37b7f90160ad77043fd04cadb7d60bfdbf66e2ef5"
       },
       "phase_entries": [],
       "tests": [],
@@ -7116,7 +7289,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         },
         {
@@ -7208,7 +7381,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -7236,7 +7409,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -7272,7 +7445,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         },
         {
@@ -7280,7 +7453,7 @@
           "name": "emits_int32_division_and_remainder_with_emela_semantics",
           "path": "tests/emit.rs",
           "symbol": "emits_int32_division_and_remainder_with_emela_semantics",
-          "line": 5556,
+          "line": 5558,
           "ignored": false
         },
         {
@@ -7288,7 +7461,7 @@
           "name": "int32_division_by_zero_calls_the_board_defect_hook",
           "path": "tests/emit.rs",
           "symbol": "int32_division_by_zero_calls_the_board_defect_hook",
-          "line": 5588,
+          "line": 5590,
           "ignored": false
         }
       ],
@@ -7305,8 +7478,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_add",
-        "line": 100,
-        "end_line": 102,
+        "line": 104,
+        "end_line": 106,
         "body_sha256": "7105257fdf14e79ffb18b70de33b625880ce1783b81bd9b31b2d7ceada4dbd24"
       },
       "phase_entries": [
@@ -7324,7 +7497,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7341,8 +7514,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_div",
-        "line": 112,
-        "end_line": 120,
+        "line": 116,
+        "end_line": 124,
         "body_sha256": "a0716685329dc0335cd6338ed7658187d76182f3975ff3e852fb08f0394a680b"
       },
       "phase_entries": [
@@ -7360,7 +7533,7 @@
           "name": "int32_division_by_zero_calls_the_board_defect_hook",
           "path": "tests/emit.rs",
           "symbol": "int32_division_by_zero_calls_the_board_defect_hook",
-          "line": 5588,
+          "line": 5590,
           "ignored": false
         }
       ],
@@ -7377,8 +7550,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_eq",
-        "line": 166,
-        "end_line": 168,
+        "line": 170,
+        "end_line": 172,
         "body_sha256": "9ce03ef082301f14ea567f720d1eb981b12a4b974d5efe0a44dbac103dd36cce"
       },
       "phase_entries": [
@@ -7396,7 +7569,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7413,8 +7586,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_ge",
-        "line": 186,
-        "end_line": 188,
+        "line": 190,
+        "end_line": 192,
         "body_sha256": "b945b3a3c56ed0e853e4a924eb92bbb05b2972bab063330417bf2b388718e453"
       },
       "phase_entries": [
@@ -7432,7 +7605,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7449,8 +7622,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_gt",
-        "line": 182,
-        "end_line": 184,
+        "line": 186,
+        "end_line": 188,
         "body_sha256": "95b34b6bccf60678344e7ac37a8d649e42ad19a8029909ea93a6752cdcf64113"
       },
       "phase_entries": [
@@ -7468,7 +7641,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7485,8 +7658,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_le",
-        "line": 178,
-        "end_line": 180,
+        "line": 182,
+        "end_line": 184,
         "body_sha256": "ffae9c2a93201e37a611c452ec551b6f81272e28f6d8ea5ae2ee24906108b4ab"
       },
       "phase_entries": [
@@ -7504,7 +7677,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7521,8 +7694,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_lt",
-        "line": 174,
-        "end_line": 176,
+        "line": 178,
+        "end_line": 180,
         "body_sha256": "4e6591d4987abf20663d3cb8a0ae2319f564bc5478356c8433c54c4e1541e63c"
       },
       "phase_entries": [
@@ -7540,7 +7713,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7557,8 +7730,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_mul",
-        "line": 108,
-        "end_line": 110,
+        "line": 112,
+        "end_line": 114,
         "body_sha256": "99754d071c14558bae41a164513f58de3603326b4dfc3708e08a0616ecd69f9f"
       },
       "phase_entries": [
@@ -7576,7 +7749,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7593,8 +7766,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_ne",
-        "line": 170,
-        "end_line": 172,
+        "line": 174,
+        "end_line": 176,
         "body_sha256": "cc4c4ee25d3907fe145ce4b0651d128a27786ca5ad9c32f3fa34298d9b4e671a"
       },
       "phase_entries": [
@@ -7612,7 +7785,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7629,8 +7802,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_neg",
-        "line": 132,
-        "end_line": 151,
+        "line": 136,
+        "end_line": 155,
         "body_sha256": "d66f190cdce2b49eb6329f4a445977ec549c9606be0123f16d27ae14bc8a1a98"
       },
       "phase_entries": [
@@ -7648,7 +7821,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7665,8 +7838,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_not",
-        "line": 153,
-        "end_line": 164,
+        "line": 157,
+        "end_line": 168,
         "body_sha256": "85c96ceb7fc81d410e9e7a5d6bdae16c98bcad6d6808490161930b48d4f95f78"
       },
       "phase_entries": [
@@ -7684,7 +7857,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7701,8 +7874,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_rem",
-        "line": 122,
-        "end_line": 130,
+        "line": 126,
+        "end_line": 134,
         "body_sha256": "7cdfb51b50d08110a0a9f3312c85a602788049b1412a9d63d48047272a8ab923"
       },
       "phase_entries": [
@@ -7720,7 +7893,7 @@
           "name": "emits_int32_division_and_remainder_with_emela_semantics",
           "path": "tests/emit.rs",
           "symbol": "emits_int32_division_and_remainder_with_emela_semantics",
-          "line": 5556,
+          "line": 5558,
           "ignored": false
         }
       ],
@@ -7737,8 +7910,8 @@
       "entry": {
         "path": "src/compiler/emit/features/primitive_operations.rs",
         "symbol": "prim_sub",
-        "line": 104,
-        "end_line": 106,
+        "line": 108,
+        "end_line": 110,
         "body_sha256": "8460ce2f1753ebcb99d1015ef35efaa04d335bc4ad65ebe921c37e50a05d3f2a"
       },
       "phase_entries": [
@@ -7756,7 +7929,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7784,7 +7957,7 @@
           "name": "emits_and_runs_float_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_primitive_operations",
-          "line": 5430,
+          "line": 5432,
           "ignored": false
         },
         {
@@ -7792,7 +7965,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         },
         {
@@ -7836,7 +8009,7 @@
           "name": "emits_and_runs_float_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_primitive_operations",
-          "line": 5430,
+          "line": 5432,
           "ignored": false
         }
       ],
@@ -7864,7 +8037,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -7948,7 +8121,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         },
         {
@@ -7964,7 +8137,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         },
         {
@@ -7972,7 +8145,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         },
         {
@@ -8008,7 +8181,7 @@
           "name": "emits_and_runs_float_constants_including_non_finite_values",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_float_constants_including_non_finite_values",
-          "line": 4306,
+          "line": 4307,
           "ignored": false
         }
       ],
@@ -8064,7 +8237,7 @@
           "name": "emits_and_runs_int64_constants_at_the_signed_boundaries",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int64_constants_at_the_signed_boundaries",
-          "line": 4291,
+          "line": 4292,
           "ignored": false
         }
       ],
@@ -8120,7 +8293,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -8133,42 +8306,42 @@
       "owner_id": "emela_lir::RuntimeOp",
       "role": "schema",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "2b236560bb6a409cb1427609d954b0cbe6a50af361dd41edb3099db00a6148be",
+      "observed_definition_sha256": "afc95d7e10deb1946f6b4c057186570b39f037735439279c26f0f359cfd818dd",
       "entry": {
         "path": "src/compiler/emit/features/runtime.rs",
         "symbol": "emit",
         "line": 235,
-        "end_line": 253,
-        "body_sha256": "737cd6cc55b2b1c478084a487dc3b6905792d7acf779e599ce0cbefda27940cc"
+        "end_line": 254,
+        "body_sha256": "52c6482ffcda569c327f35815d7cc49b13844bfb1973ade2d69e008f2bb8d413"
       },
       "phase_entries": [
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8201,7 +8374,7 @@
           "name": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
           "path": "tests/flow.rs",
           "symbol": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
-          "line": 281,
+          "line": 291,
           "ignored": false
         },
         {
@@ -8235,29 +8408,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8292,31 +8465,59 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
+      "tests": [
+        {
+          "target": "flow",
+          "name": "rejects_heap_only_runtime_operations_at_flow_stage",
+          "path": "tests/flow.rs",
+          "symbol": "rejects_heap_only_runtime_operations_at_flow_stage",
+          "line": 195,
+          "ignored": false
+        }
+      ],
+      "test_relation": "direct_variant"
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectAt",
+      "kind": "variant",
+      "relation": "variant_entry",
+      "owner_id": "emela_lir::RuntimeOp::DefectAt",
+      "role": "reject",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "7fb26290e755406510edd206621365b037b92db7dfe45c49949ff4958ba06787",
+      "entry": {
+        "path": "src/input/upstream/verify.rs",
+        "symbol": "reject_defect_at",
+        "line": 83,
+        "end_line": 88,
+        "body_sha256": "d615e2365e6fb90b02a13f7c44ef15ea02e2013197c163fc852f2d4de298f195"
+      },
+      "phase_entries": [],
       "tests": [
         {
           "target": "flow",
@@ -8349,29 +8550,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8406,29 +8607,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8463,29 +8664,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8494,7 +8695,7 @@
           "name": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
           "path": "tests/flow.rs",
           "symbol": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
-          "line": 281,
+          "line": 291,
           "ignored": false
         }
       ],
@@ -8520,29 +8721,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8577,29 +8778,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8634,29 +8835,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8665,7 +8866,7 @@
           "name": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
           "path": "tests/flow.rs",
           "symbol": "isr_entries_reject_reachable_hold_and_unhold_in_direct_and_nested_calls",
-          "line": 281,
+          "line": 291,
           "ignored": false
         }
       ],
@@ -8691,29 +8892,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -8748,29 +8949,29 @@
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_behavior",
           "line": 5,
-          "end_line": 32,
-          "body_sha256": "f6a17496a3e97e1b549e40f1396e8b9a8293d245215ea05450952800b222cb92"
+          "end_line": 33,
+          "body_sha256": "008cc1f1a304664c5d6699ebf535661a91430e662641969bdc7919cf2cd088bd"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "string_bound",
-          "line": 34,
-          "end_line": 61,
-          "body_sha256": "6bc8a3bcbacc157c337d672a365df8e203b31c73453998d00cadca6d66ddd5ff"
+          "line": 35,
+          "end_line": 63,
+          "body_sha256": "0a4345cefa3051551edc110bfeae1dab4c319a53ff30a443f7852fb333737af3"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "needs_heap",
-          "line": 87,
-          "end_line": 100,
-          "body_sha256": "2f35aa90df6a8f098849fa8e77491e09b0762a2fe3efbcd6a5ee88b2131bab31"
+          "line": 90,
+          "end_line": 104,
+          "body_sha256": "e04c5355c60750f82559ead05ec6f0e9ed096853f3777e6aae2e43f122319b0c"
         },
         {
           "path": "src/compiler/plan/operations/runtime.rs",
           "symbol": "require_runtime",
-          "line": 63,
-          "end_line": 85,
-          "body_sha256": "d73c378ae9bd2f779c5d077e8e61e9e53c08870610a17ebb64c7852df8d3ce94"
+          "line": 65,
+          "end_line": 88,
+          "body_sha256": "a8ce2d63b1ec9c924614e117bdfce191e8fa441afd990bd11d4305741ea0b1b2"
         }
       ],
       "tests": [
@@ -9067,7 +9268,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         },
         {
@@ -9083,7 +9284,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         },
         {
@@ -9091,7 +9292,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         },
         {
@@ -9099,7 +9300,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         },
         {
@@ -9151,7 +9352,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -9187,7 +9388,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -9223,7 +9424,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -9259,7 +9460,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -9446,7 +9647,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
@@ -9482,7 +9683,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
@@ -9518,7 +9719,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
@@ -9554,7 +9755,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
@@ -9590,7 +9791,7 @@
           "name": "compiles_if_statements_and_boolean_short_circuiting",
           "path": "tests/emit.rs",
           "symbol": "compiles_if_statements_and_boolean_short_circuiting",
-          "line": 5764,
+          "line": 5766,
           "ignored": false
         }
       ],
@@ -9806,7 +10007,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         }
       ],
@@ -9842,7 +10043,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         }
       ],
@@ -9878,7 +10079,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         }
       ],
@@ -9914,7 +10115,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         }
       ],
@@ -9950,7 +10151,7 @@
           "name": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_loop_with_an_initial_value_and_yield",
-          "line": 4837,
+          "line": 4839,
           "ignored": false
         }
       ],
@@ -10165,7 +10366,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10208,7 +10409,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10251,7 +10452,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10294,7 +10495,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10337,7 +10538,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10441,7 +10642,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         },
         {
@@ -10449,7 +10650,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         }
       ],
@@ -10477,7 +10678,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         }
       ],
@@ -10505,7 +10706,7 @@
           "name": "emits_and_runs_int32_and_int64_literal_switches",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_and_int64_literal_switches",
-          "line": 4694,
+          "line": 4696,
           "ignored": false
         }
       ],
@@ -10533,7 +10734,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10561,7 +10762,7 @@
           "name": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_exhaustive_payload_enum_switch_and_defects_on_invalid_tag",
-          "line": 4757,
+          "line": 4759,
           "ignored": false
         }
       ],
@@ -10574,7 +10775,7 @@
       "owner_id": "emela_lir::Term",
       "role": "schema",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "4428d86a75e08559ecc480fe3115871e5e8604e50ed38aadc7896dbc5a70633f",
+      "observed_definition_sha256": "ac422743d017d17b4cb02a45c263d23ca6b04a3368071eaec93384f8256f74fe",
       "entry": {
         "path": "src/compiler/emit/features/terms/mod.rs",
         "symbol": "emit",
@@ -10597,7 +10798,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         },
         {
@@ -10605,7 +10806,7 @@
           "name": "emits_and_runs_break_to_an_enclosing_block",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_break_to_an_enclosing_block",
-          "line": 4953,
+          "line": 4955,
           "ignored": false
         },
         {
@@ -10613,7 +10814,7 @@
           "name": "emits_and_runs_recur_with_multiple_loop_variables",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_recur_with_multiple_loop_variables",
-          "line": 4862,
+          "line": 4864,
           "ignored": false
         },
         {
@@ -10645,7 +10846,7 @@
           "name": "sends_dynamic_defect_string_views_to_the_board_hook",
           "path": "tests/emit.rs",
           "symbol": "sends_dynamic_defect_string_views_to_the_board_hook",
-          "line": 4342,
+          "line": 4343,
           "ignored": false
         },
         {
@@ -10696,7 +10897,7 @@
           "name": "emits_and_runs_break_to_an_enclosing_block",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_break_to_an_enclosing_block",
-          "line": 4953,
+          "line": 4955,
           "ignored": false
         }
       ],
@@ -10732,7 +10933,7 @@
           "name": "emits_and_runs_break_to_an_enclosing_block",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_break_to_an_enclosing_block",
-          "line": 4953,
+          "line": 4955,
           "ignored": false
         }
       ],
@@ -10768,7 +10969,7 @@
           "name": "emits_and_runs_break_to_an_enclosing_block",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_break_to_an_enclosing_block",
-          "line": 4953,
+          "line": 4955,
           "ignored": false
         }
       ],
@@ -10781,7 +10982,7 @@
       "owner_id": "emela_lir::Term::Defect",
       "role": "emit",
       "review_status": "unreviewed",
-      "observed_definition_sha256": "8af6802392ac735e6a6c33f828cdd23f01e60bb0eec1c32a58b59639264d603d",
+      "observed_definition_sha256": "2335c83d9b4fbe519684ccb99bfd8c218532931b2927aa77c988afd2f5a4161c",
       "entry": {
         "path": "src/compiler/emit/features/terms/defect.rs",
         "symbol": "emit",
@@ -10825,7 +11026,7 @@
           "name": "sends_dynamic_defect_string_views_to_the_board_hook",
           "path": "tests/emit.rs",
           "symbol": "sends_dynamic_defect_string_views_to_the_board_hook",
-          "line": 4342,
+          "line": 4343,
           "ignored": false
         }
       ],
@@ -10868,7 +11069,50 @@
           "name": "sends_dynamic_defect_string_views_to_the_board_hook",
           "path": "tests/emit.rs",
           "symbol": "sends_dynamic_defect_string_views_to_the_board_hook",
-          "line": 4342,
+          "line": 4343,
+          "ignored": false
+        }
+      ],
+      "test_relation": "inherited_from_variant"
+    },
+    {
+      "id": "emela_lir::Term::Defect.1",
+      "kind": "field",
+      "relation": "member_of_variant",
+      "owner_id": "emela_lir::Term::Defect",
+      "role": "emit",
+      "review_status": "unreviewed",
+      "observed_definition_sha256": "8f801ea817180d6b4f3d82071d2866c9fd8604b335ee25554ffa6bb360baad31",
+      "entry": {
+        "path": "src/compiler/emit/features/terms/defect.rs",
+        "symbol": "emit",
+        "line": 3,
+        "end_line": 16,
+        "body_sha256": "d5ad6e002464c8ac17d976d524dc8adc4046e81ef7d9ebc18e6f873d2ee0b175"
+      },
+      "phase_entries": [
+        {
+          "path": "src/compiler/plan/operations/terms/defect.rs",
+          "symbol": "lower",
+          "line": 3,
+          "end_line": 16,
+          "body_sha256": "4db75a342b2e3188fa8a8116dbf6416ce2435b1aa2068469424d7190292b9bc9"
+        },
+        {
+          "path": "src/compiler/plan/operations/terms/defect.rs",
+          "symbol": "require_runtime",
+          "line": 18,
+          "end_line": 29,
+          "body_sha256": "56a7ae3c72f41debf1f32b745086a1d1aa08099ea86c55f0934c8f81c7c4f3cd"
+        }
+      ],
+      "tests": [
+        {
+          "target": "emit",
+          "name": "sends_dynamic_defect_string_views_to_the_board_hook",
+          "path": "tests/emit.rs",
+          "symbol": "sends_dynamic_defect_string_views_to_the_board_hook",
+          "line": 4343,
           "ignored": false
         }
       ],
@@ -10997,7 +11241,7 @@
           "name": "emits_and_runs_recur_with_multiple_loop_variables",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_recur_with_multiple_loop_variables",
-          "line": 4862,
+          "line": 4864,
           "ignored": false
         }
       ],
@@ -11033,7 +11277,7 @@
           "name": "emits_and_runs_recur_with_multiple_loop_variables",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_recur_with_multiple_loop_variables",
-          "line": 4862,
+          "line": 4864,
           "ignored": false
         }
       ],
@@ -11262,7 +11506,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -11298,7 +11542,7 @@
           "name": "emits_and_runs_a_block_that_yields_a_value",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_a_block_that_yields_a_value",
-          "line": 4933,
+          "line": 4935,
           "ignored": false
         }
       ],
@@ -11385,7 +11629,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         },
         {
@@ -11393,7 +11637,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         },
         {
@@ -11401,7 +11645,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         },
         {
@@ -11409,7 +11653,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         },
         {
@@ -11465,7 +11709,7 @@
           "name": "reads_generic_enum_fields_from_inline_values",
           "path": "tests/emit.rs",
           "symbol": "reads_generic_enum_fields_from_inline_values",
-          "line": 4511,
+          "line": 4513,
           "ignored": false
         },
         {
@@ -11481,7 +11725,7 @@
           "name": "reads_tags_from_payload_and_nullary_enums",
           "path": "tests/emit.rs",
           "symbol": "reads_tags_from_payload_and_nullary_enums",
-          "line": 4559,
+          "line": 4561,
           "ignored": false
         },
         {
@@ -11489,7 +11733,7 @@
           "name": "reads_tuple_fields_and_ignores_unit_projections",
           "path": "tests/emit.rs",
           "symbol": "reads_tuple_fields_and_ignores_unit_projections",
-          "line": 4653,
+          "line": 4655,
           "ignored": false
         },
         {
@@ -11807,7 +12051,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -11864,7 +12108,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -11921,7 +12165,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -11978,7 +12222,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -12035,7 +12279,7 @@
           "name": "compiles_direct_calls_to_internal_and_external_c_functions",
           "path": "tests/emit.rs",
           "symbol": "compiles_direct_calls_to_internal_and_external_c_functions",
-          "line": 5597,
+          "line": 5599,
           "ignored": false
         }
       ],
@@ -12757,7 +13001,7 @@
           "name": "reads_generic_enum_fields_from_inline_values",
           "path": "tests/emit.rs",
           "symbol": "reads_generic_enum_fields_from_inline_values",
-          "line": 4511,
+          "line": 4513,
           "ignored": false
         }
       ],
@@ -12793,7 +13037,7 @@
           "name": "reads_generic_enum_fields_from_inline_values",
           "path": "tests/emit.rs",
           "symbol": "reads_generic_enum_fields_from_inline_values",
-          "line": 4511,
+          "line": 4513,
           "ignored": false
         }
       ],
@@ -12829,7 +13073,7 @@
           "name": "reads_generic_enum_fields_from_inline_values",
           "path": "tests/emit.rs",
           "symbol": "reads_generic_enum_fields_from_inline_values",
-          "line": 4511,
+          "line": 4513,
           "ignored": false
         }
       ],
@@ -12865,7 +13109,7 @@
           "name": "reads_generic_enum_fields_from_inline_values",
           "path": "tests/emit.rs",
           "symbol": "reads_generic_enum_fields_from_inline_values",
-          "line": 4511,
+          "line": 4513,
           "ignored": false
         }
       ],
@@ -13571,7 +13815,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -13599,7 +13843,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -13627,7 +13871,7 @@
           "name": "constructs_payload_and_unit_enum_variants_as_inline_values",
           "path": "tests/emit.rs",
           "symbol": "constructs_payload_and_unit_enum_variants_as_inline_values",
-          "line": 4453,
+          "line": 4455,
           "ignored": false
         }
       ],
@@ -13739,7 +13983,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -13767,7 +14011,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -13795,7 +14039,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -13823,7 +14067,7 @@
           "name": "emits_and_runs_int32_primitive_operations",
           "path": "tests/emit.rs",
           "symbol": "emits_and_runs_int32_primitive_operations",
-          "line": 5216,
+          "line": 5218,
           "ignored": false
         }
       ],
@@ -13935,7 +14179,7 @@
           "name": "reads_tags_from_payload_and_nullary_enums",
           "path": "tests/emit.rs",
           "symbol": "reads_tags_from_payload_and_nullary_enums",
-          "line": 4559,
+          "line": 4561,
           "ignored": false
         }
       ],
@@ -13963,7 +14207,7 @@
           "name": "reads_tags_from_payload_and_nullary_enums",
           "path": "tests/emit.rs",
           "symbol": "reads_tags_from_payload_and_nullary_enums",
-          "line": 4559,
+          "line": 4561,
           "ignored": false
         }
       ],
@@ -13991,7 +14235,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -14019,7 +14263,7 @@
           "name": "constructs_inline_tuples_and_keeps_unit_field_positions",
           "path": "tests/emit.rs",
           "symbol": "constructs_inline_tuples_and_keeps_unit_field_positions",
-          "line": 4626,
+          "line": 4628,
           "ignored": false
         }
       ],
@@ -14055,7 +14299,7 @@
           "name": "reads_tuple_fields_and_ignores_unit_projections",
           "path": "tests/emit.rs",
           "symbol": "reads_tuple_fields_and_ignores_unit_projections",
-          "line": 4653,
+          "line": 4655,
           "ignored": false
         }
       ],
@@ -14091,7 +14335,7 @@
           "name": "reads_tuple_fields_and_ignores_unit_projections",
           "path": "tests/emit.rs",
           "symbol": "reads_tuple_fields_and_ignores_unit_projections",
-          "line": 4653,
+          "line": 4655,
           "ignored": false
         }
       ],
@@ -14127,7 +14371,7 @@
           "name": "reads_tuple_fields_and_ignores_unit_projections",
           "path": "tests/emit.rs",
           "symbol": "reads_tuple_fields_and_ignores_unit_projections",
-          "line": 4653,
+          "line": 4655,
           "ignored": false
         }
       ],
@@ -14227,6 +14471,98 @@
       "phase_entries": [],
       "tests": [],
       "test_relation": "not_independently_required"
+    }
+  ],
+  "issues": [
+    {
+      "id": "emela_core::Builtin::BytesConcat",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesConcat",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesConcat\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesDecodeValidUtf8",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesDecodeValidUtf8",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesDecodeValidUtf8\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesEncodeUtf8",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesEncodeUtf8",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesEncodeUtf8\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesFromList",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesFromList",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesFromList\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesGet",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesGet",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesGet\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSize",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSize",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesSize\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSlice",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesSlice",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesSlice\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Builtin::BytesToList",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Builtin::BytesToList",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Builtin::BytesToList\"], orphan=[]"
+    },
+    {
+      "id": "emela_core::Type::Bytes",
+      "kind": "missing_owner",
+      "message": "variant entries differ: missing variant owner"
+    },
+    {
+      "id": "emela_core::Type::Bytes",
+      "kind": "missing_tests",
+      "message": "test associations differ: missing=[\"emela_core::Type::Bytes\"], orphan=[]"
     }
   ]
 }

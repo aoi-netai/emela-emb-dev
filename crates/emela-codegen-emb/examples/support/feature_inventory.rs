@@ -455,7 +455,7 @@ pub fn save(reports: &[(&str, String)], out_dir: &Path, check: bool) -> Result<(
     Ok(())
 }
 
-pub(crate) fn absolute(path: &Path) -> Result<PathBuf, String> {
+pub fn absolute(path: &Path) -> Result<PathBuf, String> {
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -476,12 +476,20 @@ pub(crate) fn absolute(path: &Path) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
+/// Locate the audited crate for both the compiler examples and the standalone tool.
+pub fn crate_dir() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|path| path.join("inventory/owners.json").is_file())
+        .expect("inventory tool must be located under emela-codegen-emb")
+}
+
+pub fn repository_root() -> &'static Path {
+    crate_dir().parent().unwrap().parent().unwrap()
+}
+
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = repository_root();
     let mut out_dir = root.join("crates/emela-codegen-emb/docs/generated");
     let mut check = false;
     let mut args = args.into_iter();

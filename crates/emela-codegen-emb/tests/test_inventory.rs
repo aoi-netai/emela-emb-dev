@@ -5,7 +5,10 @@ use std::{collections::BTreeSet, path::Path};
 
 #[test]
 fn every_variant_names_existing_enabled_tests() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|path| path.join("inventory/owners.json").is_file())
+        .unwrap();
     let owners: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("inventory/owners.json")).unwrap())
             .unwrap();
@@ -123,7 +126,13 @@ fn associations_allow_shared_tests_and_multiple_tests_per_variant() {
 #[test]
 #[ignore = "writes a source-discovered test catalogue for inventory maintenance"]
 fn export_test_catalog() {
-    let catalog = discover(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let catalog = discover(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .find(|path| path.join("inventory/owners.json").is_file())
+            .unwrap(),
+    )
+    .unwrap();
     let path = std::env::var("EMELA_TEST_CATALOG").expect("set EMELA_TEST_CATALOG");
     std::fs::write(
         path,

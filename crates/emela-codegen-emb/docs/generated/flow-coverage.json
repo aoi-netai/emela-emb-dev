@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "inventory_kind": "coverage_comparison",
   "audit_level": "explicit_variant_syntax_only",
   "targets": [
@@ -126,7 +126,8 @@
   ],
   "summary": {
     "candidate_found": 198,
-    "rejection_evidence": 18
+    "missing_evidence": 8,
+    "rejection_evidence": 20
   },
   "items": [
     {
@@ -336,7 +337,7 @@
     },
     {
       "id": "emela_lir::Term::Defect",
-      "definition_sha256": "8af6802392ac735e6a6c33f828cdd23f01e60bb0eec1c32a58b59639264d603d",
+      "definition_sha256": "2335c83d9b4fbe519684ccb99bfd8c218532931b2927aa77c988afd2f5a4161c",
       "flow_input": "unreviewed",
       "exclusion_reason": null,
       "review_status": "unreviewed",
@@ -1483,6 +1484,22 @@
       "definition_sha256": "4a6fdab8e11fe56a0257648aeb1939bdce04f93f604d72fa1bc6fa55c3f2bab1",
       "flow_input": "forbidden_by_config",
       "exclusion_reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。",
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "input",
+          "status": "rejection_evidence",
+          "routes": [
+            "reject-runtime"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "emela_lir::RuntimeOp::DefectAt",
+      "definition_sha256": "7fb26290e755406510edd206621365b037b92db7dfe45c49949ff4958ba06787",
+      "flow_input": "forbidden_by_config",
+      "exclusion_reason": "Flow input validation rejects this upstream operation before adaptation.",
       "review_status": "unreviewed",
       "contexts": [
         {
@@ -2787,6 +2804,118 @@
       ]
     },
     {
+      "id": "emela_core::Builtin::BytesFromList",
+      "definition_sha256": "b469b84750fdd9d9e567466cf9756cb81de9bb685ed13478deebf894d2e729be",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesToList",
+      "definition_sha256": "3ddc9a3768ecd52a9de8bf79f27133df4336285d92ee33e5ac451285cd28b6d9",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesSize",
+      "definition_sha256": "e79af588953e56c56d885e29c891a74b01067e415c76cbecb4421bfd9b259c31",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesGet",
+      "definition_sha256": "b0559f6b830f55538fc951c9bc588996e52695ab01a34ef94b5ad5bc8673e42e",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesSlice",
+      "definition_sha256": "15227d0f30d01f13af195d570c1c4a2ff86e691ca191d305c0065e127c306bea",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesConcat",
+      "definition_sha256": "f94c72ae28f14a459b184dc957ec60ec515bb4a1dd2fdd110830169d6a6c9bdd",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesEncodeUtf8",
+      "definition_sha256": "bd4f809da786105b4fd00b340a6c05fcfe67583326cd904cb092f65c023e35c7",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::BytesDecodeValidUtf8",
+      "definition_sha256": "41fa02a9421bdf780984da0beb91509d066ce89c4d799ee6e2cb337fc9ab46ea",
+      "flow_input": "unreviewed",
+      "exclusion_reason": null,
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "common",
+          "status": "missing_evidence",
+          "routes": []
+        }
+      ]
+    },
+    {
       "id": "emela_core::Builtin::Panic",
       "definition_sha256": "26e2b822d3c8af65be239766aa06e3a2ddbf7a6582f9ec05297d9cdd394eb028",
       "flow_input": "forbidden_by_config",
@@ -2922,6 +3051,22 @@
       "definition_sha256": "f76747feb8ea5e8c4f01ed030e54b06fcd6d87433cf2f3b6ba33215e6e897238",
       "flow_input": "forbidden_by_config",
       "exclusion_reason": "Flowでは禁止するとの設定。指定した拒否分岐の構文上の根拠を要求する。",
+      "review_status": "unreviewed",
+      "contexts": [
+        {
+          "context": "input",
+          "status": "rejection_evidence",
+          "routes": [
+            "reject-builtin"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "emela_core::Builtin::AssertFail",
+      "definition_sha256": "912be595508f4a3f461d5a4c53cfe78534120e0d88b00961adcfbed6ab2012f9",
+      "flow_input": "forbidden_by_config",
+      "exclusion_reason": "Flow input validation rejects this upstream operation before adaptation.",
       "review_status": "unreviewed",
       "contexts": [
         {
@@ -3235,7 +3380,7 @@
     },
     {
       "id": "emela_core::FiberOp::CauseRaise",
-      "definition_sha256": "4d8020e4707c3df826a527b53f4b3a6604edf7c028c6c889c6e50ad1f0565476",
+      "definition_sha256": "b686ace922a0cd4a23be71458706ed4e5fb1da079af24ab30686afbeefb1d6f6",
       "flow_input": "unreviewed",
       "exclusion_reason": null,
       "review_status": "unreviewed",
@@ -3306,6 +3451,7 @@
     "emela_lir::Term::Break.value",
     "emela_lir::Term::Recur.0",
     "emela_lir::Term::Defect.0",
+    "emela_lir::Term::Defect.1",
     "emela_lir::Stmt",
     "emela_lir::Stmt::Let.dst",
     "emela_lir::Stmt::Let.value",
@@ -3467,6 +3613,7 @@
     "emela_core::Type::Float",
     "emela_core::Type::Bool",
     "emela_core::Type::String",
+    "emela_core::Type::Bytes",
     "emela_core::Type::Unit",
     "emela_core::Type::Never",
     "emela_core::Type::Tuple",
@@ -3518,6 +3665,26 @@
     "emela_core::FiberOp::Await.exit",
     "emela_core::FiberOp::Attempt.exit",
     "emela_core::FiberOp::Attempt.suspends",
-    "emela_core::FiberOp::CauseKind.kind"
-  ]
+    "emela_core::FiberOp::CauseKind.kind",
+    "emela_core::FiberOp::CauseRaise.fails"
+  ],
+  "representation_gaps": [
+    {
+      "owner": "emela_core::Builtin",
+      "representation_owner": "crate::contract::ir::Builtin",
+      "missing_variants": [
+        "BytesConcat",
+        "BytesDecodeValidUtf8",
+        "BytesEncodeUtf8",
+        "BytesFromList",
+        "BytesGet",
+        "BytesSize",
+        "BytesSlice",
+        "BytesToList"
+      ],
+      "extra_variants": [],
+      "missing_adapter": false
+    }
+  ],
+  "route_errors": []
 }

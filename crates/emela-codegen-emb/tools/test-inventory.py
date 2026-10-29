@@ -28,7 +28,13 @@ def main():
     parser.add_argument("--check-built", action="store_true", help="also verify cfg, modules, includes and ignored status against compiled test binaries")
     options = parser.parse_args()
     crate = Path(__file__).resolve().parent.parent
-    print(cargo(crate, "test_inventory", "every_variant_names_existing_enabled_tests"), end="")
+    result = subprocess.run(
+        ["bash", str(crate / "tools/inventory.sh"), "tests"],
+        cwd=crate, text=True, capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(result.stdout + result.stderr)
+    print(result.stdout, end="")
     if options.check_built:
         associations = json.loads((crate / "inventory/tests.json").read_text())
         targets = sorted({test["target"] for tests in associations.values() for test in tests})

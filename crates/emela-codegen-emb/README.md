@@ -18,7 +18,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 
 ## 実装とテストの自動検査
 
-IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを通常の`cargo test`で検査します。[コンパイラーの構成](src/compiler/README.md)で説明する機能別の分割に合わせた仕組みです。
+IRの定義・担当する実装入口・関連テストを対応付け、欠落や参照切れを検査します。生成ツールは[`tools/inventory`](tools/inventory/Cargo.toml)の独立したRust workspaceで動き、コンパイラー本体がビルドできない状態でもsourceを監査できます。通常の`cargo test`にも整合性の検査があります。[コンパイラーの構成](src/compiler/README.md)で説明する機能別の分割に合わせた仕組みです。
 
 | 生成される一覧 | 確認する内容 |
 | --- | --- |
@@ -31,19 +31,35 @@ IRの定義・担当する実装入口・関連テストを対応付け、欠落
 
 リポジトリrootから生成します。MarkdownとJSONは同じ抽出結果から作り、生成物を手では編集しません。
 
+次のコマンドは8ファイルをまとめて更新します。上流にvariantが追加され、独立contract・担当入口・関連テストが追従していなくても、欠落をMarkdownとJSONに記録してから終了code 1を返します。`flow-backend-inventory`には担当入口の欠落件数、`flow-coverage`には経路ごとの`missing_evidence`と上流IRへの未追従を表示します。欠落は構文・登録情報の不足を示すもので、実装の意味論を自動判定した結果ではありません。
+
+```sh
+bash crates/emela-codegen-emb/tools/inventory.sh all
+```
+
+別のcheckoutを読み取る場合は`--root <repository>`を指定できます。`--out-dir`で出力先を分ければ、そのcheckoutを変更せずに監査できます。
+
+```sh
+bash crates/emela-codegen-emb/tools/inventory.sh all --root /path/to/emela --out-dir /tmp/emela-inventory
+```
+
+個別に生成する場合は次のコマンドを使います。
+
 ```sh
 bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh
 bash crates/emela-codegen-emb/tools/backend-inventory.sh
 bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh
 ```
 
-開発時の検査コマンドは次のとおりです。`--check`は生成物を更新せず、現在のsourceとの差分を検出します。専用のCIステップは設けず、必要に応じて手元で実行します。
+開発時の検査コマンドは次のとおりです。`--check`は生成物を更新せず、現在のsourceとの差分と監査の欠落を検出します。生成物を更新した後も、欠落が残る間は`all --check`が失敗します。sourceに対する監査はコンパイラー本体をビルドせずに実行でき、`--check-built`だけは実際のテストバイナリーのビルドを必要とします。専用のCIステップは設けず、必要に応じて手元で実行します。
 
 ```sh
+bash crates/emela-codegen-emb/tools/inventory.sh all --check
 bash crates/emela-codegen-emb/tools/flow-ir-inventory.sh --check
 bash crates/emela-codegen-emb/tools/backend-inventory.sh --check
 bash crates/emela-codegen-emb/tools/flow-implementation-inventory.sh --check --require-evidence
 python3 crates/emela-codegen-emb/tools/test-inventory.py --check-built
+cargo test --manifest-path crates/emela-codegen-emb/tools/inventory/Cargo.toml --locked --offline
 cargo test -p emela-codegen-emb --locked
 ```
 
