@@ -70,6 +70,18 @@ nativeは単一threadのconsole、Unix epochのclock、単調clockを使う固�
 
 MCU packageは将来の接続に向けて`platform::board(id)`で構築・計画できる。解決済みcross compilerを渡し、package自身がreset/mainを持つので`ConnectOptions.main=false`にする。STM32のprofileからのheader・vector・linker生成も純粋なpackage構築に含まれる。既存BSPは`board_main_start`を使う引数なし・Int戻り値のsuspend entryを要求する。保存済みartifactを同梱MCUへ接続するCLIは未対応である。現時点のfirmware生成・書き込みは`emela build --board <id>`／`emela flash --board <id>`を使う。この経路では資源計測・image作成・source鮮度確認も行う。
 
+## sourceから独立したCLI接続
+
+```sh
+emela build --target c-embedded --out-dir generated
+emela connect generated --out-dir host-build --platform native --optimization O2
+./host-build/out/program
+```
+
+`connect`は元Emela sourceやPome.tomlを読まない。同梱の接続先は現在nativeのみ。`--package package.json`で`PlatformPackage`を読み込めば、compilerを変更せず独自platformへ接続できる。packageはABI版、能力、ISR保証、全ファイルのbytes、source一覧、compile/link flagsを持つ。追加の外部Cもpackageへ含め、その供給symbolを明示する。
+
+成功記録`connection-success.json`は共通一式とplatform入力のhashを分離し、compiler driverの実体・version／identity、実行形式のhashも確認する。`verify_success`は入力・package・toolchain・binaryの変更を検出する。新たなbuildを始めた時点で古い成功記録を無効にする。既存projectのbuild/flashでは、これに加えて従来のsource・overlay・設定の鮮度検査を維持する。
+
 ## Bytesの公開型
 
 生成headerは不変byte列を`EmelaBytes`で表す。`data`は`const uint8_t *`、`length`は0から`INT32_MAX`の`uint32_t`、`owner`は固定heapのbacking storageか借用viewの`NULL`。公開入口が返した所有済みBytesには`emela_embedded_retain_bytes`と`emela_embedded_release_bytes`を使う。借用viewが生成処理の呼出し後も保持される場合は内部でコピーし、外部のbufferを後から変更しても保持した値に影響しない。

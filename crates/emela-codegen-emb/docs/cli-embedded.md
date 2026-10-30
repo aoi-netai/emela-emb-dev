@@ -248,22 +248,27 @@ toolchainの自動取得、物理ボードの接続や配線は行わない。�
 
 ## 検証の範囲
 
-CLIのhost回帰試験は、C生成、設定とalias診断、targetとPomeの制限、module置換、library専用project、失敗した再buildによる成功記録の無効化を確認する。Unix上の2件は`EMELA_PYTHON`のtest wrapperで実際のprepare／seal／verifyを呼び、BSPのbuild／flashだけをmock化してCLIからの接続も確認する。Pythonの試験は照合処理を直接呼び、入力・生成物・BSPの変更や追加・削除、build中の変更を検出する。これらはcross toolchainや物理デバイスを使わず、実際のfirmware build・flashやMCU上での動作を検証するものではない。実BSPのFlash起動・IRQ・GPIO・UART・資源の観測は[既存のボードprobe](boards.md)で別に扱う。
+CLIのhost回帰試験は、C生成、設定とalias診断、targetとPomeの制限、module置換、library専用project、失敗した再buildによる成功記録の無効化を確認する。生成後に元sourceを削除し、保存したmanifestからhost ccでcompile・実行する接続試験も行う。Unix上の3件は`EMELA_PYTHON`のtest wrapperで実際のprepare／seal／verifyを呼び、BSPのbuild／flashだけをmock化する。Pythonの試験は入力・生成物・BSPの変更や追加・削除、build中の変更を検出する。cross toolchainや物理デバイスは使わず、実際のfirmware imageやMCU動作は[既存のボードprobe](boards.md)で別に扱う。
 
 | 試験 | 主な確認対象 |
 | --- | --- |
 | [`embedded_cli.rs`](../../emela-cli/tests/embedded_cli.rs) | C-only出力、設定・entry・alias診断、8種類のboard ID、checkとbuildの読取り専用overlay、BuildOnlyのrun/test診断、成功記録の無効化、既存targetへの非干渉。 |
 | [`embedded_dependencies.rs`](../../emela-cli/tests/embedded_dependencies.rs) | ローカル置換した依存のtarget制限を、boardあり／なしとlibrary専用projectで確認する。 |
-| [`embedded_firmware_state.rs`](../../emela-cli/tests/embedded_firmware_state.rs) | Unix上の2件。実CLI・driver・照合処理の接続、変更後のflash拒否、path／portを単一argvとして渡すこと、mock再build失敗後の旧成功記録の無効化。flashはdry-runに限定する。 |
-| [`test_build_state.py`](../tools/test_build_state.py) | 13件。prepare／seal／verify、source・依存・設定・成果物・BSPの追跡、追加assemblyの周辺header、入力の追加・削除、symlinkの名前・実体・循環、seal中の変更拒否。 |
+| [`embedded_firmware_state.rs`](../../emela-cli/tests/embedded_firmware_state.rs) | 実CLI・driver・照合処理の接続、manifest／C／alias／reader改変後のflash拒否、path／portのargv、mock再build失敗後の旧成功記録の無効化。flashはdry-runに限定する。 |
+| [`test_build_state.py`](../tools/test_build_state.py) | prepare／seal／verify、生成manifestとnested生成物、source・依存・設定・成果物・BSP、追加assemblyの周辺header、入力の追加・削除、symlinkとseal中の変更拒否。 |
+| [`test_artifact_contract.py`](../tools/test_artifact_contract.py) | 固定Cから両BSPのcompile入力を確認し、readerの共有拒否fixtureとhost ccでの接続を試験する。 |
 
 workspace rootでの再検証コマンドは次のとおり。ここにコマンドがあること自体は、現在のtreeで成功した記録を意味しない。
 
 ```sh
 cargo test --locked -p emela-cli -p emela-driver -p emela-pome
 cargo test --locked -p emela-cli --test embedded_firmware_state
-python3 crates/emela-codegen-emb/tools/test_build_state.py
+python3 -B -m unittest discover -s crates/emela-codegen-emb/tools -p 'test_*.py'
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --profile ci
 ```
+
+## 保存済み共通Cの接続
+
+`emela connect generated --out-dir host-build --platform native`で、Emela sourceやproject設定なしに保存済みartifactをbuildできる。共通生成物は変更せず、platformファイルを別directoryへ配置する。独自packageの接続は[生成物契約](artifact-contract.md#sourceから独立したcli接続)を参照。保存済みartifactから同梱MCUへの接続は未対応で、firmware生成には`emela build --board <id>`を使う。既存のproject build/flashはsourceの鮮度確認を維持する。

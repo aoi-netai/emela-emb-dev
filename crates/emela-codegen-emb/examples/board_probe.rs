@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use emela_codegen_emb::{Options, boards, compile};
 use emela_core::Roots;
 
-#[path = "../../emela-core/tests/support/mod.rs"]
+#[path = "../tests/support/embedded_sources.rs"]
 mod support;
 
 const USAGE: &str = "Usage: board_probe --board BOARD --out-dir DIRECTORY";

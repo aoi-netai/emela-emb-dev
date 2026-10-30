@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[path = "../../emela-core/tests/support/mod.rs"]
+#[path = "support/embedded_sources.rs"]
 mod support;
 
 mod any_data;

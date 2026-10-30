@@ -12,6 +12,9 @@ mod writer;
 
 mod contract;
 mod input;
+mod sources;
+
+pub use sources::bundled_sources;
 
 pub use contract::{
     Error, ErrorKind, ExportedFunction, ExternalAdapter, ExternalResult, GeneratedFile, Options,

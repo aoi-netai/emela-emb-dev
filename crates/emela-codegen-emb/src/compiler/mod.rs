@@ -7,7 +7,7 @@ mod plan;
 #[path = "tests/separation.rs"]
 mod separation_tests;
 #[cfg(test)]
-#[path = "../../../emela-core/tests/support/mod.rs"]
+#[path = "../../tests/support/frontend.rs"]
 pub(super) mod support;
 
 pub(crate) fn compile_flow(
