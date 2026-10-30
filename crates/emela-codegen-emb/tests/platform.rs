@@ -178,7 +178,7 @@ fn generation_is_repeatable_and_does_not_mutate_its_input() {
     }
     assert_eq!(format!("{flow:?}"), before);
 }
-#[path = "../../emela-core/tests/support/mod.rs"]
+#[path = "support/embedded_sources.rs"]
 mod support;
 #[test]
 fn native_clock_console_and_timer_use_common_standard_service_glue() {

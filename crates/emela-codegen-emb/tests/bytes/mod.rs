@@ -106,9 +106,9 @@ int test_heap_empty(void) {
 
 #[test]
 fn bytes_std_corpus_matches_other_targets_including_const_traits_and_invalid_utf8() {
-    // Bound the shared corpus's long hexadecimal result to the embedded String capacity.
+    // Keep a local copy of the cross-target corpus, bounded to the embedded String capacity.
     // Separate span tests cover byte lengths above u16 without converting them to String.
-    let source = include_str!("../../../emela-codegen-c/tests/programs/bytes.emel")
+    let source = include_str!("fixtures/bytes.emel")
         .replace("fn main()", "pub fn main()")
         .replace("20000", "128");
     let output = fixture(
@@ -127,7 +127,7 @@ int main(void) {{ {main}(); return 0; }}
 "#
         ),
         Some(
-            &include_str!("../../../emela-codegen-c/tests/programs/bytes.expected")
+            &include_str!("fixtures/bytes.expected")
                 .split_once("--- stderr\n")
                 .unwrap()
                 .1

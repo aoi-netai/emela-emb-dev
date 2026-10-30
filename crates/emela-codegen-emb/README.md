@@ -11,6 +11,7 @@ EmelaのFlow IRから、組み込み向けのCコードを生成するコンパ�
 - `compile_flow(flow, options)`：検証済みのFlow段階を入力とする主入口です。入力を検証し、Cソースとヘッダーを`Output`として返します。
 - `compile(core, options)`／`flow_from_core(core)`：通常のCore IRを単相化してFlowへ変換する便宜入口です。成長する再帰型の入力は診断し、Flowを直接渡す経路へ分けています。
 - `derived_binding(core, operation, ty, name)`：Flow生成側が、具体化された型の有限な構造比較・表示を登録するための関数を作ります。`DerivedOperation::Eq`または`Show`を指定し、返された関数をFlowモジュールへ追加して呼び出します。
+- `bundled_sources()`：このcrateの[`lib/embedded/`](lib/embedded/)が所有する周辺機器インターフェースとBoard handlerを返します。独自frontendはcore/stdのソース一覧へ追加してから名前解決します。通常のCLI・driverは自動で読み込みます。[ソースの所有範囲](docs/source-ownership.md)に構成と検証方法をまとめています。
 
 `Options`でString容量、固定heap、fiberやtaskのpool容量などを指定します。必要なランタイムとボード接続用のCインターフェースは生成コードに含まれます。
 
